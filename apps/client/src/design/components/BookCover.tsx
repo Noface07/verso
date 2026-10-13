@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Heart } from 'lucide-react';
+import { Heart, Check } from 'lucide-react';
 import { clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { db } from '../../db';
@@ -16,6 +16,9 @@ export interface BookCoverProps {
   onClick?: () => void;
   className?: string;
   glow?: boolean;
+  isSelected?: boolean;
+  isSelectable?: boolean;
+  onToggleSelect?: () => void;
 }
 
 export function useCoverBlobUrl(id: string, coverHash?: string | null) {
@@ -56,23 +59,35 @@ export const BookCover: React.FC<BookCoverProps> = ({
   onClick,
   className,
   glow = true,
+  isSelected = false,
+  isSelectable = false,
+  onToggleSelect,
 }) => {
   const coverUrl = useCoverBlobUrl(id, coverHash);
   const hue = parseInt(id.slice(0, 6), 16) % 360;
   const fallbackBg = `hsl(${hue} 35% 32%)`;
 
+  const handleClick = () => {
+    if (isSelectable) {
+      onToggleSelect?.();
+    } else {
+      onClick?.();
+    }
+  };
+
   return (
     <div
-      role={onClick ? 'button' : undefined}
-      tabIndex={onClick ? 0 : undefined}
-      onClick={onClick}
-      onKeyDown={onClick ? (e) => (e.key === 'Enter' || e.key === ' ') && onClick() : undefined}
+      role={onClick || isSelectable ? 'button' : undefined}
+      tabIndex={onClick || isSelectable ? 0 : undefined}
+      onClick={handleClick}
+      onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && handleClick()}
       className={twMerge(
         clsx(
           'group relative aspect-[2/3] w-full rounded-[var(--r-cover)] overflow-hidden select-none cursor-pointer',
           'shadow-[var(--shadow-cover)] transition-all duration-[var(--d-normal)] ease-[var(--ease-out)]',
           'hover:-translate-y-1 focus-visible:ring-2 focus-visible:ring-[var(--accent)] outline-none',
           glow && 'hover:shadow-[0_18px_40px_rgba(0,0,0,0.55)]',
+          isSelected && 'ring-2 ring-[var(--accent)] ring-offset-2 ring-offset-[var(--bg-base)]',
           className,
         ),
       )}
@@ -101,9 +116,34 @@ export const BookCover: React.FC<BookCoverProps> = ({
         </div>
       )}
 
+      {/* Selection checkbox */}
+      {isSelectable && (
+        <button
+          type="button"
+          aria-label={isSelected ? 'Deselect book' : 'Select book'}
+          onClick={(e) => {
+            e.stopPropagation();
+            onToggleSelect?.();
+          }}
+          className={clsx(
+            'absolute top-2 left-2 z-30 w-6 h-6 rounded-md flex items-center justify-center transition-all cursor-pointer outline-none border shadow-xs',
+            isSelected
+              ? 'bg-[var(--accent)] border-[var(--accent)] text-[var(--on-accent)]'
+              : 'bg-black/60 border-white/50 text-transparent hover:border-white',
+          )}
+        >
+          <Check className="w-3.5 h-3.5 stroke-[2.5]" />
+        </button>
+      )}
+
       {/* Badge slot */}
       {badge && (
-        <div className="absolute top-2 left-2 z-20 pointer-events-none">
+        <div
+          className={clsx(
+            'absolute z-20 pointer-events-none',
+            isSelectable ? 'top-2 left-10' : 'top-2 left-2',
+          )}
+        >
           {badge}
         </div>
       )}

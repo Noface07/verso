@@ -21,6 +21,8 @@ export interface BookMeta {
   tags?: string[]
   rating?: number
   finished_at?: number | null
+  series_number?: number
+  favorite?: boolean
 }
 
 export interface Book extends Syncable {

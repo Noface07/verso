@@ -7,7 +7,8 @@ import { IconButton } from './IconButton';
 
 export interface DialogProps {
   open: boolean;
-  onOpenChange: (open: boolean) => void;
+  onOpenChange?: (open: boolean) => void;
+  onClose?: () => void;
   title?: ReactNode;
   description?: ReactNode;
   children: ReactNode;
@@ -18,14 +19,20 @@ export interface DialogProps {
 export const Dialog: React.FC<DialogProps> = ({
   open,
   onOpenChange,
+  onClose,
   title,
   description,
   children,
   footer,
   className,
 }) => {
+  const handleOpenChange = (isOpen: boolean) => {
+    onOpenChange?.(isOpen);
+    if (!isOpen) onClose?.();
+  };
+
   return (
-    <RadixDialog.Root open={open} onOpenChange={onOpenChange}>
+    <RadixDialog.Root open={open} onOpenChange={handleOpenChange}>
       <RadixDialog.Portal>
         <RadixDialog.Overlay className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs animate-in fade-in-0 duration-150" />
         <RadixDialog.Content

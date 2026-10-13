@@ -208,6 +208,47 @@ export default function Reader() {
 
   const lang = book?.meta.language || 'en'
 
+  const [showFinishedPrompt, setShowFinishedPrompt] = useState(false)
+  const dismissedFinishedRef = useRef(false)
+
+  useEffect(() => {
+    if (!book || book.meta.finished_at || dismissedFinishedRef.current) return
+    const currentFraction = loc?.fraction ?? 0
+    if (currentFraction >= 0.99) {
+      const promptTimer = window.setTimeout(() => {
+        if (!dismissedFinishedRef.current) {
+          setShowFinishedPrompt(true)
+        }
+      }, 5000)
+
+      const autoMarkTimer = window.setTimeout(async () => {
+        if (!dismissedFinishedRef.current) {
+          await db.books.update(book.id, {
+            meta: { ...book.meta, finished_at: Date.now() },
+            ...dirty(),
+          })
+          setShowFinishedPrompt(false)
+        }
+      }, 60000)
+
+      return () => {
+        clearTimeout(promptTimer)
+        clearTimeout(autoMarkTimer)
+      }
+    } else {
+      setShowFinishedPrompt(false)
+    }
+  }, [loc?.fraction, book])
+
+  const handleMarkFinished = async () => {
+    if (!book) return
+    await db.books.update(book.id, {
+      meta: { ...book.meta, finished_at: Date.now() },
+      ...dirty(),
+    })
+    setShowFinishedPrompt(false)
+  }
+
   useReadingSession(id, status === 'ready', fractionRef, book?.meta.word_count)
 
   // Open the book and wire up foliate-js events
@@ -1097,6 +1138,34 @@ export default function Reader() {
         src={zoomedImage?.src ?? ''}
         alt={zoomedImage?.alt}
       />
+
+      {/* Mark as finished toast prompt near the end */}
+      {showFinishedPrompt && (
+        <div className="fixed bottom-20 left-1/2 -translate-x-1/2 z-40 max-w-sm w-auto animate-in fade-in slide-in-from-bottom-2 duration-[var(--d-normal)]">
+          <div className="flex items-center gap-3 px-3.5 py-2.5 rounded-xl bg-[var(--layer-solid)] border border-[var(--stroke)] shadow-[var(--shadow-flyout)] text-xs text-[var(--text-1)] select-none">
+            <span>You&apos;re near the end. Mark as finished?</span>
+            <Button
+              variant="accent"
+              size="sm"
+              onClick={handleMarkFinished}
+              className="text-xs h-7 px-2.5 shrink-0"
+            >
+              Mark finished
+            </Button>
+            <Button
+              variant="subtle"
+              size="sm"
+              onClick={() => {
+                setShowFinishedPrompt(false)
+                dismissedFinishedRef.current = true
+              }}
+              className="text-xs h-7 px-2 shrink-0"
+            >
+              Dismiss
+            </Button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

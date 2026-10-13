@@ -1,92 +1,187 @@
-import { db, type Book } from '../db'
-import { makeBook, type FoliateBook } from './foliate'
-import { sha256 } from './hash'
+import { db, dirty, type Book } from '../db';
+import { makeBook, type FoliateBook } from './foliate';
+import { sha256 } from './hash';
 
-export const ACCEPT = '.epub,.mobi,.azw3,.azw,.fb2,.fbz,.cbz,.pdf'
+export const ACCEPT = '.epub,.mobi,.azw3,.azw,.fb2,.fbz,.cbz,.pdf';
 
 const FORMATS: Record<string, string> = {
-  epub: 'EPUB', mobi: 'MOBI', azw3: 'AZW3', azw: 'AZW',
-  fb2: 'FB2', fbz: 'FB2', cbz: 'CBZ', pdf: 'PDF',
-}
+  epub: 'EPUB',
+  mobi: 'MOBI',
+  azw3: 'AZW3',
+  azw: 'AZW',
+  fb2: 'FB2',
+  fbz: 'FB2',
+  cbz: 'CBZ',
+  pdf: 'PDF',
+};
 
 function text(x: unknown): string {
-  if (typeof x === 'string') return x.trim()
-  if (Array.isArray(x)) return text(x[0])
+  if (typeof x === 'string') return x.trim();
+  if (Array.isArray(x)) return text(x[0]);
   if (x && typeof x === 'object') {
-    const o = x as Record<string, unknown>
-    if ('name' in o) return text(o.name)
-    return text(Object.values(o)[0])
+    const o = x as Record<string, unknown>;
+    if ('name' in o) return text(o.name);
+    return text(Object.values(o)[0]);
   }
-  return ''
+  return '';
 }
 
 function people(x: unknown): string {
-  const list = Array.isArray(x) ? x : x ? [x] : []
-  return list.map(text).filter(Boolean).join(', ')
+  const list = Array.isArray(x) ? x : x ? [x] : [];
+  return list.map(text).filter(Boolean).join(', ');
 }
 
 async function shrinkCover(blob: Blob): Promise<Blob> {
   try {
-    const bmp = await createImageBitmap(blob)
-    const scale = Math.min(1, 480 / bmp.width)
-    const canvas = document.createElement('canvas')
-    canvas.width = Math.round(bmp.width * scale)
-    canvas.height = Math.round(bmp.height * scale)
-    canvas.getContext('2d')!.drawImage(bmp, 0, 0, canvas.width, canvas.height)
-    bmp.close()
-    return await new Promise((resolve) => canvas.toBlob((b) => resolve(b ?? blob), 'image/jpeg', 0.85))
+    const bmp = await createImageBitmap(blob);
+    const scale = Math.min(1, 480 / bmp.width);
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.round(bmp.width * scale);
+    canvas.height = Math.round(bmp.height * scale);
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return blob;
+    ctx.drawImage(bmp, 0, 0, canvas.width, canvas.height);
+    bmp.close();
+    return await new Promise((resolve) =>
+      canvas.toBlob((b) => resolve(b ?? blob), 'image/jpeg', 0.85),
+    );
   } catch {
-    return blob
+    return blob;
   }
 }
 
 export interface ImportResult {
-  added: number
-  skipped: number
-  failed: { name: string; error: string }[]
+  added: number;
+  skipped: number;
+  failed: { name: string; error: string }[];
 }
 
-export async function importFiles(files: File[]): Promise<ImportResult> {
-  const result: ImportResult = { added: 0, skipped: 0, failed: [] }
-  for (const file of files) {
+export interface ImportOptions {
+  onProgress?: (
+    index: number,
+    total: number,
+    file: File,
+    status: 'processing' | 'done' | 'skipped' | 'error',
+    error?: string,
+  ) => void;
+  onDuplicate?: (
+    existingBook: Book,
+    newFile: File,
+  ) => Promise<'replace' | 'keep-both' | 'skip'>;
+  signal?: AbortSignal;
+}
+
+export async function importFiles(
+  files: File[],
+  options?: ImportOptions,
+): Promise<ImportResult> {
+  const result: ImportResult = { added: 0, skipped: 0, failed: [] };
+  const total = files.length;
+
+  for (let i = 0; i < total; i++) {
+    if (options?.signal?.aborted) {
+      break;
+    }
+    const file = files[i];
+    options?.onProgress?.(i, total, file, 'processing');
+
     try {
-      if (await importOne(file)) result.added++
-      else result.skipped++
+      const outcome = await importOne(file, options);
+      if (outcome) {
+        result.added++;
+        options?.onProgress?.(i, total, file, 'done');
+      } else {
+        result.skipped++;
+        options?.onProgress?.(i, total, file, 'skipped');
+      }
     } catch (e) {
-      result.failed.push({ name: file.name, error: e instanceof Error ? e.message : String(e) })
+      const msg = e instanceof Error ? e.message : String(e);
+      result.failed.push({ name: file.name, error: msg });
+      options?.onProgress?.(i, total, file, 'error', msg);
     }
   }
-  return result
+
+  return result;
 }
 
-async function importOne(file: File): Promise<boolean> {
-  const ext = file.name.split('.').pop()?.toLowerCase() ?? ''
-  const hash = await sha256(await file.arrayBuffer())
-  const existing = await db.books.get(hash)
-  if (existing && !existing.deleted_at) return false
+export async function importOne(
+  file: File,
+  options?: ImportOptions,
+): Promise<boolean> {
+  const ext = file.name.split('.').pop()?.toLowerCase() ?? '';
+  const hash = await sha256(await file.arrayBuffer());
+  const existing = await db.books.get(hash);
+  if (existing && !existing.deleted_at) return false;
 
-  const book = await makeBook(file)
-  const md = book.metadata ?? {}
+  const book = await makeBook(file);
+  const md = book.metadata ?? {};
 
-  let coverHash: string | null = null
+  const title = text(md.title) || file.name.replace(/\.[^.]+$/, '');
+  const author = people(md.author) || 'Unknown author';
+  const normTitle = title.trim().toLowerCase();
+  const normAuthor = author.trim().toLowerCase();
+
+  // Duplicate detection by title and author with differing hash
+  const potentialDup = await db.books
+    .filter(
+      (b) =>
+        !b.deleted_at &&
+        b.title.trim().toLowerCase() === normTitle &&
+        b.author.trim().toLowerCase() === normAuthor &&
+        b.file_hash !== hash,
+    )
+    .first();
+
+  let coverBlob: Blob | null = null;
+  let coverHash: string | null = null;
   try {
-    const cover = await book.getCover?.()
-    if (cover) {
-      const small = await shrinkCover(cover)
-      coverHash = await sha256(await small.arrayBuffer())
-      await db.covers.put({ id: hash, blob: small })
+    const rawCover = await book.getCover?.();
+    if (rawCover) {
+      coverBlob = await shrinkCover(rawCover);
+      coverHash = await sha256(await coverBlob.arrayBuffer());
     }
   } catch {
-    // some books ship broken cover images; fall back to a generated cover
+    // Ignore broken cover images; fallback to generated cover
   }
 
-  await db.files.put({ hash, blob: file })
+  if (potentialDup) {
+    const decision = options?.onDuplicate
+      ? await options.onDuplicate(potentialDup, file)
+      : 'keep-both';
 
-  const t = Date.now()
+    if (decision === 'skip') {
+      return false;
+    }
+
+    if (decision === 'replace') {
+      await db.files.put({ hash, blob: file });
+      if (coverBlob) {
+        await db.covers.put({ id: potentialDup.id, blob: coverBlob });
+      }
+      await db.books.update(potentialDup.id, {
+        file_hash: hash,
+        file_size: file.size,
+        format: FORMATS[ext] ?? ext.toUpperCase(),
+        cover_hash: coverHash ?? potentialDup.cover_hash,
+        ...dirty(),
+      });
+      enqueueWordCount(potentialDup.id, book, FORMATS[ext] ?? ext.toUpperCase());
+      return true;
+    }
+    // If 'keep-both', proceed with normal import
+  }
+
+  if (coverBlob) {
+    await db.covers.put({ id: hash, blob: coverBlob });
+  }
+
+  await db.files.put({ hash, blob: file });
+
+  const t = Date.now();
   const row: Book = {
     id: hash,
-    title: text(md.title) || file.name.replace(/\.[^.]+$/, ''),
-    author: people(md.author) || 'Unknown author',
+    title,
+    author,
     format: FORMATS[ext] ?? ext.toUpperCase(),
     file_hash: hash,
     file_size: file.size,
@@ -96,42 +191,97 @@ async function importOne(file: File): Promise<boolean> {
       mime: file.type,
       language: text(md.language),
       publisher: people(md.publisher),
-      description: text(md.description).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim(),
-      series: text((md.belongsTo as Record<string, unknown> | undefined)?.series),
+      description: text(md.description)
+        .replace(/<[^>]+>/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim(),
+      series: text(
+        (md.belongsTo as Record<string, unknown> | undefined)?.series,
+      ),
     },
     added_at: existing?.added_at ?? t,
     last_opened_at: existing?.last_opened_at ?? null,
-    updated_at: t,
     deleted_at: null,
-    _dirty: 1,
-  }
-  await db.books.put(row)
-  void countText(hash, book, row.format)
-  return true
+    ...dirty(),
+  };
+
+  await db.books.put(row);
+  enqueueWordCount(hash, book, row.format);
+  return true;
 }
 
-async function countText(id: string, book: FoliateBook, format: string) {
-  if (format === 'PDF' || format === 'CBZ' || book.rendition?.layout === 'pre-paginated') return
-  let words = 0
-  let paragraphs = 0
-  for (const section of book.sections ?? []) {
-    if (section.linear === 'no' || !section.createDocument) continue
-    try {
-      const doc = await section.createDocument()
-      words += (doc.body?.textContent ?? '').match(/[\p{L}\p{N}]+(?:['’-][\p{L}\p{N}]+)*/gu)?.length ?? 0
-      paragraphs += doc.querySelectorAll('p, li, h1, h2, h3, h4, h5, h6, blockquote, dd').length
-    } catch {
-      // skip unreadable sections
-    }
-    await new Promise((r) => setTimeout(r, 0))
+// Background Word Count Processing Queue
+interface WordCountJob {
+  bookId: string;
+  book: FoliateBook;
+  format: string;
+}
+
+const wordCountQueue: WordCountJob[] = [];
+let isProcessingQueue = false;
+
+function enqueueWordCount(bookId: string, book: FoliateBook, format: string) {
+  if (format === 'PDF' || format === 'CBZ' || book.rendition?.layout === 'pre-paginated') {
+    return;
   }
-  const current = await db.books.get(id)
+  wordCountQueue.push({ bookId, book, format });
+  if (!isProcessingQueue) {
+    void processWordCountQueue();
+  }
+}
+
+async function processWordCountQueue() {
+  if (wordCountQueue.length === 0) {
+    isProcessingQueue = false;
+    return;
+  }
+
+  isProcessingQueue = true;
+  const job = wordCountQueue.shift();
+  if (job) {
+    try {
+      await countText(job.bookId, job.book);
+    } catch {
+      // Ignore background counting errors
+    }
+  }
+
+  // Yield to browser frame before next item in queue
+  if (typeof requestIdleCallback !== 'undefined') {
+    requestIdleCallback(() => void processWordCountQueue());
+  } else {
+    setTimeout(() => void processWordCountQueue(), 50);
+  }
+}
+
+async function countText(id: string, book: FoliateBook) {
+  let words = 0;
+  let paragraphs = 0;
+  const sections = book.sections ?? [];
+
+  for (const section of sections) {
+    if (section.linear === 'no' || !section.createDocument) continue;
+    try {
+      const doc = await section.createDocument();
+      words +=
+        (doc.body?.textContent ?? '').match(
+          /[\p{L}\p{N}]+(?:['’-][\p{L}\p{N}]+)*/gu,
+        )?.length ?? 0;
+      paragraphs += doc.querySelectorAll(
+        'p, li, h1, h2, h3, h4, h5, h6, blockquote, dd',
+      ).length;
+    } catch {
+      // Skip unreadable sections
+    }
+    // Non-blocking tick between sections
+    await new Promise((r) => setTimeout(r, 0));
+  }
+
+  const current = await db.books.get(id);
   if (current) {
-    await db.books.put({
-      ...current,
+    await db.books.update(id, {
       meta: { ...current.meta, word_count: words, paragraph_count: paragraphs },
-      updated_at: Date.now(),
-      _dirty: 1,
-    })
+      ...dirty(),
+    });
   }
 }
