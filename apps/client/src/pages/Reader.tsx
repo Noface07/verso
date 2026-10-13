@@ -1014,6 +1014,16 @@ export default function Reader() {
         '--rsurface': `color-mix(in srgb, ${theme.fg} 6%, ${theme.bg})`,
       } as CSSProperties}
     >
+      {/* Screen-reader live region for chapter and navigation announcements (P12.4) */}
+      <div
+        className="sr-only"
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
+      >
+        {loc?.chapter ? `Chapter: ${loc.chapter}` : ''}
+      </div>
+
       {/* Top chrome header */}
       <header
         className={`fixed top-0 inset-x-0 h-12 z-30 transition-all duration-200 ease-[var(--ease-out)] bg-[color-mix(in_srgb,var(--rbg)_90%,transparent)] backdrop-blur-[var(--blur)] border-b border-[var(--rline)] flex items-center justify-between px-3 ${

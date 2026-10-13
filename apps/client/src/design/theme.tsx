@@ -58,6 +58,7 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   });
 
   useEffect(() => {
+    if (!window.matchMedia) return;
     const mq = window.matchMedia('(prefers-color-scheme: dark)');
     const handler = (e: MediaQueryListEvent) => setSystemIsDark(e.matches);
     mq.addEventListener('change', handler);

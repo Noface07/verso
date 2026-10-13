@@ -7,6 +7,7 @@ import { SettingsDialog } from '../design/components/SettingsDialog';
 import { ShortcutsDialog } from '../design/components/ShortcutsDialog';
 import { InfoBar } from '../design/components/InfoBar';
 import { useTheme } from '../design/theme';
+import { OnboardingModal } from './OnboardingModal';
 import { ACCEPT, importFiles } from '../lib/importBook';
 import { useGlobalHotkeys } from '../lib/useHotkeys';
 
@@ -24,14 +25,17 @@ export default function Shell() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsTab, setSettingsTab] = useState<'appearance' | 'account'>('appearance');
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [onboardingOpen, setOnboardingOpen] = useState(() => {
+    return typeof window !== 'undefined' && !localStorage.getItem('folio_onboarded');
+  });
   const [toast, setToast] = useState<{ id: number; message: string; severity?: 'info' | 'success' | 'warning' | 'error' } | null>(null);
 
   const { activeCoverUrl, settings } = useTheme();
 
   const openImport = () => inputRef.current?.click();
   const openSettings = (tab: 'appearance' | 'account' = 'appearance') => {
+    navigate('/settings');
     setSettingsTab(tab);
-    setSettingsOpen(true);
   };
 
   useGlobalHotkeys({
@@ -151,6 +155,17 @@ export default function Shell() {
 
       {/* Keyboard Shortcuts Help Modal */}
       <ShortcutsDialog open={shortcutsOpen} onOpenChange={setShortcutsOpen} />
+
+      {/* First-launch Onboarding Modal */}
+      <OnboardingModal
+        open={onboardingOpen}
+        onComplete={() => {
+          localStorage.setItem('folio_onboarded', 'true');
+          setOnboardingOpen(false);
+        }}
+        onNavigateStore={() => navigate('/store')}
+        onOpenSignIn={() => navigate('/settings')}
+      />
     </div>
   );
 }

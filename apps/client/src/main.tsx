@@ -12,6 +12,7 @@ import SeriesDetail from './pages/SeriesDetail'
 import MangaReader from './features/manga/MangaReader'
 import Reader from './pages/Reader'
 import Stats from './pages/Stats'
+import Settings from './pages/Settings'
 import DevComponents from './pages/DevComponents'
 import { TitleBar } from './components/TitleBar'
 import { initTauriDesktopIntegration } from './lib/tauriIntegration'
@@ -47,6 +48,7 @@ function AppRoutes() {
             <Route path="/store" element={<Store />} />
             <Route path="/stats" element={<Stats />} />
             <Route path="/series/:id" element={<SeriesDetail />} />
+            <Route path="/settings" element={<Settings />} />
             <Route path="/dev/components" element={<DevComponents />} />
           </Route>
           <Route path="/read/:id" element={<Reader />} />
