@@ -19,8 +19,15 @@ Write-Host "=== [Folio Backup] Starting at $(Get-Date) ==="
 
 # 1. PostgreSQL logical dump
 $SqlDumpPath = Join-Path $BackupDir "folio_db_$Timestamp.sql"
-Write-Host "-> Dumping PostgreSQL database '$DbName' from container '$ContainerDb'..."
-docker exec $ContainerDb pg_dump -U $DbUser $DbName > $SqlDumpPath
+if ($env:BACKUP_DATABASE_URL) {
+    # Hosted database (e.g. Supabase): no local db container, dump over the network.
+    # Use the direct or session-pooler URI; pg_dump client must be >= the server major.
+    Write-Host "-> Dumping PostgreSQL database from BACKUP_DATABASE_URL..."
+    docker run --rm postgres:17-alpine pg_dump --no-owner --no-privileges --schema=public $env:BACKUP_DATABASE_URL > $SqlDumpPath
+} else {
+    Write-Host "-> Dumping PostgreSQL database '$DbName' from container '$ContainerDb'..."
+    docker exec $ContainerDb pg_dump -U $DbUser $DbName > $SqlDumpPath
+}
 
 if (Test-Path $SqlDumpPath) {
     $Size = (Get-Item $SqlDumpPath).Length / 1MB

@@ -3,7 +3,8 @@
   "private": true,
   "scripts": {
     "dev": "pnpm --filter client dev",
-    "dev:server": "docker compose -f apps/server/docker-compose.dev.yml up -d && pnpm --filter server dev",
+    "dev:server": "docker compose -f apps/server/docker-compose.dev.yml up -d --wait db && pnpm --filter server db:migrate && pnpm --filter server dev",
+    "dev:server:supabase": "pnpm --filter server db:migrate && pnpm --filter server dev",
     "build": "pnpm -r build",
     "typecheck": "pnpm -r typecheck",
     "lint": "pnpm -r lint",

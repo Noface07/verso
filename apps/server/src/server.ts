@@ -7,7 +7,9 @@ import { syncRoutes } from './sync.js';
 import { fileRoutes } from './files.js';
 import { proxyRoutes } from './proxy.js';
 import { accountRoutes } from './account.js';
-import { pool } from './db.js';
+import { pool, describeConnection } from './db.js';
+import { getNotifyHub } from './notify.js';
+import { runMigrations } from './migrate.js';
 import './types.js';
 
 export async function createServer(): Promise<FastifyInstance> {
@@ -73,10 +75,16 @@ if (process.env.NODE_ENV !== 'test') {
 
   const start = async () => {
     try {
+      for (const warning of describeConnection()) console.warn(`WARNING: ${warning}`);
+      if (process.env.MIGRATE_ON_START === 'true') {
+        await runMigrations();
+      }
+
       const server = await createServer();
 
       const shutdown = async () => {
         await server.close();
+        await getNotifyHub().close();
         await pool.end();
         process.exit(0);
       };

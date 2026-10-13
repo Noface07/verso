@@ -1,6 +1,6 @@
 /**
  * Migration 001: Initial schema
- * Matches apps/server/db/init.sql
+ * (Formerly also shipped as db/init.sql; migrations are now the only schema source.)
  */
 export const up = (pgm) => {
   pgm.sql(`

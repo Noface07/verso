@@ -1,6 +1,7 @@
 import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
-import pg, { type PoolClient } from 'pg';
+import type { PoolClient } from 'pg';
 import { pool } from './db.js';
+import { getNotifyHub } from './notify.js';
 import {
   SYNC_TABLES,
   type SyncTableName,
@@ -239,26 +240,20 @@ export const syncRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       // Send initial comment to establish stream
       reply.raw.write(': stream opened\n\n');
 
-      const listenerClient = await pool.connect();
       const channel = `sync_${userId}`;
 
-      // Escape channel identifier to safely handle UUID hyphens
-      const escapedChannel = `"${channel}"`;
-      await listenerClient.query(`LISTEN ${escapedChannel}`);
-
       let debounceTimer: NodeJS.Timeout | null = null;
-      const onNotification = (msg: pg.Notification) => {
-        if (msg.channel === channel) {
-          if (debounceTimer) clearTimeout(debounceTimer);
-          debounceTimer = setTimeout(() => {
-            if (!reply.raw.writableEnded) {
-              reply.raw.write('event: changed\ndata: {}\n\n');
-            }
-          }, 500);
-        }
+      const onNotification = () => {
+        if (debounceTimer) clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(() => {
+          if (!reply.raw.writableEnded) {
+            reply.raw.write('event: changed\ndata: {}\n\n');
+          }
+        }, 500);
       };
 
-      listenerClient.on('notification', onNotification);
+      // All streams share one LISTEN connection instead of each holding a pooled client.
+      const unsubscribe = await getNotifyHub().subscribe(channel, onNotification);
 
       // Heartbeat comment every 25s
       const heartbeat = setInterval(() => {
@@ -267,16 +262,10 @@ export const syncRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         }
       }, 25000);
 
-      req.raw.on('close', async () => {
+      req.raw.on('close', () => {
         if (debounceTimer) clearTimeout(debounceTimer);
         clearInterval(heartbeat);
-        listenerClient.removeListener('notification', onNotification);
-        try {
-          await listenerClient.query(`UNLISTEN ${escapedChannel}`);
-        } catch {
-          // ignore error on socket close
-        }
-        listenerClient.release();
+        void unsubscribe();
       });
     },
   );

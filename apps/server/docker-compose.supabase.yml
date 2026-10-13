@@ -1,0 +1,19 @@
+# Use Supabase (or any hosted Postgres) instead of the bundled `db` container.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.supabase.yml up -d --build
+#
+# Set DATABASE_URL in .env to the Supabase *session pooler* URI (port 5432), e.g.
+#   postgres://postgres.<project-ref>:<password>@aws-0-<region>.pooler.supabase.com:5432/postgres
+# The transaction pooler (port 6543) breaks live sync (LISTEN/NOTIFY).
+services:
+  db:
+    # Keep the bundled Postgres out of `up` unless explicitly requested.
+    profiles: ["local-db"]
+
+  api:
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL to your Supabase session pooler URI}
+      DATABASE_SSL: ${DATABASE_SSL:-require}
+      DATABASE_CA_CERT: ${DATABASE_CA_CERT:-}
+      DATABASE_POOL_MAX: ${DATABASE_POOL_MAX:-10}
+    depends_on: !reset {}

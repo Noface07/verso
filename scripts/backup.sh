@@ -16,8 +16,15 @@ echo "=== [Folio Backup] Starting at $(date) ==="
 
 # 1. PostgreSQL logical dump
 SQL_DUMP_FILE="$BACKUP_DIR/folio_db_${TIMESTAMP}.sql.gz"
-echo "-> Dumping PostgreSQL database '$DB_NAME' from container '$CONTAINER_DB'..."
-docker exec "$CONTAINER_DB" pg_dump -U "$DB_USER" "$DB_NAME" | gzip > "$SQL_DUMP_FILE"
+if [ -n "${BACKUP_DATABASE_URL:-}" ]; then
+  # Hosted database (e.g. Supabase): no local db container, dump over the network.
+  # Use the direct or session-pooler URI; pg_dump client must be >= the server major.
+  echo "-> Dumping PostgreSQL database from BACKUP_DATABASE_URL..."
+  docker run --rm postgres:17-alpine pg_dump --no-owner --no-privileges --schema=public     "$BACKUP_DATABASE_URL" | gzip > "$SQL_DUMP_FILE"
+else
+  echo "-> Dumping PostgreSQL database '$DB_NAME' from container '$CONTAINER_DB'..."
+  docker exec "$CONTAINER_DB" pg_dump -U "$DB_USER" "$DB_NAME" | gzip > "$SQL_DUMP_FILE"
+fi
 echo "-> Saved database dump to $SQL_DUMP_FILE ($(du -h "$SQL_DUMP_FILE" | cut -f1))"
 
 # 2. Local dump retention (delete dumps older than 30 days)

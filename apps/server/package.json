@@ -11,8 +11,11 @@
     "typecheck": "tsc -b",
     "lint": "eslint .",
     "test": "vitest run",
-    "migrate:up": "node-pg-migrate up",
-    "migrate:down": "node-pg-migrate down"
+    "db:migrate": "tsx src/migrate.ts up",
+    "db:rollback": "tsx src/migrate.ts down",
+    "db:check": "tsx src/db-check.ts",
+    "migrate:up": "tsx src/migrate.ts up",
+    "migrate:down": "tsx src/migrate.ts down"
   },
   "dependencies": {
     "@fastify/cors": "^10.0.0",

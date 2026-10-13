@@ -25,6 +25,7 @@ services:
       - "8080:8080"
     environment:
       DATABASE_URL: postgres://reader:${DB_PASSWORD:-reader}@db:5432/reader
+      MIGRATE_ON_START: "true"
       JWT_SECRET: ${JWT_SECRET:-dev_secret_must_be_at_least_32_characters_long_for_hs256}
       ALLOW_SIGNUP: "true"
       CORS_ORIGINS: "http://localhost:5173,http://tauri.localhost,tauri://localhost"
