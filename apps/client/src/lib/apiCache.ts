@@ -13,13 +13,16 @@ export interface CacheOptions {
 export async function cachedJson<T>(key: string, load: () => Promise<T>, opts: CacheOptions): Promise<T> {
   const k = PREFIX + key
   const hit = (await db.kv.get(k).catch(() => undefined))?.value as { at: number; data: T } | undefined
-  if (hit && Date.now() - hit.at < opts.freshMs) return hit.data
+  const isEmpty = Array.isArray(hit?.data) && hit.data.length === 0
+  if (hit && !isEmpty && Date.now() - hit.at < opts.freshMs) return hit.data
 
   const live = load().then((data) => {
-    void db.kv.put({ key: k, value: { at: Date.now(), data } }).catch(() => {})
+    if (!Array.isArray(data) || data.length > 0) {
+      void db.kv.put({ key: k, value: { at: Date.now(), data } }).catch(() => {})
+    }
     return data
   })
-  if (!hit) return live
+  if (!hit || isEmpty) return live
   return Promise.race([
     live,
     new Promise<T>((resolve) => setTimeout(() => resolve(hit.data), opts.staleWaitMs ?? 4000)),

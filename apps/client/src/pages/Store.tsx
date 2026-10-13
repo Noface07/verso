@@ -161,6 +161,7 @@ export default function Store() {
   const [extStoreOpen, setExtStoreOpen] = useState(false);
   const [extensions, setExtensions] = useState<SuwayomiExtension[]>([]);
   const [extSearch, setExtSearch] = useState('');
+  const [extLangFilter, setExtLangFilter] = useState('');
   const [extTab, setExtTab] = useState<'installed' | 'available'>('installed');
   const [installingPkg, setInstallingPkg] = useState<string | null>(null);
   const [loadingExts, setLoadingExts] = useState(false);
@@ -181,7 +182,10 @@ export default function Store() {
     [extensions],
   );
   const displayedExts = useMemo(() => {
-    const list = extTab === 'installed' ? installedExts : availableExts;
+    let list = extTab === 'installed' ? installedExts : availableExts;
+    if (extLangFilter) {
+      list = list.filter((e) => e.lang === extLangFilter);
+    }
     if (!extSearch.trim()) return list;
     const q = extSearch.toLowerCase();
     return list.filter(
@@ -190,7 +194,7 @@ export default function Store() {
         e.pkgName.toLowerCase().includes(q) ||
         e.lang.toLowerCase().includes(q),
     );
-  }, [extTab, installedExts, availableExts, extSearch]);
+  }, [extTab, installedExts, availableExts, extSearch, extLangFilter]);
 
   const suwayomiSource = useMemo(() => {
     if (!activeSource) return null;
@@ -313,6 +317,23 @@ export default function Store() {
       alive = false;
     };
   }, [activeSource]);
+
+  const displayedSections = useMemo(() => {
+    if (!filters.lang) return sections;
+    if (filters.lang === 'en') {
+      return sections.filter((s) => s.title.includes('(EN)'));
+    }
+    if (filters.lang === 'all') {
+      return sections.filter((s) => s.title.includes('(ALL)'));
+    }
+    return sections;
+  }, [sections, filters.lang]);
+
+  useEffect(() => {
+    if (displayedSections.length > 0 && !displayedSections.some((s) => s.id === activeSectionId)) {
+      setActiveSectionId(displayedSections[0].id);
+    }
+  }, [displayedSections, activeSectionId]);
 
   // Debounce search query
   useEffect(() => {
@@ -751,14 +772,14 @@ export default function Store() {
 
       {/* Sections Bar (only shown when not actively searching) */}
       {((!debouncedQuery && sections.length > 0) || (activeSource?.filters?.length ?? 0) > 0) && (
-        <div className="px-4 sm:px-6 py-2.5 border-b border-[var(--stroke)] bg-[var(--layer-1)] flex flex-wrap items-center gap-2 shrink-0">
+        <div className="px-4 sm:px-6 py-2 border-b border-[var(--stroke)] bg-[var(--layer-1)] flex items-center gap-2 shrink-0 overflow-x-auto no-scrollbar">
           {activeSource?.filters?.map((f) => (
             <select
               key={f.id}
               aria-label={f.label}
               value={filters[f.id] ?? ''}
               onChange={(e) => setFilters((cur) => ({ ...cur, [f.id]: e.target.value }))}
-              className={`h-7 px-2 rounded-[var(--r-md)] border text-xs outline-none cursor-pointer bg-[var(--layer-2)] ${
+              className={`h-7 px-2 rounded-[var(--r-md)] border text-xs outline-none cursor-pointer bg-[var(--layer-2)] shrink-0 ${
                 filters[f.id] ? 'border-[var(--accent)] text-[var(--accent)]' : 'border-[var(--stroke)] text-[var(--text-2)]'
               }`}
             >
@@ -773,28 +794,67 @@ export default function Store() {
             <button
               type="button"
               onClick={() => setFilters({})}
-              className="text-xs text-[var(--text-3)] hover:text-[var(--text-1)] underline cursor-pointer"
+              className="text-xs text-[var(--text-3)] hover:text-[var(--text-1)] underline cursor-pointer shrink-0"
             >
               Clear filters
             </button>
           )}
-          {!debouncedQuery && sections.length > 0 && (activeSource?.filters?.length ?? 0) > 0 && (
-            <span className="w-px h-5 bg-[var(--stroke)] mx-1 hidden sm:block" aria-hidden="true" />
+          {!debouncedQuery && displayedSections.length > 0 && (activeSource?.filters?.length ?? 0) > 0 && (
+            <span className="w-px h-5 bg-[var(--stroke)] mx-1 hidden sm:block shrink-0" aria-hidden="true" />
           )}
-          {!debouncedQuery && sections.map((sec) => (
-            <button
-              key={sec.id}
-              type="button"
-              onClick={() => setActiveSectionId(sec.id)}
-              className={`px-3 py-1.5 rounded-[var(--r-md)] text-xs font-medium transition-all shrink-0 cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] ${
-                activeSectionId === sec.id
-                  ? 'bg-[var(--accent)] text-white font-semibold shadow-sm'
-                  : 'bg-[var(--layer-2)] text-[var(--text-2)] hover:text-[var(--text-1)] hover:bg-[var(--layer-3)]'
-              }`}
-            >
-              {sec.title}
-            </button>
-          ))}
+
+          {!debouncedQuery && displayedSections.length > 8 ? (
+            <div className="flex items-center gap-2 shrink-0 min-w-0">
+              <select
+                aria-label="Select source or section"
+                value={activeSectionId}
+                onChange={(e) => setActiveSectionId(e.target.value)}
+                className="h-7.5 max-w-[180px] sm:max-w-xs px-2.5 rounded-[var(--r-md)] border border-[var(--stroke)] text-xs font-medium outline-none cursor-pointer bg-[var(--layer-2)] text-[var(--text-1)] focus:border-[var(--accent)] shrink-0"
+              >
+                {displayedSections.map((sec) => (
+                  <option key={sec.id} value={sec.id} className="bg-[var(--layer-solid)] text-[var(--text-1)]">
+                    {sec.title}
+                  </option>
+                ))}
+              </select>
+              <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar">
+                {displayedSections.slice(0, 8).map((sec) => (
+                  <button
+                    key={sec.id}
+                    type="button"
+                    onClick={() => setActiveSectionId(sec.id)}
+                    className={`px-2.5 py-1 rounded-[var(--r-md)] text-xs font-medium transition-all shrink-0 cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] ${
+                      activeSectionId === sec.id
+                        ? 'bg-[var(--accent)] text-white font-semibold shadow-sm'
+                        : 'bg-[var(--layer-2)] text-[var(--text-2)] hover:text-[var(--text-1)] hover:bg-[var(--layer-3)]'
+                    }`}
+                  >
+                    {sec.title}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : (
+            !debouncedQuery && (
+              <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar">
+                {displayedSections.map((sec) => (
+                  <button
+                    key={sec.id}
+                    type="button"
+                    onClick={() => setActiveSectionId(sec.id)}
+                    className={`px-3 py-1.5 rounded-[var(--r-md)] text-xs font-medium transition-all shrink-0 cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] ${
+                      activeSectionId === sec.id
+                        ? 'bg-[var(--accent)] text-white font-semibold shadow-sm'
+                        : 'bg-[var(--layer-2)] text-[var(--text-2)] hover:text-[var(--text-1)] hover:bg-[var(--layer-3)]'
+                    }`}
+                  >
+                    {sec.title}
+                  </button>
+                ))}
+              </div>
+            )
+          )}
+
           {isSuwayomi && (
             <button
               type="button"
@@ -1358,8 +1418,8 @@ export default function Store() {
             Installed Tachiyomi and Mihon extensions from your local Suwayomi server. Install new sources from the Keiyoushi Extension Store to read in Folio.
           </p>
 
-          <div className="flex items-center gap-2">
-            <div className="flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="flex-1 min-w-[180px]">
               <input
                 type="text"
                 value={extSearch}
@@ -1368,6 +1428,16 @@ export default function Store() {
                 className="w-full h-8 px-3 rounded-[var(--r-md)] bg-[var(--layer-2)] border border-[var(--stroke)] text-xs text-[var(--text-1)] outline-none focus:border-[var(--accent)]"
               />
             </div>
+            <select
+              aria-label="Filter extensions by language"
+              value={extLangFilter}
+              onChange={(e) => setExtLangFilter(e.target.value)}
+              className="h-8 px-2.5 rounded-[var(--r-md)] border border-[var(--stroke)] text-xs bg-[var(--layer-2)] text-[var(--text-1)] outline-none cursor-pointer shrink-0"
+            >
+              <option value="">All Languages</option>
+              <option value="en">English (EN)</option>
+              <option value="all">Multi (ALL)</option>
+            </select>
             <div className="flex rounded-[var(--r-md)] bg-[var(--layer-2)] p-0.5 border border-[var(--stroke)] text-xs shrink-0">
               <button
                 type="button"

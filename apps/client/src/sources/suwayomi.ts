@@ -3,6 +3,7 @@ import { cachedJson } from '../lib/apiCache';
 import { db } from '../db';
 import type {
   CatalogEntry,
+  CatalogFilter,
   CatalogPage,
   CatalogSection,
   ChapterInfo,
@@ -65,6 +66,26 @@ export class SuwayomiSource implements MangaSource {
   baseUrl: string;
   apiKey?: string;
 
+  filters: CatalogFilter[] = [
+    {
+      id: 'feed',
+      label: 'Feed',
+      options: [
+        { value: '', label: '🔥 Popular', hint: 'Browse most popular titles' },
+        { value: 'latest', label: '⏱️ Latest Updates', hint: 'Browse recently updated chapters' },
+      ],
+    },
+    {
+      id: 'lang',
+      label: 'Language',
+      options: [
+        { value: '', label: '🌐 All (EN & Multi)', hint: 'All English & multi-language sources' },
+        { value: 'en', label: '🇬🇧 English (EN)', hint: 'Show only English sources' },
+        { value: 'all', label: '🌍 Multi (ALL)', hint: 'Show only multi-language sources' },
+      ],
+    },
+  ];
+
   constructor(
     id = 'suwayomi',
     name = 'Suwayomi (Tachiyomi)',
@@ -93,6 +114,12 @@ export class SuwayomiSource implements MangaSource {
     return `${this.baseUrl}${cleanPath}`;
   }
 
+  private getFetch(): (input: string | URL, init?: RequestInit) => Promise<Response> {
+    return typeof window !== 'undefined' && typeof window.fetch === 'function'
+      ? (input, init) => window.fetch(input, init)
+      : (input, init) => net.fetch(input, init);
+  }
+
   async getInstalledExtensions(forceRefresh = false): Promise<SuwayomiSourceInfo[]> {
     const cacheKey = `suwayomi:${this.id}:extensions`;
     if (forceRefresh) {
@@ -103,7 +130,8 @@ export class SuwayomiSource implements MangaSource {
       cacheKey,
       async () => {
         try {
-          const res = await net.fetch(url, { headers: this.getHeaders() });
+          const fetchFn = this.getFetch();
+          const res = await fetchFn(url, { headers: this.getHeaders() });
           if (!res.ok) return [];
           const list = (await res.json()) as SuwayomiSourceInfo[];
           return Array.isArray(list) ? list : [];
@@ -169,7 +197,8 @@ export class SuwayomiSource implements MangaSource {
               !node.pkgName.endsWith('.keiyoushi') &&
               !node.pkgName.endsWith('.mihon') &&
               !node.name.toLowerCase().includes('outdated app') &&
-              !node.name.toLowerCase().includes('update to mihon'),
+              !node.name.toLowerCase().includes('update to mihon') &&
+              (node.isInstalled || node.lang === 'en' || node.lang === 'all'),
           );
           return nodes.map((node) => {
             const verMatch = node.apkName?.match(/-v?([0-9.]+)\.apk$/i);
@@ -285,18 +314,39 @@ export class SuwayomiSource implements MangaSource {
     }
   }
 
+  private lastBrowsedSourceId = '';
+
+  private sortSources(extensions: SuwayomiSourceInfo[]): SuwayomiSourceInfo[] {
+    // Only keep English ('en'), multi-language ('all'), and local on-disk source ('0')
+    const realSources = extensions.filter(
+      (ext) => ext.id !== '0' && (ext.lang === 'en' || ext.lang === 'all'),
+    );
+
+    // Prioritize prominent sources like MangaDex to the top of English sources if present
+    const dexSources = realSources.filter((ext) => /mangadex/i.test(ext.name));
+    const otherFavSources = realSources.filter(
+      (ext) => /kodansha|globalcomix/i.test(ext.name) && !/mangadex/i.test(ext.name),
+    );
+    const regularEn = realSources.filter(
+      (ext) => !/mangadex|kodansha|globalcomix/i.test(ext.name),
+    );
+
+    const localSources = extensions.filter((ext) => ext.id === '0');
+    return [...dexSources, ...otherFavSources, ...regularEn, ...localSources];
+  }
+
   async sections(forceRefresh = false): Promise<CatalogSection[]> {
-    const extensions = await this.getInstalledExtensions(forceRefresh);
+    let extensions = await this.getInstalledExtensions(forceRefresh);
+    if (extensions.length === 0 && !forceRefresh) {
+      extensions = await this.getInstalledExtensions(true);
+    }
     if (extensions.length === 0) {
       return [
         { id: 'all', title: 'Tachiyomi Extensions' },
       ];
     }
 
-    // Sort: put real remote extensions first (id !== '0'), and Local source last
-    const realSources = extensions.filter((ext) => ext.id !== '0');
-    const localSources = extensions.filter((ext) => ext.id === '0');
-    const sorted = [...realSources, ...localSources];
+    const sorted = this.sortSources(extensions);
 
     return sorted.map((ext) => ({
       id: ext.id,
@@ -307,10 +357,13 @@ export class SuwayomiSource implements MangaSource {
     }));
   }
 
-  async browse(sectionId: string, cursor?: string): Promise<CatalogPage> {
-    const extensions = await this.getInstalledExtensions();
-    const realSources = extensions.filter((ext) => ext.id !== '0');
-    const defaultSourceId = realSources.length > 0 ? realSources[0].id : extensions[0]?.id || '';
+  async browse(sectionId: string, cursor?: string, filters?: Record<string, string>): Promise<CatalogPage> {
+    let extensions = await this.getInstalledExtensions();
+    if (extensions.length === 0) {
+      extensions = await this.getInstalledExtensions(true);
+    }
+    const sorted = this.sortSources(extensions);
+    const defaultSourceId = sorted.length > 0 ? sorted[0].id : extensions[0]?.id || '';
     const sourceId =
       sectionId && sectionId !== 'all'
         ? sectionId
@@ -322,13 +375,31 @@ export class SuwayomiSource implements MangaSource {
         next: undefined,
       };
     }
+    this.lastBrowsedSourceId = sourceId;
 
     const page = cursor ? parseInt(cursor, 10) : 1;
-    const url = `${this.baseUrl}/api/v1/source/${sourceId}/popular/${page}`;
+    const isLatest = filters?.feed === 'latest';
+    const primaryEndpoint = isLatest ? 'latest' : 'popular';
+    const fallbackEndpoint = isLatest ? 'popular' : 'latest';
+    const url = `${this.baseUrl}/api/v1/source/${sourceId}/${primaryEndpoint}/${page}`;
 
-    const res = await net.fetch(url, { headers: this.getHeaders() });
-    if (!res.ok) {
-      throw new Error(`Failed to load Suwayomi source: ${res.statusText}`);
+    let res = await this.getFetch()(url, { headers: this.getHeaders() });
+    const contentType = res.headers.get('content-type') || '';
+    if (!res.ok || contentType.includes('text/html')) {
+      // Fallback to alternative endpoint if primary endpoint fails
+      const fallbackUrl = `${this.baseUrl}/api/v1/source/${sourceId}/${fallbackEndpoint}/${page}`;
+      const fallbackRes = await this.getFetch()(fallbackUrl, { headers: this.getHeaders() });
+      const fallbackContentType = fallbackRes.headers.get('content-type') || '';
+      if (fallbackRes.ok && !fallbackContentType.includes('text/html')) {
+        res = fallbackRes;
+      } else {
+        let detail = res.statusText;
+        try {
+          const errText = await res.text();
+          if (errText) detail = errText.slice(0, 120);
+        } catch {}
+        throw new Error(`Failed to load Suwayomi source: ${detail || res.statusText || 'Request failed'}`);
+      }
     }
 
     const data = (await res.json()) as SuwayomiMangaListResponse;
@@ -353,9 +424,16 @@ export class SuwayomiSource implements MangaSource {
     };
   }
 
-  async search(query: string, cursor?: string): Promise<CatalogPage> {
-    const extensions = await this.getInstalledExtensions();
-    const sourceId = extensions.length > 0 ? extensions[0].id : '';
+  async search(query: string, cursor?: string, filters?: Record<string, string>): Promise<CatalogPage> {
+    let extensions = await this.getInstalledExtensions();
+    if (extensions.length === 0) {
+      extensions = await this.getInstalledExtensions(true);
+    }
+    const sorted = this.sortSources(extensions);
+    const sourceId =
+      filters?.source ||
+      this.lastBrowsedSourceId ||
+      (sorted.length > 0 ? sorted[0].id : extensions[0]?.id || '');
 
     if (!sourceId) {
       return { items: [] };
@@ -364,7 +442,7 @@ export class SuwayomiSource implements MangaSource {
     const page = cursor ? parseInt(cursor, 10) : 1;
     const url = `${this.baseUrl}/api/v1/source/${sourceId}/search?query=${encodeURIComponent(query.trim())}&page=${page}`;
 
-    const res = await net.fetch(url, { headers: this.getHeaders() });
+    const res = await this.getFetch()(url, { headers: this.getHeaders() });
     if (!res.ok) {
       throw new Error(`Failed to search Suwayomi: ${res.statusText}`);
     }
@@ -397,7 +475,7 @@ export class SuwayomiSource implements MangaSource {
     const mangaId = parts[parts.length - 1];
     const url = `${this.baseUrl}/api/v1/manga/${mangaId}`;
 
-    const res = await net.fetch(url, { headers: this.getHeaders() });
+    const res = await this.getFetch()(url, { headers: this.getHeaders() });
     if (!res.ok) {
       throw new Error(`Failed to fetch Suwayomi manga details: ${res.statusText}`);
     }
@@ -423,9 +501,10 @@ export class SuwayomiSource implements MangaSource {
     const mangaId = parts[parts.length - 1];
     const url = `${this.baseUrl}/api/v1/manga/${mangaId}/chapters`;
 
-    const res = await net.fetch(url, { headers: this.getHeaders() });
-    if (!res.ok) {
-      throw new Error(`Failed to fetch Suwayomi chapters: ${res.statusText}`);
+    const res = await this.getFetch()(url, { headers: this.getHeaders() });
+    const contentType = res.headers.get('content-type') || '';
+    if (!res.ok || contentType.includes('text/html')) {
+      throw new Error(`Failed to fetch Suwayomi chapters: ${res.statusText || 'Invalid response'}`);
     }
 
     const rawChapters = (await res.json()) as SuwayomiChapterItem[];
@@ -441,44 +520,77 @@ export class SuwayomiSource implements MangaSource {
   }
 
   async pages(chapterId: string): Promise<PageRef[]> {
-    // Try fetching pages endpoint
-    const url = `${this.baseUrl}/api/v1/chapter/${chapterId}/pages`;
+    // 1. Primary: Query Suwayomi GraphQL mutation fetchChapterPages
     try {
-      const res = await net.fetch(url, { headers: this.getHeaders() });
-      if (res.ok) {
-        const data = await res.json();
-        if (Array.isArray(data)) {
-          return data.map((item, idx) => {
-            const pageUrl = typeof item === 'string' ? item : item.url || item.path;
-            return {
-              index: idx + 1,
-              url: this.resolveUrl(pageUrl || `/api/v1/chapter/${chapterId}/page/${idx}`),
+      const numId = parseInt(chapterId, 10);
+      if (!Number.isNaN(numId)) {
+        const gqlRes = await this.getFetch()(`${this.baseUrl}/api/graphql`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...this.getHeaders(),
+          },
+          body: JSON.stringify({
+            query: `
+              mutation FetchPages($input: FetchChapterPagesInput!) {
+                fetchChapterPages(input: $input) {
+                  chapter {
+                    id
+                    pageCount
+                  }
+                  pages
+                }
+              }
+            `,
+            variables: { input: { chapterId: numId } },
+          }),
+        });
+
+        const contentType = gqlRes.headers.get('content-type') || '';
+        if (gqlRes.ok && !contentType.includes('text/html')) {
+          const gqlData = (await gqlRes.json()) as {
+            data?: {
+              fetchChapterPages?: {
+                pages?: string[];
+                chapter?: { pageCount?: number };
+              };
             };
-          });
+          };
+          const rawPages = gqlData.data?.fetchChapterPages?.pages;
+          if (Array.isArray(rawPages) && rawPages.length > 0) {
+            return rawPages.map((pagePath, idx) => ({
+              index: idx + 1,
+              url: this.resolveUrl(pagePath),
+            }));
+          }
         }
       }
     } catch {
       // Fallback below
     }
 
-    // Default Suwayomi page index convention
-    // Fetch chapter info for pageCount
+    // 2. Fallback: Query REST chapter endpoint (used by test mocks and older Suwayomi versions)
     const chUrl = `${this.baseUrl}/api/v1/chapter/${chapterId}`;
-    const chRes = await net.fetch(chUrl, { headers: this.getHeaders() });
-    if (!chRes.ok) {
-      throw new Error(`Failed to load Suwayomi chapter: ${chRes.statusText}`);
+    try {
+      const chRes = await this.getFetch()(chUrl, { headers: this.getHeaders() });
+      const contentType = chRes.headers.get('content-type') || '';
+      if (chRes.ok && !contentType.includes('text/html')) {
+        const ch = (await chRes.json()) as SuwayomiChapterItem;
+        const count = ch.pageCount && ch.pageCount > 0 ? ch.pageCount : 20;
+        const pages: PageRef[] = [];
+        for (let i = 0; i < count; i++) {
+          pages.push({
+            index: i + 1,
+            url: `${this.baseUrl}/api/v1/chapter/${chapterId}/page/${i}`,
+          });
+        }
+        return pages;
+      }
+    } catch {
+      // Fall through to error
     }
 
-    const ch = (await chRes.json()) as SuwayomiChapterItem;
-    const count = ch.pageCount || 20;
-    const pages: PageRef[] = [];
-    for (let i = 0; i < count; i++) {
-      pages.push({
-        index: i + 1,
-        url: `${this.baseUrl}/api/v1/chapter/${chapterId}/page/${i}`,
-      });
-    }
-    return pages;
+    throw new Error(`Failed to load chapter ${chapterId}: Suwayomi server did not return chapter pages`);
   }
 
   credit(chapter: ChapterInfo): string {
