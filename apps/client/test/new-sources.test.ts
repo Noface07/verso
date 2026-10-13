@@ -454,7 +454,11 @@ describe('New Manga & Book Sources (Tachiyomi, Suwayomi, Mihon, Kotatsu)', () =>
 
       vi.stubGlobal(
         'fetch',
-        vi.fn().mockImplementation(async (url: string) => {
+        vi.fn().mockImplementation(async (rawUrl: string) => {
+          // netFetch may proxy localhost URLs: decode to match the original path
+          let url = rawUrl;
+          const proxyMatch = rawUrl.match(/[?&]url=([^&]+)/);
+          if (proxyMatch) url = decodeURIComponent(proxyMatch[1]);
           if (url.includes('/source/list')) {
             return new Response(JSON.stringify(mockExtensions), { status: 200 });
           }
@@ -599,7 +603,11 @@ describe('New Manga & Book Sources (Tachiyomi, Suwayomi, Mihon, Kotatsu)', () =>
 
       vi.stubGlobal(
         'fetch',
-        vi.fn().mockImplementation(async (url: string) => {
+        vi.fn().mockImplementation(async (rawUrl: string) => {
+          // netFetch may proxy localhost URLs: decode to match the original path
+          let url = rawUrl;
+          const proxyMatch = rawUrl.match(/[?&]url=([^&]+)/);
+          if (proxyMatch) url = decodeURIComponent(proxyMatch[1]);
           if (url.includes('/api/v1/series?')) {
             return new Response(JSON.stringify(mockSeries), { status: 200 });
           }

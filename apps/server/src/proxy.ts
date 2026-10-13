@@ -15,6 +15,8 @@ const STATIC_ALLOWED_HOSTS = new Set([
   'archive.org',
   'mangapill.com',
   'cdn.readdetectiveconan.com',
+  'localhost',
+  '127.0.0.1',
 ]);
 
 function isStaticAllowedHost(hostname: string): boolean {
@@ -67,140 +69,156 @@ setInterval(() => {
 }, 60000);
 
 export const proxyRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
-  app.get<{ Querystring: { url?: string } }>(
-    '/',
-    async (req, reply) => {
-      const rawUrl = req.query?.url;
-      if (!rawUrl || typeof rawUrl !== 'string') {
-        return reply.code(400).send({ error: 'url parameter required' });
-      }
+  const handler = async (
+    req: import('fastify').FastifyRequest<{ Querystring: { url?: string } }>,
+    reply: import('fastify').FastifyReply,
+  ) => {
+    const rawUrl = req.query?.url;
+    if (!rawUrl || typeof rawUrl !== 'string') {
+      return reply.code(400).send({ error: 'url parameter required' });
+    }
 
-      let parsed: URL;
+    let parsed: URL;
+    try {
+      parsed = new URL(rawUrl);
+    } catch {
+      return reply.code(400).send({ error: 'invalid url' });
+    }
+
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      return reply.code(400).send({ error: 'only http and https supported' });
+    }
+
+    const hostname = parsed.hostname.toLowerCase();
+
+    // Try verifying JWT if authorization header is provided
+    let userId: string | null = null;
+    if (req.headers.authorization) {
       try {
-        parsed = new URL(rawUrl);
+        await req.jwtVerify();
+        userId = req.user.sub;
       } catch {
-        return reply.code(400).send({ error: 'invalid url' });
+        // ignore invalid token for static allowed hosts, but don't grant user permissions
       }
+    }
 
-      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-        return reply.code(400).send({ error: 'only http and https supported' });
+    // Rate limit checks:
+    const rateLimitKey = userId ? `user:${userId}` : `ip:${req.ip}`;
+    if (!checkRateLimit(`overall:${rateLimitKey}`, 10, 10)) {
+      return reply.code(429).send({ error: 'overall proxy rate limit exceeded (10 req/s)' });
+    }
+
+    // 4 req/s for api.mangadex.org
+    if (hostname === 'api.mangadex.org') {
+      if (!checkRateLimit(`mangadex:${rateLimitKey}`, 4, 4)) {
+        return reply.code(429).send({ error: 'mangadex proxy rate limit exceeded (4 req/s)' });
       }
+    }
 
-      const hostname = parsed.hostname.toLowerCase();
+    // Check allowlist: static hosts first
+    let isAllowed = isStaticAllowedHost(hostname);
+    let isUserSourceHost = false;
 
-      // Try verifying JWT if authorization header is provided
-      let userId: string | null = null;
-      if (req.headers.authorization) {
+    // Check user source hosts if not static allowed and user is authenticated
+    if (!isAllowed && userId) {
+      const sourcesRes = await pool.query<{ url: string }>(
+        'select url from sources where user_id = $1 and deleted_at is null',
+        [userId],
+      );
+      for (const row of sourcesRes.rows) {
         try {
-          await req.jwtVerify();
-          userId = req.user.sub;
-        } catch {
-          // ignore invalid token for static allowed hosts, but don't grant user permissions
-        }
-      }
-
-      // Rate limit checks:
-      const rateLimitKey = userId ? `user:${userId}` : `ip:${req.ip}`;
-      if (!checkRateLimit(`overall:${rateLimitKey}`, 10, 10)) {
-        return reply.code(429).send({ error: 'overall proxy rate limit exceeded (10 req/s)' });
-      }
-
-      // 4 req/s for api.mangadex.org
-      if (hostname === 'api.mangadex.org') {
-        if (!checkRateLimit(`mangadex:${rateLimitKey}`, 4, 4)) {
-          return reply.code(429).send({ error: 'mangadex proxy rate limit exceeded (4 req/s)' });
-        }
-      }
-
-      // Check allowlist: static hosts first
-      let isAllowed = isStaticAllowedHost(hostname);
-      let isUserSourceHost = false;
-
-      // Check user source hosts if not static allowed and user is authenticated
-      if (!isAllowed && userId) {
-        const sourcesRes = await pool.query<{ url: string }>(
-          'select url from sources where user_id = $1 and deleted_at is null',
-          [userId],
-        );
-        for (const row of sourcesRes.rows) {
-          try {
-            const sourceUrl = new URL(row.url);
-            if (sourceUrl.hostname.toLowerCase() === hostname) {
-              isAllowed = true;
-              isUserSourceHost = true;
-              break;
-            }
-          } catch {
-            // ignore malformed source url
+          const sourceUrl = new URL(row.url);
+          if (sourceUrl.hostname.toLowerCase() === hostname) {
+            isAllowed = true;
+            isUserSourceHost = true;
+            break;
           }
+        } catch {
+          // ignore malformed source url
         }
       }
+    }
 
-      if (!isAllowed) {
-        return reply.code(403).send({ error: `host not allowed: ${hostname}` });
+    if (!isAllowed) {
+      return reply.code(403).send({ error: `host not allowed: ${hostname}` });
+    }
+
+    // Construct forward headers
+    const forwardHeaders: Record<string, string> = {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    };
+
+    if (hostname.endsWith('readdetectiveconan.com') || hostname.endsWith('mangapill.com')) {
+      forwardHeaders['Referer'] = 'https://mangapill.com/';
+    }
+
+    if (req.headers.accept) {
+      forwardHeaders['Accept'] = req.headers.accept;
+    }
+    if (req.headers.range) {
+      forwardHeaders['Range'] = req.headers.range;
+    }
+    // Forward Content-Type for POST/PUT requests (e.g. GraphQL mutations)
+    if (req.headers['content-type']) {
+      forwardHeaders['Content-Type'] = req.headers['content-type'];
+    }
+    // Forward Authorization ONLY for user source hosts
+    if (isUserSourceHost && req.headers.authorization) {
+      forwardHeaders['Authorization'] = req.headers.authorization;
+    }
+
+    // Determine request body for POST/PUT
+    const method = req.method as string;
+    const fetchInit: RequestInit = {
+      method,
+      headers: forwardHeaders,
+      redirect: 'follow',
+    };
+    if (method === 'POST' || method === 'PUT') {
+      const rawBody = req.body;
+      fetchInit.body = typeof rawBody === 'string' ? rawBody : JSON.stringify(rawBody);
+    }
+
+    let upstreamRes: Response;
+    try {
+      upstreamRes = await fetch(parsed.toString(), fetchInit);
+    } catch (err: unknown) {
+      const error = err as Error;
+      return reply.code(502).send({ error: 'upstream fetch failed', message: error.message });
+    }
+
+    reply.code(upstreamRes.status);
+
+    // Forward relevant headers
+    const forwardableHeaders = [
+      'content-type',
+      'content-length',
+      'content-range',
+      'accept-ranges',
+      'etag',
+      'last-modified',
+      'cache-control',
+    ];
+
+    for (const h of forwardableHeaders) {
+      const val = upstreamRes.headers.get(h);
+      if (val) {
+        reply.header(h, val);
       }
+    }
 
-      // Construct forward headers
-      const forwardHeaders: Record<string, string> = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-      };
+    if (!upstreamRes.body) {
+      return reply.send();
+    }
 
-      if (hostname.endsWith('readdetectiveconan.com') || hostname.endsWith('mangapill.com')) {
-        forwardHeaders['Referer'] = 'https://mangapill.com/';
-      }
+    // Stream the body back
+    const nodeStream = Readable.fromWeb(upstreamRes.body as import('node:stream/web').ReadableStream);
+    return reply.send(nodeStream);
+  };
 
-      if (req.headers.accept) {
-        forwardHeaders['Accept'] = req.headers.accept;
-      }
-      if (req.headers.range) {
-        forwardHeaders['Range'] = req.headers.range;
-      }
-      // Forward Authorization ONLY for user source hosts
-      if (isUserSourceHost && req.headers.authorization) {
-        forwardHeaders['Authorization'] = req.headers.authorization;
-      }
-
-      let upstreamRes: Response;
-      try {
-        upstreamRes = await fetch(parsed.toString(), {
-          method: 'GET',
-          headers: forwardHeaders,
-          redirect: 'follow',
-        });
-      } catch (err: unknown) {
-        const error = err as Error;
-        return reply.code(502).send({ error: 'upstream fetch failed', message: error.message });
-      }
-
-      reply.code(upstreamRes.status);
-
-      // Forward relevant headers
-      const forwardableHeaders = [
-        'content-type',
-        'content-length',
-        'content-range',
-        'accept-ranges',
-        'etag',
-        'last-modified',
-        'cache-control',
-      ];
-
-      for (const h of forwardableHeaders) {
-        const val = upstreamRes.headers.get(h);
-        if (val) {
-          reply.header(h, val);
-        }
-      }
-
-      if (!upstreamRes.body) {
-        return reply.send();
-      }
-
-      // Stream the body back
-      const nodeStream = Readable.fromWeb(upstreamRes.body as import('node:stream/web').ReadableStream);
-      return reply.send(nodeStream);
-    },
-  );
+  app.get<{ Querystring: { url?: string } }>('/', handler);
+  app.post<{ Querystring: { url?: string } }>('/', handler);
 };
 
 export default proxyRoutes;
+

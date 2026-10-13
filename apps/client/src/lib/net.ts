@@ -87,9 +87,27 @@ const DIRECT_CORS_HOSTS = new Set([
   'openlibrary.org',
   'covers.openlibrary.org',
   'archive.org',
-  'localhost',
-  '127.0.0.1',
 ]);
+
+/**
+ * True when a localhost/127.0.0.1 URL can be fetched directly without a proxy.
+ * In a non-browser environment (Node/tests), localhost is always reachable.
+ * In a browser, only same-origin localhost (same port) avoids CORS issues.
+ */
+function isLocalhostDirectFetch(targetUrl: string): boolean {
+  try {
+    const target = new URL(targetUrl);
+    const targetHost = target.hostname.toLowerCase();
+    if (targetHost !== 'localhost' && targetHost !== '127.0.0.1') return false;
+    const current = typeof window !== 'undefined' ? window.location : undefined;
+    // Non-browser (Node/tests/SSR): no CORS, fetch directly
+    if (!current || !current.port) return true;
+    // Browser: only direct-fetch if same origin (same port + protocol)
+    return target.port === current.port && target.protocol === current.protocol;
+  } catch {
+    return false;
+  }
+}
 
 function corsBlockedError(host: string): Error {
   return new Error(
@@ -148,9 +166,18 @@ export async function netFetch(
 
   if (!isTauri && isExternalHttp) {
     const serverUrl = await getServerUrl();
-    let serverHost = '';
+    let serverOrigin = '';
     try {
-      serverHost = new URL(serverUrl).hostname.toLowerCase();
+      const su = new URL(serverUrl);
+      serverOrigin = su.origin; // e.g. "http://localhost:8080"
+    } catch {
+      // Ignore URL parse errors
+    }
+
+    let targetOrigin = '';
+    try {
+      const tu = new URL(urlStr);
+      targetOrigin = tu.origin; // e.g. "http://localhost:4567"
     } catch {
       // Ignore URL parse errors
     }
@@ -164,8 +191,11 @@ export async function netFetch(
       }
     }
 
-    // Only route through /proxy if user is authenticated or targeting a non-CORS host
-    if (serverHost && serverHost !== targetHost && (token || !DIRECT_CORS_HOSTS.has(targetHost))) {
+    // Route through /proxy when:
+    // - The target is not the Folio server itself (different origin)
+    // - AND user is authenticated OR the target host doesn't support CORS
+    const isTargetingServer = serverOrigin && targetOrigin && serverOrigin === targetOrigin;
+    if (serverOrigin && !isTargetingServer && (token || (!DIRECT_CORS_HOSTS.has(targetHost) && !isLocalhostDirectFetch(urlStr)))) {
       targetUrl = `${serverUrl}/proxy?url=${encodeURIComponent(urlStr)}`;
       if (token) {
         headers.set('Authorization', `Bearer ${token}`);
@@ -236,7 +266,7 @@ export async function netFetch(
       // only added ~7s of backoff before the same "Failed to fetch".
       if (!isTauri && isExternalHttp && targetUrl === urlStr) {
         const host = new URL(urlStr).hostname.toLowerCase();
-        if (!DIRECT_CORS_HOSTS.has(host)) throw corsBlockedError(host);
+        if (!DIRECT_CORS_HOSTS.has(host) && !isLocalhostDirectFetch(urlStr)) throw corsBlockedError(host);
       }
 
       if (attempt < maxRetries) {
