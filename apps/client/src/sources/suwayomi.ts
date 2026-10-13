@@ -1,5 +1,6 @@
 import { net } from '../lib/net';
 import { cachedJson } from '../lib/apiCache';
+import { db } from '../db';
 import type {
   CatalogEntry,
   CatalogPage,
@@ -92,10 +93,14 @@ export class SuwayomiSource implements MangaSource {
     return `${this.baseUrl}${cleanPath}`;
   }
 
-  async getInstalledExtensions(): Promise<SuwayomiSourceInfo[]> {
+  async getInstalledExtensions(forceRefresh = false): Promise<SuwayomiSourceInfo[]> {
+    const cacheKey = `suwayomi:${this.id}:extensions`;
+    if (forceRefresh) {
+      await db.kv.delete(`cache:${cacheKey}`).catch(() => {});
+    }
     const url = `${this.baseUrl}/api/v1/source/list`;
     return cachedJson<SuwayomiSourceInfo[]>(
-      `suwayomi:${this.id}:extensions`,
+      cacheKey,
       async () => {
         try {
           const res = await net.fetch(url, { headers: this.getHeaders() });
@@ -106,21 +111,116 @@ export class SuwayomiSource implements MangaSource {
           return [];
         }
       },
-      { freshMs: 10 * 60_000 },
+      { freshMs: forceRefresh ? 0 : 10 * 60_000 },
     );
   }
 
-  /** Fetch all extensions in the Suwayomi extension store (Keiyoushi repo) */
+  /** Fetch all extensions in the Suwayomi extension store (Keiyoushi repo & installed) */
   async getExtensionList(): Promise<SuwayomiExtension[]> {
-    const url = `${this.baseUrl}/api/v1/extension/list`;
+    const url = `${this.baseUrl}/api/graphql`;
     try {
-      const res = await net.fetch(url, { headers: this.getHeaders() });
-      if (!res.ok) return [];
-      const list = (await res.json()) as SuwayomiExtension[];
-      return Array.isArray(list) ? list : [];
+      const res = await net.fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...this.getHeaders(),
+        },
+        body: JSON.stringify({
+          query: `
+            query GetExtensions {
+              extensions {
+                nodes {
+                  name
+                  pkgName
+                  lang
+                  isInstalled
+                  hasUpdate
+                  iconUrl
+                  apkName
+                }
+              }
+            }
+          `,
+        }),
+      });
+
+      if (res.ok) {
+        const data = (await res.json()) as {
+          data?: {
+            extensions?: {
+              nodes?: Array<{
+                name: string;
+                pkgName: string;
+                lang: string;
+                isInstalled: boolean;
+                hasUpdate: boolean;
+                iconUrl?: string;
+                apkName?: string;
+              }>;
+            };
+          };
+        };
+
+        const nodes = data.data?.extensions?.nodes;
+        if (Array.isArray(nodes) && nodes.length > 0) {
+          return nodes.map((node) => {
+            const verMatch = node.apkName?.match(/-v?([0-9.]+)\.apk$/i);
+            const versionName = verMatch ? verMatch[1] : '1.0';
+            return {
+              name: node.name,
+              pkgName: node.pkgName,
+              versionName,
+              lang: node.lang || 'all',
+              isNsfw: false,
+              installed: Boolean(node.isInstalled),
+              hasUpdate: Boolean(node.hasUpdate),
+              iconUrl: node.iconUrl ? this.resolveUrl(node.iconUrl) : undefined,
+            };
+          });
+        }
+      }
     } catch {
-      return [];
+      // Fallback to Keiyoushi index if GraphQL is unavailable
     }
+
+    // Fallback: If GraphQL returned no extensions or errored, fetch Keiyoushi repo index
+    try {
+      const keiyoushiUrl = 'https://raw.githubusercontent.com/keiyoushi/extensions/repo/index.min.json';
+      const cdnUrl = 'https://cdn.jsdelivr.net/gh/keiyoushi/extensions@repo/index.min.json';
+      let res = await net.fetch(keiyoushiUrl).catch(() => null);
+      if (!res || !res.ok) {
+        res = await net.fetch(cdnUrl).catch(() => null);
+      }
+      if (res && res.ok) {
+        const rawList = (await res.json()) as Array<{
+          name: string;
+          pkg: string;
+          version?: string;
+          lang?: string;
+          nsfw?: number;
+          icon?: string;
+        }>;
+        if (Array.isArray(rawList)) {
+          const installedSources = await this.getInstalledExtensions();
+          const installedNames = new Set(installedSources.map((s) => s.name.toLowerCase()));
+
+          return rawList.map((item) => ({
+            name: item.name,
+            pkgName: item.pkg,
+            versionName: item.version || '1.0',
+            lang: item.lang || 'all',
+            isNsfw: Boolean(item.nsfw),
+            installed: installedNames.has(item.name.toLowerCase()),
+            hasUpdate: false,
+            iconUrl: item.icon,
+          }));
+        }
+      }
+    } catch {
+      // Ignore
+    }
+
+    return [];
   }
 
   /** Install an extension from the Suwayomi extension store */
@@ -135,16 +235,23 @@ export class SuwayomiSource implements MangaSource {
         },
         body: JSON.stringify({
           query: `
-            mutation InstallExt($id: ID!) {
-              updateExtension(input: { id: $id, patch: { install: true } }) {
+            mutation InstallExt($input: UpdateExtensionInput!) {
+              updateExtension(input: $input) {
                 clientMutationId
               }
             }
           `,
-          variables: { id: pkgName },
+          variables: {
+            input: {
+              id: pkgName,
+              patch: { install: true },
+            },
+          },
         }),
       });
-      return res.ok;
+      if (!res.ok) return false;
+      const json = (await res.json()) as { errors?: unknown[] };
+      return !json.errors || json.errors.length === 0;
     } catch {
       return false;
     }
@@ -162,23 +269,30 @@ export class SuwayomiSource implements MangaSource {
         },
         body: JSON.stringify({
           query: `
-            mutation UninstallExt($id: ID!) {
-              updateExtension(input: { id: $id, patch: { uninstall: true } }) {
+            mutation UninstallExt($input: UpdateExtensionInput!) {
+              updateExtension(input: $input) {
                 clientMutationId
               }
             }
           `,
-          variables: { id: pkgName },
+          variables: {
+            input: {
+              id: pkgName,
+              patch: { uninstall: true },
+            },
+          },
         }),
       });
-      return res.ok;
+      if (!res.ok) return false;
+      const json = (await res.json()) as { errors?: unknown[] };
+      return !json.errors || json.errors.length === 0;
     } catch {
       return false;
     }
   }
 
-  async sections(): Promise<CatalogSection[]> {
-    const extensions = await this.getInstalledExtensions();
+  async sections(forceRefresh = false): Promise<CatalogSection[]> {
+    const extensions = await this.getInstalledExtensions(forceRefresh);
     if (extensions.length === 0) {
       return [
         { id: 'all', title: 'Tachiyomi Extensions' },

@@ -87,6 +87,8 @@ const DIRECT_CORS_HOSTS = new Set([
   'openlibrary.org',
   'covers.openlibrary.org',
   'archive.org',
+  'raw.githubusercontent.com',
+  'cdn.jsdelivr.net',
 ]);
 
 /**

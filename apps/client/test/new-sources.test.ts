@@ -514,36 +514,48 @@ describe('New Manga & Book Sources (Tachiyomi, Suwayomi, Mihon, Kotatsu)', () =>
     });
 
     it('fetches extension store list and triggers GraphQL install mutations', async () => {
-      const mockExtList = [
+      const mockExtNodes = [
         {
           name: 'ComicsKingdom',
           pkgName: 'eu.kanade.tachiyomi.extension.all.comicskingdom',
-          versionName: '1.6.0',
+          apkName: 'tachiyomi-all.comicskingdom-v1.6.0.apk',
           lang: 'all',
-          isNsfw: false,
-          installed: true,
+          isInstalled: true,
+          hasUpdate: false,
+          iconUrl: '/api/v1/extension/icon/eu.kanade.tachiyomi.extension.all.comicskingdom',
         },
         {
           name: 'Mangakakalot',
           pkgName: 'eu.kanade.tachiyomi.extension.en.mangakakalot',
-          versionName: '1.6.24',
+          apkName: 'tachiyomi-en.mangakakalot-v1.6.24.apk',
           lang: 'en',
-          isNsfw: true,
-          installed: false,
+          isInstalled: false,
+          hasUpdate: false,
+          iconUrl: '/api/v1/extension/icon/eu.kanade.tachiyomi.extension.en.mangakakalot',
         },
       ];
 
       vi.stubGlobal(
         'fetch',
-        vi.fn().mockImplementation(async (url: string) => {
-          if (url.includes('/api/v1/extension/list')) {
-            return new Response(JSON.stringify(mockExtList), { status: 200 });
-          }
+        vi.fn().mockImplementation(async (rawUrl: string, init?: RequestInit) => {
+          let url = rawUrl;
+          const proxyMatch = rawUrl.match(/[?&]url=([^&]+)/);
+          if (proxyMatch) url = decodeURIComponent(proxyMatch[1]);
+
           if (url.includes('/api/graphql')) {
-            return new Response(
-              JSON.stringify({ data: { updateExtension: { clientMutationId: null } } }),
-              { status: 200 },
-            );
+            const bodyStr = String(init?.body || '');
+            if (bodyStr.includes('GetExtensions')) {
+              return new Response(
+                JSON.stringify({ data: { extensions: { nodes: mockExtNodes } } }),
+                { status: 200 },
+              );
+            }
+            if (bodyStr.includes('updateExtension') || bodyStr.includes('InstallExt') || bodyStr.includes('UninstallExt')) {
+              return new Response(
+                JSON.stringify({ data: { updateExtension: { clientMutationId: null } } }),
+                { status: 200 },
+              );
+            }
           }
           return new Response('Not found', { status: 404 });
         }),

@@ -15,6 +15,8 @@ const STATIC_ALLOWED_HOSTS = new Set([
   'archive.org',
   'mangapill.com',
   'cdn.readdetectiveconan.com',
+  'raw.githubusercontent.com',
+  'cdn.jsdelivr.net',
   'localhost',
   '127.0.0.1',
 ]);

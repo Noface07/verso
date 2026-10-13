@@ -219,7 +219,7 @@ export default function Store() {
       if (ok) {
         const updated = await activeSource.getExtensionList();
         setExtensions(updated);
-        const sec = await activeSource.sections();
+        const sec = await activeSource.sections(true);
         setSections(sec);
       }
     } finally {
@@ -235,7 +235,7 @@ export default function Store() {
       if (ok) {
         const updated = await activeSource.getExtensionList();
         setExtensions(updated);
-        const sec = await activeSource.sections();
+        const sec = await activeSource.sections(true);
         setSections(sec);
       }
     } finally {
