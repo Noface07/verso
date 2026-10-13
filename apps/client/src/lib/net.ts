@@ -130,13 +130,27 @@ export async function netFetch(
   let targetUrl = urlStr;
   const headers = new Headers(init.headers);
 
+  let targetHost = '';
+  try {
+    targetHost = new URL(urlStr).hostname.toLowerCase();
+  } catch {
+    // Ignore URL parse errors
+  }
+
+  if (
+    targetHost.endsWith('readdetectiveconan.com') ||
+    targetHost.endsWith('mangapill.com')
+  ) {
+    if (!headers.has('Referer')) {
+      headers.set('Referer', 'https://mangapill.com/');
+    }
+  }
+
   if (!isTauri && isExternalHttp) {
     const serverUrl = await getServerUrl();
     let serverHost = '';
-    let targetHost = '';
     try {
       serverHost = new URL(serverUrl).hostname.toLowerCase();
-      targetHost = new URL(urlStr).hostname.toLowerCase();
     } catch {
       // Ignore URL parse errors
     }
@@ -326,14 +340,10 @@ export async function remoteSize(url: string, signal?: AbortSignal): Promise<num
 export function proxyImageUrl(url?: string): string | undefined {
   if (!url) return undefined;
   if (url.startsWith('blob:') || url.startsWith('data:')) return url;
-  const isTauri =
-    typeof window !== 'undefined' &&
-    ('__TAURI__' in window || '__TAURI_INTERNALS__' in window);
-  if (isTauri) return url;
   try {
     const parsed = new URL(url);
     const host = parsed.hostname.toLowerCase();
-    if (host === 'cdn.readdetectiveconan.com' || host.endsWith('mangapill.com')) {
+    if (host.endsWith('readdetectiveconan.com') || host.endsWith('mangapill.com')) {
       return `${DEFAULT_SERVER_URL}/proxy?url=${encodeURIComponent(url)}`;
     }
   } catch {
@@ -342,11 +352,37 @@ export function proxyImageUrl(url?: string): string | undefined {
   return url;
 }
 
+/**
+ * Loads a protected image (e.g. MangaPill CDN requiring anti-hotlink Referer)
+ * via netFetch and returns a local blob URL.
+ */
+export async function loadProtectedImage(url: string): Promise<string> {
+  if (!url || url.startsWith('blob:') || url.startsWith('data:')) return url;
+  let target = url;
+  if (url.includes('/proxy?url=')) {
+    const match = url.match(/[?&]url=([^&]+)/);
+    if (match) {
+      target = decodeURIComponent(match[1]);
+    }
+  }
+  const res = await netFetch(target, {
+    headers: {
+      Referer: 'https://mangapill.com/',
+      'User-Agent':
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    },
+  });
+  if (!res.ok) throw new Error(`Image fetch failed: ${res.status}`);
+  const blob = await res.blob();
+  return URL.createObjectURL(blob);
+}
+
 export const net = {
   fetch: netFetch,
   download: netDownload,
   size: remoteSize,
   limiter: rateLimiter,
   proxyImageUrl,
+  loadProtectedImage,
 };
 

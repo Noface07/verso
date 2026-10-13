@@ -6,7 +6,7 @@ import { mangaDexSource } from './mangadex';
 import { openLibrarySource } from './openlibrary';
 import { archiveOrgSource } from './archiveorg';
 import { mangaPillSource } from './mangapill';
-import { SuwayomiSource } from './suwayomi';
+import { SuwayomiSource, defaultSuwayomiSource } from './suwayomi';
 import { KomgaSource } from './komga';
 
 export {
@@ -17,6 +17,7 @@ export {
   mangaDexSource,
   mangaPillSource,
   SuwayomiSource,
+  defaultSuwayomiSource,
   KomgaSource,
   OpdsSource,
 };
@@ -68,16 +69,23 @@ export async function getAllMangaSources(): Promise<MangaSource[]> {
     .toArray();
 
   const customInstances: MangaSource[] = [];
+  let hasDefaultSuwayomi = false;
   for (const cs of customSources) {
     const cred = await db.source_credentials.get(cs.id);
     if (cs.kind === 'suwayomi') {
+      if (cs.url === defaultSuwayomiSource.baseUrl) hasDefaultSuwayomi = true;
       customInstances.push(new SuwayomiSource(cs.id, cs.name, cs.url, cred?.apiKey));
     } else if (cs.kind === 'komga') {
       customInstances.push(new KomgaSource(cs.id, cs.name, cs.url, cred));
     }
   }
 
-  return [mangaDexSource, mangaPillSource, ...customInstances];
+  return [
+    mangaDexSource,
+    mangaPillSource,
+    ...(hasDefaultSuwayomi ? [] : [defaultSuwayomiSource]),
+    ...customInstances,
+  ];
 }
 
 export async function getSourceById(id: string): Promise<CatalogSource | undefined> {
@@ -87,6 +95,7 @@ export async function getSourceById(id: string): Promise<CatalogSource | undefin
   if (id === 'archiveorg') return archiveOrgSource;
   if (id === 'mangadex') return mangaDexSource;
   if (id === 'mangapill') return mangaPillSource;
+  if (id === 'suwayomi') return defaultSuwayomiSource;
 
   // Direct prefix matching for series/item IDs
   if (id.startsWith('openlibrary:')) return openLibrarySource;

@@ -9,6 +9,18 @@ import type {
   PageRef,
 } from './types';
 
+export interface SuwayomiExtension {
+  name: string;
+  pkgName: string;
+  versionName: string;
+  versionCode?: number;
+  lang: string;
+  isNsfw: boolean;
+  installed: boolean;
+  hasUpdate: boolean;
+  iconUrl?: string;
+}
+
 interface SuwayomiSourceInfo {
   id: string;
   name: string;
@@ -98,6 +110,73 @@ export class SuwayomiSource implements MangaSource {
     );
   }
 
+  /** Fetch all extensions in the Suwayomi extension store (Keiyoushi repo) */
+  async getExtensionList(): Promise<SuwayomiExtension[]> {
+    const url = `${this.baseUrl}/api/v1/extension/list`;
+    try {
+      const res = await net.fetch(url, { headers: this.getHeaders() });
+      if (!res.ok) return [];
+      const list = (await res.json()) as SuwayomiExtension[];
+      return Array.isArray(list) ? list : [];
+    } catch {
+      return [];
+    }
+  }
+
+  /** Install an extension from the Suwayomi extension store */
+  async installExtension(pkgName: string): Promise<boolean> {
+    const url = `${this.baseUrl}/api/graphql`;
+    try {
+      const res = await net.fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...this.getHeaders(),
+        },
+        body: JSON.stringify({
+          query: `
+            mutation InstallExt($id: ID!) {
+              updateExtension(input: { id: $id, patch: { install: true } }) {
+                clientMutationId
+              }
+            }
+          `,
+          variables: { id: pkgName },
+        }),
+      });
+      return res.ok;
+    } catch {
+      return false;
+    }
+  }
+
+  /** Uninstall an extension */
+  async uninstallExtension(pkgName: string): Promise<boolean> {
+    const url = `${this.baseUrl}/api/graphql`;
+    try {
+      const res = await net.fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...this.getHeaders(),
+        },
+        body: JSON.stringify({
+          query: `
+            mutation UninstallExt($id: ID!) {
+              updateExtension(input: { id: $id, patch: { uninstall: true } }) {
+                clientMutationId
+              }
+            }
+          `,
+          variables: { id: pkgName },
+        }),
+      });
+      return res.ok;
+    } catch {
+      return false;
+    }
+  }
+
   async sections(): Promise<CatalogSection[]> {
     const extensions = await this.getInstalledExtensions();
     if (extensions.length === 0) {
@@ -106,20 +185,28 @@ export class SuwayomiSource implements MangaSource {
       ];
     }
 
-    return extensions.map((ext) => ({
+    // Sort: put real remote extensions first (id !== '0'), and Local source last
+    const realSources = extensions.filter((ext) => ext.id !== '0');
+    const localSources = extensions.filter((ext) => ext.id === '0');
+    const sorted = [...realSources, ...localSources];
+
+    return sorted.map((ext) => ({
       id: ext.id,
-      title: `${ext.name} (${ext.lang.toUpperCase()})`,
+      title:
+        ext.id === '0'
+          ? 'Local source (on-disk)'
+          : `${ext.name} (${ext.lang.toUpperCase()})`,
     }));
   }
 
   async browse(sectionId: string, cursor?: string): Promise<CatalogPage> {
     const extensions = await this.getInstalledExtensions();
+    const realSources = extensions.filter((ext) => ext.id !== '0');
+    const defaultSourceId = realSources.length > 0 ? realSources[0].id : extensions[0]?.id || '';
     const sourceId =
       sectionId && sectionId !== 'all'
         ? sectionId
-        : extensions.length > 0
-          ? extensions[0].id
-          : '';
+        : defaultSourceId;
 
     if (!sourceId) {
       return {
@@ -290,3 +377,9 @@ export class SuwayomiSource implements MangaSource {
     return `Scanlation: ${chapter.scanlationGroup || 'Tachiyomi Extension'} · Suwayomi Server`;
   }
 }
+
+export const defaultSuwayomiSource = new SuwayomiSource(
+  'suwayomi',
+  'Suwayomi (Tachiyomi)',
+  'http://localhost:4567',
+);

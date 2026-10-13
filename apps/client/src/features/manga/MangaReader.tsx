@@ -16,6 +16,7 @@ import {
 import { db, dirty, now, uid, type ChapterProgress } from '../../db';
 import { getSourceById } from '../../sources/registry';
 import type { MangaSource, ChapterInfo, PageRef } from '../../sources/types';
+import { net } from '../../lib/net';
 import { Button } from '../../design/components/Button';
 import { IconButton } from '../../design/components/IconButton';
 import { ProgressRing } from '../../design/components/Progress';
@@ -182,6 +183,19 @@ export default function MangaReader() {
         const remotePages = await source.pages(chapterId);
         if (!isCurrent()) return;
         setPages(remotePages);
+
+        // Preload initial pages as local blob URLs (bypasses any Referer / 403 / CORS restrictions)
+        void (async () => {
+          for (const rp of remotePages.slice(0, 3)) {
+            try {
+              const blobUrl = await net.loadProtectedImage(rp.url);
+              if (!isCurrent()) return;
+              setPageObjectUrls((prev) => new Map(prev).set(rp.index, blobUrl));
+            } catch {
+              // fallback to remote/proxy URL
+            }
+          }
+        })();
       }
       setPageObjectUrls(objectUrlMap);
 
@@ -642,11 +656,20 @@ export default function MangaReader() {
                     src={url}
                     alt={`Page ${p.index}`}
                     loading="lazy"
+                    onError={(e) => {
+                      const target = e.currentTarget;
+                      if (target.dataset.retried) return;
+                      target.dataset.retried = '1';
+                      void net.loadProtectedImage(p.url).then((blobUrl) => {
+                        target.src = blobUrl;
+                        setPageObjectUrls((prev) => new Map(prev).set(p.index, blobUrl));
+                      }).catch(() => {});
+                    }}
                     className="w-full object-contain select-none"
                   />
                   {p.index === 1 && (
                     <div className="absolute top-2 left-2 px-2 py-0.5 rounded bg-black/60 text-[10px] text-white/80 pointer-events-none">
-                      Scanlation: {currentChapter?.scanlationGroup || 'Unknown'} · MangaDex
+                      Scanlation: {currentChapter?.scanlationGroup || 'Unknown'} · MangaPill
                     </div>
                   )}
                 </div>
@@ -670,6 +693,17 @@ export default function MangaReader() {
                   src={url}
                   alt={`Page ${n}`}
                   draggable={false}
+                  onError={(e) => {
+                    const target = e.currentTarget;
+                    if (target.dataset.retried) return;
+                    target.dataset.retried = '1';
+                    if (ref) {
+                      void net.loadProtectedImage(ref.url).then((blobUrl) => {
+                        target.src = blobUrl;
+                        setPageObjectUrls((prev) => new Map(prev).set(ref.index, blobUrl));
+                      }).catch(() => {});
+                    }
+                  }}
                   className={`select-none ${
                     two
                       ? 'max-w-[50%] max-h-full object-contain'

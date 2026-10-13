@@ -22,6 +22,8 @@ function isStaticAllowedHost(hostname: string): boolean {
   if (STATIC_ALLOWED_HOSTS.has(host)) return true;
   if (host.endsWith('.mangadex.network')) return true;
   if (host.endsWith('.archive.org')) return true;
+  if (host.endsWith('readdetectiveconan.com')) return true;
+  if (host.endsWith('mangapill.com')) return true;
   return false;
 }
 
@@ -143,7 +145,7 @@ export const proxyRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
       };
 
-      if (hostname === 'cdn.readdetectiveconan.com' || hostname.endsWith('mangapill.com')) {
+      if (hostname.endsWith('readdetectiveconan.com') || hostname.endsWith('mangapill.com')) {
         forwardHeaders['Referer'] = 'https://mangapill.com/';
       }
 

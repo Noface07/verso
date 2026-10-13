@@ -874,7 +874,21 @@ function ChapterPages({
               title={`Read from page ${pg.index}`}
               className="relative aspect-[2/3] rounded-[var(--r-md)] overflow-hidden bg-[var(--layer-3)] border border-[var(--stroke)] hover:border-[var(--accent)] hover:-translate-y-0.5 transition-transform cursor-pointer focus-visible:ring-2 focus-visible:ring-[var(--accent)] outline-none"
             >
-              <img src={pg.url} alt={`Page ${pg.index}`} loading="lazy" decoding="async" className="w-full h-full object-cover" />
+              <img
+                src={pg.url}
+                alt={`Page ${pg.index}`}
+                loading="lazy"
+                decoding="async"
+                onError={(e) => {
+                  const target = e.currentTarget;
+                  if (target.dataset.retried) return;
+                  target.dataset.retried = '1';
+                  void net.loadProtectedImage(pg.url).then((blobUrl) => {
+                    target.src = blobUrl;
+                  }).catch(() => {});
+                }}
+                className="w-full h-full object-cover"
+              />
               <span className="absolute bottom-1 right-1 text-[11px] font-semibold text-white bg-black/65 rounded px-1.5 py-0.5">
                 {pg.index}
               </span>

@@ -22,6 +22,7 @@ import {
   addCustomKomgaSource,
   removeCustomSource,
 } from '../sources/registry';
+import { SuwayomiSource, type SuwayomiExtension } from '../sources/suwayomi';
 import {
   isAdultRating,
   type CatalogEntry,
@@ -86,6 +87,7 @@ const BUILT_IN_SOURCE_IDS = new Set([
   'archiveorg',
   'mangadex',
   'mangapill',
+  'suwayomi',
 ]);
 
 export default function Store() {
@@ -154,6 +156,92 @@ export default function Store() {
   const filtersKey = JSON.stringify(filters);
   // Book being fetched by "Read now" (downloads the small edition, then opens it).
   const [readingNow, setReadingNow] = useState<{ id: string; error?: string } | null>(null);
+
+  // Suwayomi Extension Store state
+  const [extStoreOpen, setExtStoreOpen] = useState(false);
+  const [extensions, setExtensions] = useState<SuwayomiExtension[]>([]);
+  const [extSearch, setExtSearch] = useState('');
+  const [extTab, setExtTab] = useState<'installed' | 'available'>('installed');
+  const [installingPkg, setInstallingPkg] = useState<string | null>(null);
+  const [loadingExts, setLoadingExts] = useState(false);
+
+  const isSuwayomi = Boolean(
+    activeSource &&
+    (activeSource.id === 'suwayomi' ||
+      activeSource.id.startsWith('suwayomi:') ||
+      activeSource instanceof SuwayomiSource),
+  );
+
+  const installedExts = useMemo(
+    () => extensions.filter((e) => e.installed),
+    [extensions],
+  );
+  const availableExts = useMemo(
+    () => extensions.filter((e) => !e.installed),
+    [extensions],
+  );
+  const displayedExts = useMemo(() => {
+    const list = extTab === 'installed' ? installedExts : availableExts;
+    if (!extSearch.trim()) return list;
+    const q = extSearch.toLowerCase();
+    return list.filter(
+      (e) =>
+        e.name.toLowerCase().includes(q) ||
+        e.pkgName.toLowerCase().includes(q) ||
+        e.lang.toLowerCase().includes(q),
+    );
+  }, [extTab, installedExts, availableExts, extSearch]);
+
+  // Load extension list when Suwayomi extension dialog opens or source switches to Suwayomi
+  useEffect(() => {
+    if (!isSuwayomi) return;
+    if (activeSource instanceof SuwayomiSource) {
+      void activeSource.getExtensionList().then((list) => {
+        if (list.length > 0) setExtensions(list);
+      });
+    }
+  }, [isSuwayomi, activeSource]);
+
+  useEffect(() => {
+    if (!extStoreOpen || !(activeSource instanceof SuwayomiSource)) return;
+    setLoadingExts(true);
+    void activeSource
+      .getExtensionList()
+      .then((list) => setExtensions(list))
+      .finally(() => setLoadingExts(false));
+  }, [extStoreOpen, activeSource]);
+
+  const handleInstallExtension = async (pkgName: string) => {
+    if (!(activeSource instanceof SuwayomiSource)) return;
+    setInstallingPkg(pkgName);
+    try {
+      const ok = await activeSource.installExtension(pkgName);
+      if (ok) {
+        const updated = await activeSource.getExtensionList();
+        setExtensions(updated);
+        const sec = await activeSource.sections();
+        setSections(sec);
+      }
+    } finally {
+      setInstallingPkg(null);
+    }
+  };
+
+  const handleUninstallExtension = async (pkgName: string) => {
+    if (!(activeSource instanceof SuwayomiSource)) return;
+    setInstallingPkg(pkgName);
+    try {
+      const ok = await activeSource.uninstallExtension(pkgName);
+      if (ok) {
+        const updated = await activeSource.getExtensionList();
+        setExtensions(updated);
+        const sec = await activeSource.sections();
+        setSections(sec);
+      }
+    } finally {
+      setInstallingPkg(null);
+    }
+  };
 
   // Every fetch takes a ticket; only the latest ticket may write results. Without
   // this, a slow response from a previous source (Gutendex can take seconds)
@@ -695,6 +783,17 @@ export default function Store() {
               {sec.title}
             </button>
           ))}
+          {isSuwayomi && (
+            <button
+              type="button"
+              onClick={() => setExtStoreOpen(true)}
+              className="ml-auto px-3 py-1.5 rounded-[var(--r-md)] text-xs font-semibold bg-[var(--accent-soft)] text-[var(--accent)] hover:bg-[var(--accent)] hover:text-white transition-all flex items-center gap-1.5 cursor-pointer shrink-0"
+              title="Manage and install extensions from the Suwayomi Extension Store"
+            >
+              <Layers className="w-3.5 h-3.5" />
+              <span>Extensions ({installedExts.length > 0 ? installedExts.length : 'Store'})</span>
+            </button>
+          )}
         </div>
       )}
 
@@ -1233,6 +1332,147 @@ export default function Store() {
             </Button>
           </div>
         </form>
+      </Dialog>
+
+      {/* Suwayomi Extension Store Modal */}
+      <Dialog
+        open={extStoreOpen}
+        onClose={() => setExtStoreOpen(false)}
+        title="Suwayomi Extensions (Tachiyomi & Mihon Store)"
+        className="max-w-xl"
+      >
+        <div className="space-y-4">
+          <p className="text-xs text-[var(--text-2)]">
+            Installed Tachiyomi and Mihon extensions from your local Suwayomi server. Install new sources from the Keiyoushi Extension Store to read in Folio.
+          </p>
+
+          <div className="flex items-center gap-2">
+            <div className="flex-1">
+              <input
+                type="text"
+                value={extSearch}
+                onChange={(e) => setExtSearch(e.target.value)}
+                placeholder="Search extensions (e.g. Manga, Webtoons, English)..."
+                className="w-full h-8 px-3 rounded-[var(--r-md)] bg-[var(--layer-2)] border border-[var(--stroke)] text-xs text-[var(--text-1)] outline-none focus:border-[var(--accent)]"
+              />
+            </div>
+            <div className="flex rounded-[var(--r-md)] bg-[var(--layer-2)] p-0.5 border border-[var(--stroke)] text-xs shrink-0">
+              <button
+                type="button"
+                onClick={() => setExtTab('installed')}
+                className={`px-3 py-1 rounded-[var(--r-sm)] font-medium transition-all cursor-pointer ${
+                  extTab === 'installed'
+                    ? 'bg-[var(--layer-solid)] text-[var(--text-1)] shadow-sm'
+                    : 'text-[var(--text-2)] hover:text-[var(--text-1)]'
+                }`}
+              >
+                Installed ({installedExts.length})
+              </button>
+              <button
+                type="button"
+                onClick={() => setExtTab('available')}
+                className={`px-3 py-1 rounded-[var(--r-sm)] font-medium transition-all cursor-pointer ${
+                  extTab === 'available'
+                    ? 'bg-[var(--layer-solid)] text-[var(--text-1)] shadow-sm'
+                    : 'text-[var(--text-2)] hover:text-[var(--text-1)]'
+                }`}
+              >
+                Available ({availableExts.length})
+              </button>
+            </div>
+          </div>
+
+          <div className="max-h-96 overflow-y-auto space-y-2 pr-1">
+            {loadingExts ? (
+              <div className="py-12 flex flex-col items-center justify-center gap-2">
+                <ProgressRing size={24} />
+                <span className="text-xs text-[var(--text-3)]">Loading extensions from Suwayomi…</span>
+              </div>
+            ) : displayedExts.length === 0 ? (
+              <p className="text-xs text-[var(--text-3)] text-center py-8">
+                {extSearch ? 'No extensions matching your search' : 'No extensions found'}
+              </p>
+            ) : (
+              displayedExts.slice(0, 100).map((ext) => (
+                <div
+                  key={ext.pkgName}
+                  className="p-2.5 rounded-[var(--r-md)] bg-[var(--layer-2)] border border-[var(--stroke)] flex items-center justify-between gap-3"
+                >
+                  <div className="min-w-0 flex items-center gap-2.5">
+                    {ext.iconUrl ? (
+                      <img
+                        src={
+                          activeSource instanceof SuwayomiSource
+                            ? `${activeSource.baseUrl}${ext.iconUrl.startsWith('/') ? '' : '/'}${ext.iconUrl}`
+                            : ext.iconUrl
+                        }
+                        alt={ext.name}
+                        className="w-8 h-8 rounded-[var(--r-sm)] object-contain bg-[var(--layer-3)] shrink-0"
+                        onError={(e) => {
+                          e.currentTarget.style.display = 'none';
+                        }}
+                      />
+                    ) : (
+                      <div className="w-8 h-8 rounded-[var(--r-sm)] bg-[var(--layer-3)] flex items-center justify-center text-xs font-bold shrink-0 text-[var(--text-2)]">
+                        {ext.name.slice(0, 2).toUpperCase()}
+                      </div>
+                    )}
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="text-xs font-semibold text-[var(--text-1)] truncate">
+                          {ext.name}
+                        </span>
+                        <span className="text-[10px] px-1 py-0.2 rounded bg-[var(--layer-3)] text-[var(--text-2)] font-mono">
+                          {ext.lang.toUpperCase()}
+                        </span>
+                        <span className="text-[10px] text-[var(--text-3)] font-mono">
+                          v{ext.versionName}
+                        </span>
+                        {ext.isNsfw && (
+                          <span className="text-[9px] px-1 py-0.2 rounded bg-[var(--danger-soft)] text-[var(--danger)] font-bold">
+                            18+
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-[11px] text-[var(--text-3)] truncate font-mono">
+                        {ext.pkgName}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="shrink-0 flex items-center gap-2">
+                    {ext.installed ? (
+                      <Button
+                        variant="subtle"
+                        size="sm"
+                        disabled={installingPkg === ext.pkgName}
+                        onClick={() => handleUninstallExtension(ext.pkgName)}
+                      >
+                        {installingPkg === ext.pkgName ? 'Removing…' : 'Uninstall'}
+                      </Button>
+                    ) : (
+                      <Button
+                        variant="accent"
+                        size="sm"
+                        disabled={installingPkg === ext.pkgName}
+                        onClick={() => handleInstallExtension(ext.pkgName)}
+                      >
+                        {installingPkg === ext.pkgName ? 'Installing…' : 'Install'}
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+
+          <div className="flex items-center justify-between pt-3 border-t border-[var(--stroke)] text-xs text-[var(--text-3)]">
+            <span>Powered by Suwayomi Server & Keiyoushi Repository</span>
+            <Button variant="subtle" onClick={() => setExtStoreOpen(false)}>
+              Done
+            </Button>
+          </div>
+        </div>
       </Dialog>
     </div>
   );

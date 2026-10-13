@@ -483,6 +483,88 @@ describe('New Manga & Book Sources (Tachiyomi, Suwayomi, Mihon, Kotatsu)', () =>
       expect(pages.length).toBe(3);
       expect(pages[0].url).toBe('http://localhost:4567/api/v1/chapter/999/page/0');
     });
+
+    it('sorts real remote extensions before Local source in sections', async () => {
+      const mockSources = [
+        { id: '0', name: 'Local source', lang: 'localsourcelang' },
+        { id: '3350274514125477391', name: 'Comics Kingdom', lang: 'en' },
+      ];
+
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue(
+          new Response(JSON.stringify(mockSources), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          }),
+        ),
+      );
+
+      const src = new SuwayomiSource();
+      const sections = await src.sections();
+      expect(sections.length).toBe(2);
+      expect(sections[0].id).toBe('3350274514125477391');
+      expect(sections[0].title).toContain('Comics Kingdom');
+      expect(sections[1].id).toBe('0');
+      expect(sections[1].title).toContain('Local source');
+    });
+
+    it('fetches extension store list and triggers GraphQL install mutations', async () => {
+      const mockExtList = [
+        {
+          name: 'ComicsKingdom',
+          pkgName: 'eu.kanade.tachiyomi.extension.all.comicskingdom',
+          versionName: '1.6.0',
+          lang: 'all',
+          isNsfw: false,
+          installed: true,
+        },
+        {
+          name: 'Mangakakalot',
+          pkgName: 'eu.kanade.tachiyomi.extension.en.mangakakalot',
+          versionName: '1.6.24',
+          lang: 'en',
+          isNsfw: true,
+          installed: false,
+        },
+      ];
+
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockImplementation(async (url: string) => {
+          if (url.includes('/api/v1/extension/list')) {
+            return new Response(JSON.stringify(mockExtList), { status: 200 });
+          }
+          if (url.includes('/api/graphql')) {
+            return new Response(
+              JSON.stringify({ data: { updateExtension: { clientMutationId: null } } }),
+              { status: 200 },
+            );
+          }
+          return new Response('Not found', { status: 404 });
+        }),
+      );
+
+      const src = new SuwayomiSource();
+      const list = await src.getExtensionList();
+      expect(list.length).toBe(2);
+      expect(list[0].installed).toBe(true);
+      expect(list[1].installed).toBe(false);
+
+      const installOk = await src.installExtension('eu.kanade.tachiyomi.extension.en.mangakakalot');
+      expect(installOk).toBe(true);
+
+      const uninstallOk = await src.uninstallExtension('eu.kanade.tachiyomi.extension.all.comicskingdom');
+      expect(uninstallOk).toBe(true);
+    });
+
+    it('includes default Suwayomi source in getAllMangaSources', async () => {
+      const allManga = await getAllMangaSources();
+      expect(allManga.some((s) => s.id === 'suwayomi')).toBe(true);
+      const found = await getSourceById('suwayomi');
+      expect(found).toBeDefined();
+      expect(found?.name).toContain('Suwayomi');
+    });
   });
 
   describe('Komga Source (Self-hosted comics/manga)', () => {
