@@ -1,6 +1,7 @@
-import React, { useRef, useEffect, useState } from 'react';
+import React, { useRef, useEffect, useState, useMemo } from 'react';
 import { clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
+import { useSwipeTabs } from '../../lib/useSwipeTabs';
 
 export interface SegmentOption<T extends string = string> {
   value: T;
@@ -29,6 +30,13 @@ export function SegmentedControl<T extends string = string>({
     width: 0,
   });
 
+  const tabValues = useMemo(() => options.map((o) => o.value), [options]);
+  const { containerProps } = useSwipeTabs({
+    tabs: tabValues,
+    value,
+    onChange,
+  });
+
   useEffect(() => {
     if (!containerRef.current) return;
     const activeEl = containerRef.current.querySelector<HTMLButtonElement>(`[data-active="true"]`);
@@ -44,6 +52,7 @@ export function SegmentedControl<T extends string = string>({
     <div
       ref={containerRef}
       role="tablist"
+      {...containerProps}
       className={twMerge(
         clsx(
           'relative inline-flex items-center p-1 bg-[var(--layer-2)] border border-[var(--stroke)] rounded-[var(--r-pill)] select-none',
