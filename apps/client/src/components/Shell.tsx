@@ -1,12 +1,14 @@
 import { useRef, useState, type DragEvent } from 'react';
-import { Outlet } from 'react-router-dom';
+import { Outlet, useNavigate } from 'react-router-dom';
 import { NavRail } from '../design/components/NavRail';
 import { BottomNav } from '../design/components/BottomNav';
 import { AmbientBackdrop } from '../design/components/AmbientBackdrop';
 import { SettingsDialog } from '../design/components/SettingsDialog';
+import { ShortcutsDialog } from '../design/components/ShortcutsDialog';
 import { InfoBar } from '../design/components/InfoBar';
 import { useTheme } from '../design/theme';
 import { ACCEPT, importFiles } from '../lib/importBook';
+import { useGlobalHotkeys } from '../lib/useHotkeys';
 
 export interface ShellContext {
   openImport: () => void;
@@ -14,15 +16,37 @@ export interface ShellContext {
 }
 
 export default function Shell() {
+  const navigate = useNavigate();
   const inputRef = useRef<HTMLInputElement>(null);
   const [importing, setImporting] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [toast, setToast] = useState<{ id: number; message: string; severity?: 'info' | 'success' | 'warning' | 'error' } | null>(null);
 
   const { activeCoverUrl, settings } = useTheme();
 
   const openImport = () => inputRef.current?.click();
+
+  useGlobalHotkeys({
+    onSearch: () => {
+      const input = document.querySelector<HTMLInputElement>('input[type="text"][placeholder*="Search"], input[type="text"][placeholder*="search"]');
+      if (input) {
+        input.focus();
+        input.select();
+      } else {
+        navigate('/library');
+      }
+    },
+    onImport: openImport,
+    onSettings: () => setSettingsOpen(true),
+    onNavigate: (path) => navigate(path),
+    onHelp: () => setShortcutsOpen((o) => !o),
+    onEscape: () => {
+      if (shortcutsOpen) setShortcutsOpen(false);
+      else if (settingsOpen) setSettingsOpen(false);
+    },
+  });
 
   async function handleFiles(files: File[]) {
     if (!files.length) return;
@@ -114,6 +138,9 @@ export default function Shell() {
 
       {/* Global Settings Modal */}
       <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
+
+      {/* Keyboard Shortcuts Help Modal */}
+      <ShortcutsDialog open={shortcutsOpen} onOpenChange={setShortcutsOpen} />
     </div>
   );
 }

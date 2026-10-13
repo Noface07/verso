@@ -96,6 +96,16 @@ export class ReadAloud {
     if (this.state === 'paused') this.continueWith((t) => t.resume())
   }
 
+  toggle(from?: Range | null) {
+    if (this.state === 'playing') {
+      this.pause()
+    } else if (this.state === 'paused') {
+      this.resume()
+    } else {
+      void this.start(from)
+    }
+  }
+
   next() {
     if (this.state !== 'idle') this.continueWith((t) => t.next())
   }

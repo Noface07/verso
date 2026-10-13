@@ -16,7 +16,9 @@ import { TTSBar } from '../components/TTSBar'
 import { AnnotationsPanel, NoteEditor, SearchPanel, SettingsPanel, TocPanel } from '../components/ReaderPanels'
 import { IconButton } from '../design/components/IconButton'
 import { Button } from '../design/components/Button'
+import { ShortcutsDialog } from '../design/components/ShortcutsDialog'
 import { useWheelPaging } from '../lib/useWheelPaging'
+import { isInputTarget } from '../lib/useHotkeys'
 
 type Panel = 'toc' | 'search' | 'notes' | 'bookmarks' | 'settings' | 'lookup' | null
 const PANEL_TITLE: Record<Exclude<Panel, null>, string> = {
@@ -130,10 +132,12 @@ export default function Reader() {
   const [pop, setPop] = useState<Pop | null>(null)
   const [lookup, setLookup] = useState<LookupTab | null>(null)
   const [noteFor, setNoteFor] = useState<Annotation | null>(null)
+  const [shortcutsOpen, setShortcutsOpen] = useState(false)
   const [fullscreen, setFullscreen] = useState(!!document.fullscreenElement)
   const [ttsState, setTtsState] = useState<TTSState>('idle')
   const [expandedLookupWord, setExpandedLookupWord] = useState('')
   const [viewInstance, setViewInstance] = useState<FoliateView | null>(null)
+  const onKeyRef = useRef<(e: KeyboardEvent) => void>(() => {})
   const voices = useVoices()
 
   const { attachDocument } = useWheelPaging({
@@ -229,7 +233,7 @@ export default function Reader() {
         clearTimeout(t)
         t = window.setTimeout(() => readSelection(doc, index), 250)
       })
-      doc.addEventListener('keydown', (ev) => navKey(ev, viewRef.current))
+      doc.addEventListener('keydown', (ev) => onKeyRef.current(ev))
       doc.addEventListener('click', (ev) => {
         if (Date.now() - lastAnnotationTap.current < 300) return
         if ((ev.target as Element | null)?.closest?.('a')) return
@@ -387,17 +391,123 @@ export default function Reader() {
     drawn.current = next
   }, [annotations, status])
 
-  // Keyboard shortcuts and fullscreen tracking
+  // Refs to allow onKey to read current state without recreating listeners
+  const shortcutsOpenRef = useRef(shortcutsOpen)
+  useEffect(() => { shortcutsOpenRef.current = shortcutsOpen }, [shortcutsOpen])
+  const panelRef = useRef(panel)
+  useEffect(() => { panelRef.current = panel }, [panel])
+  const lookupRef = useRef(lookup)
+  useEffect(() => { lookupRef.current = lookup }, [lookup])
+  const popRef = useRef(pop)
+  useEffect(() => { popRef.current = pop }, [pop])
+
+  // Keyboard shortcuts and fullscreen tracking per §5.4
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      // Escape handling: Close topmost layer (shortcuts -> popover/lookup -> panel -> fullscreen)
       if (e.key === 'Escape') {
-        setPop(null)
-        setLookup(null)
-        setPanel(null)
+        if (shortcutsOpenRef.current) {
+          setShortcutsOpen(false)
+          e.preventDefault()
+          return
+        }
+        if (popRef.current) {
+          closePop()
+          e.preventDefault()
+          return
+        }
+        if (lookupRef.current) {
+          setLookup(null)
+          e.preventDefault()
+          return
+        }
+        if (panelRef.current) {
+          setPanel(null)
+          e.preventDefault()
+          return
+        }
+        if (document.fullscreenElement) {
+          void document.exitFullscreen()
+          e.preventDefault()
+          return
+        }
         return
       }
+
+      // If user is focused on an input/textarea, suppress reader shortcuts
+      if (isInputTarget(e.target)) return
+
+      const isCtrlOrCmd = e.ctrlKey || e.metaKey
+
+      // ? / Shift+/: Shortcuts help dialog
+      if (e.key === '?' || (e.shiftKey && e.key === '/')) {
+        e.preventDefault()
+        setShortcutsOpen((o) => !o)
+        return
+      }
+
+      // Ctrl+F: Search in book panel
+      if (isCtrlOrCmd && e.key.toLowerCase() === 'f') {
+        e.preventDefault()
+        setPanel((p) => (p === 'search' ? null : 'search'))
+        return
+      }
+
+      // Ctrl+= / Ctrl++: Font size increase
+      if (isCtrlOrCmd && (e.key === '=' || e.key === '+')) {
+        e.preventDefault()
+        const cur = settingsRef.current.fontSize
+        updateSettings({ fontSize: Math.min(36, cur + 1) })
+        return
+      }
+
+      // Ctrl+- / Ctrl+_: Font size decrease
+      if (isCtrlOrCmd && (e.key === '-' || e.key === '_')) {
+        e.preventDefault()
+        const cur = settingsRef.current.fontSize
+        updateSettings({ fontSize: Math.max(12, cur - 1) })
+        return
+      }
+
+      // T: Contents panel
+      if (!isCtrlOrCmd && !e.altKey && e.key.toLowerCase() === 't') {
+        e.preventDefault()
+        setPanel((p) => (p === 'toc' ? null : 'toc'))
+        return
+      }
+
+      // B: Bookmark toggle
+      if (!isCtrlOrCmd && !e.altKey && e.key.toLowerCase() === 'b') {
+        e.preventDefault()
+        void togglePageBookmark()
+        return
+      }
+
+      // H: Highlights & notes panel
+      if (!isCtrlOrCmd && !e.altKey && e.key.toLowerCase() === 'h') {
+        e.preventDefault()
+        setPanel((p) => (p === 'notes' ? null : 'notes'))
+        return
+      }
+
+      // F: Fullscreen toggle
+      if (!isCtrlOrCmd && !e.altKey && e.key.toLowerCase() === 'f') {
+        e.preventDefault()
+        toggleFullscreen()
+        return
+      }
+
+      // R: Read aloud play/pause
+      if (!isCtrlOrCmd && !e.altKey && e.key.toLowerCase() === 'r') {
+        e.preventDefault()
+        ttsRef.current?.toggle()
+        return
+      }
+
       navKey(e, viewRef.current)
     }
+
+    onKeyRef.current = onKey
     const onFs = () => setFullscreen(!!document.fullscreenElement)
     window.addEventListener('keydown', onKey)
     document.addEventListener('fullscreenchange', onFs)
@@ -405,7 +515,7 @@ export default function Reader() {
       window.removeEventListener('keydown', onKey)
       document.removeEventListener('fullscreenchange', onFs)
     }
-  }, [])
+  }, [updateSettings])
 
   const pageBookmarks = useMemo(() => {
     if (!loc?.cfi) return []
@@ -499,7 +609,7 @@ export default function Reader() {
     void viewRef.current?.goToFraction(scrub)
     setScrub(null)
   }
-  const toggleFullscreen = () => {
+  function toggleFullscreen() {
     if (document.fullscreenElement) void document.exitFullscreen()
     else void document.documentElement.requestFullscreen?.()
   }
@@ -821,6 +931,9 @@ export default function Reader() {
           }}
         />
       )}
+
+      {/* Keyboard Shortcuts Help Modal */}
+      <ShortcutsDialog open={shortcutsOpen} onOpenChange={setShortcutsOpen} />
     </div>
   )
 }
