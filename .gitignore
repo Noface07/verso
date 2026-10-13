@@ -19,10 +19,12 @@ dist/
 .DS_Store
 Thumbs.db
 
-# Docker volumes
+# Docker volumes & local data
 pgdata/
 caddy_data/
 caddy_config/
+data/
+apps/server/data/
 
 # Test
 coverage/

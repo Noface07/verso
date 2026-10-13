@@ -3,21 +3,41 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "main": "src/server.js",
+  "main": "dist/server.js",
   "scripts": {
-    "start": "node src/server.js",
-    "dev": "node --watch src/server.js",
-    "typecheck": "echo 'server typecheck: skipped (JS, will convert to TS in P3)'",
-    "lint": "echo 'server lint: skipped (JS, will convert to TS in P3)'",
-    "test": "echo 'server tests: skipped (will add in P3)'",
-    "build": "echo 'server build: no build step (plain JS)'"
+    "start": "node dist/server.js",
+    "dev": "tsx watch src/server.ts",
+    "build": "tsc -b",
+    "typecheck": "tsc -b",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "migrate:up": "node-pg-migrate up",
+    "migrate:down": "node-pg-migrate down"
   },
   "dependencies": {
     "@fastify/cors": "^10.0.0",
     "@fastify/jwt": "^9.0.0",
     "@fastify/rate-limit": "^10.0.0",
+    "@folio/shared": "workspace:*",
+    "archiver": "^7.0.1",
     "bcryptjs": "^2.4.3",
+    "dotenv": "^16.4.7",
     "fastify": "^5.0.0",
-    "pg": "^8.13.0"
+    "node-pg-migrate": "^7.8.0",
+    "pg": "^8.13.0",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/archiver": "^6.0.3",
+    "@types/bcryptjs": "^2.4.6",
+    "@types/node": "^22.13.10",
+    "@types/pg": "^8.11.11",
+    "eslint": "^10.10.0",
+    "pg-mem": "^3.0.14",
+    "tsx": "^4.19.3",
+    "typescript": "~5.8.2",
+    "typescript-eslint": "^8.69.0",
+    "vitest": "^3.2.1"
   }
 }

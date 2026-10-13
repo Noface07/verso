@@ -1,0 +1,43 @@
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: reader
+      POSTGRES_USER: reader
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-reader}
+    volumes:
+      - pgdata_dev:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U reader -d reader"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build:
+      context: ../..
+      dockerfile: apps/server/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      DATABASE_URL: postgres://reader:${DB_PASSWORD:-reader}@db:5432/reader
+      JWT_SECRET: ${JWT_SECRET:-dev_secret_must_be_at_least_32_characters_long_for_hs256}
+      ALLOW_SIGNUP: "true"
+      CORS_ORIGINS: "http://localhost:5173,http://tauri.localhost,tauri://localhost"
+      FILES_DIR: /data/files
+      MAX_FILE_MB: "300"
+      PORT: "8080"
+      HOST: "0.0.0.0"
+    volumes:
+      - files_dev:/data/files
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  pgdata_dev:
+  files_dev:
