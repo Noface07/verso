@@ -75,6 +75,11 @@ export default function Home() {
     [],
     [] as ReadingSession[],
   );
+  const followedSeries = useLiveQuery(
+    () => db.series.filter((s) => !s.deleted_at).toArray(),
+    [],
+    [],
+  );
   const favIds = useFavoriteIds();
 
   const progress = useMemo(() => new Map(progressRows.map((p) => [p.id, p])), [progressRows]);
@@ -418,6 +423,39 @@ export default function Home() {
           ))}
         </Shelf>
       </section>
+
+      {/* Continue Manga Shelf */}
+      {followedSeries && followedSeries.length > 0 && (
+        <section className="pt-4 border-t border-[var(--stroke)]">
+          <Shelf
+            title="Continue manga"
+            action={
+              <Link
+                to="/library"
+                className="inline-flex items-center gap-1 hover:underline text-xs"
+              >
+                Manga library <ChevronRight className="w-3.5 h-3.5" />
+              </Link>
+            }
+          >
+            {followedSeries.map((s) => (
+              <div
+                key={s.id}
+                onClick={() => navigate(`/series/${encodeURIComponent(s.id)}`)}
+                className="w-[130px] shrink-0 cursor-pointer"
+              >
+                <BookCard
+                  id={s.id}
+                  title={s.title}
+                  author={s.author || 'Unknown'}
+                  coverUrl={s.cover_url}
+                  onClick={() => navigate(`/series/${encodeURIComponent(s.id)}`)}
+                />
+              </div>
+            ))}
+          </Shelf>
+        </section>
+      )}
     </div>
   );
 }

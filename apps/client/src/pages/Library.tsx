@@ -61,7 +61,7 @@ import type { ShellContext } from '../components/Shell';
 
 type SortKey = 'recent' | 'added' | 'title' | 'author' | 'progress' | 'series';
 type FilterKey = 'all' | 'favorites' | 'reading' | 'unread' | 'finished';
-type FormatType = 'all' | 'books' | 'comics';
+type FormatType = 'all' | 'books' | 'manga' | 'comics';
 
 export default function Library() {
   const navigate = useNavigate();
@@ -72,6 +72,11 @@ export default function Library() {
     () => db.books.filter((b) => !b.deleted_at).toArray(),
     [],
     [] as Book[],
+  );
+  const followedSeries = useLiveQuery(
+    () => db.series.filter((s) => !s.deleted_at).toArray(),
+    [],
+    [],
   );
   const progressRows = useLiveQuery(() => db.progress.toArray(), [], [] as Progress[]);
   const collections = useLiveQuery(
@@ -960,6 +965,7 @@ export default function Library() {
           options={[
             { value: 'all', label: 'All Items' },
             { value: 'books', label: 'Books' },
+            { value: 'manga', label: 'Manga' },
             { value: 'comics', label: 'Comics' },
           ]}
           value={formatType}
@@ -974,7 +980,38 @@ export default function Library() {
 
       {/* Main Content Area */}
       <div className="flex-1 overflow-y-auto px-6 py-4">
-        {books.length === 0 ? (
+        {formatType === 'manga' ? (
+          followedSeries && followedSeries.length === 0 ? (
+            <EmptyState
+              icon={<BookOpen className="w-7 h-7" />}
+              title="No followed manga"
+              description="Browse MangaDex in the Store and follow series to keep track of new chapters here."
+              action={
+                <Button variant="accent" onClick={() => navigate('/store')}>
+                  Browse Store
+                </Button>
+              }
+            />
+          ) : (
+            <CoverGrid columnWidth={150}>
+              {followedSeries?.map((s) => (
+                <div
+                  key={s.id}
+                  onClick={() => navigate(`/series/${encodeURIComponent(s.id)}`)}
+                  className="cursor-pointer"
+                >
+                  <BookCard
+                    id={s.id}
+                    title={s.title}
+                    author={s.author || 'Unknown'}
+                    coverUrl={s.cover_url}
+                    onClick={() => navigate(`/series/${encodeURIComponent(s.id)}`)}
+                  />
+                </div>
+              ))}
+            </CoverGrid>
+          )
+        ) : books.length === 0 ? (
           <EmptyState
             icon={<BookOpen className="w-7 h-7" />}
             title="Your library is empty"

@@ -161,6 +161,15 @@ export interface CatalogCacheItem {
   expires_at: number
 }
 
+export interface MangaPageRow {
+  id: string
+  series_id: string
+  chapter_id: string
+  page: number
+  blob: Blob
+  created_at: number
+}
+
 export const db = new Dexie('folio') as Dexie & {
   books: EntityTable<Book, 'id'>
   progress: EntityTable<Progress, 'id'>
@@ -179,6 +188,7 @@ export const db = new Dexie('folio') as Dexie & {
   downloads: EntityTable<DownloadItem, 'id'>
   source_credentials: EntityTable<SourceCredential, 'id'>
   catalog_cache: EntityTable<CatalogCacheItem, 'key'>
+  manga_pages: EntityTable<MangaPageRow, 'id'>
 }
 
 // Version 1: initial tables
@@ -218,6 +228,11 @@ db.version(3).stores({
   downloads: 'id, source, status, created_at',
   catalog_cache: 'key, expires_at',
   source_credentials: 'id',
+})
+
+// Version 4: client-only manga offline pages
+db.version(4).stores({
+  manga_pages: 'id, series_id, chapter_id, [series_id+chapter_id]',
 })
 
 export const SYNC_TABLES = Object.keys(SHARED_SYNC_TABLES) as SyncTableName[]

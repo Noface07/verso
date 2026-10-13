@@ -1,7 +1,8 @@
 import { db, dirty, uid } from '../db';
-import type { CatalogSource } from './types';
+import type { CatalogSource, MangaSource } from './types';
 import { gutenbergSource } from './gutenberg';
 import { standardEbooksSource, OpdsSource } from './opds';
+import { mangaDexSource } from './mangadex';
 
 export async function getAllBookSources(): Promise<CatalogSource[]> {
   const customSources = await db.sources
@@ -27,12 +28,17 @@ export async function getAllBookSources(): Promise<CatalogSource[]> {
     );
   }
 
-  return [gutenbergSource, standardEbooksSource, ...customInstances];
+  return [gutenbergSource, standardEbooksSource, mangaDexSource, ...customInstances];
+}
+
+export async function getAllMangaSources(): Promise<MangaSource[]> {
+  return [mangaDexSource];
 }
 
 export async function getSourceById(id: string): Promise<CatalogSource | undefined> {
   if (id === 'gutenberg') return gutenbergSource;
   if (id === 'standardebooks') return standardEbooksSource;
+  if (id === 'mangadex') return mangaDexSource;
 
   const cs = await db.sources.get(id);
   if (!cs || cs.deleted_at) return undefined;

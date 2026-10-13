@@ -649,6 +649,21 @@ export default function Store() {
                     );
                   }
 
+                  if (selectedBook.kind === 'manga') {
+                    return (
+                      <Button
+                        variant="accent"
+                        onClick={() => {
+                          setSelectedBook(null);
+                          navigate(`/series/${encodeURIComponent(selectedBook.id)}`);
+                        }}
+                      >
+                        <BookOpen className="w-4 h-4 mr-2" />
+                        View Series & Chapters
+                      </Button>
+                    );
+                  }
+
                   return (
                     <Button
                       variant="accent"
