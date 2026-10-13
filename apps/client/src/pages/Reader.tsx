@@ -17,7 +17,9 @@ import { AnnotationsPanel, NoteEditor, SearchPanel, SettingsPanel, TocPanel } fr
 import { IconButton } from '../design/components/IconButton'
 import { Button } from '../design/components/Button'
 import { ShortcutsDialog } from '../design/components/ShortcutsDialog'
+import { ImageViewerDialog } from '../design/components/ImageViewerDialog'
 import { useWheelPaging } from '../lib/useWheelPaging'
+import { useReaderTouch } from '../lib/useReaderTouch'
 import { isInputTarget } from '../lib/useHotkeys'
 
 type Panel = 'toc' | 'search' | 'notes' | 'bookmarks' | 'settings' | 'lookup' | null
@@ -133,6 +135,7 @@ export default function Reader() {
   const [lookup, setLookup] = useState<LookupTab | null>(null)
   const [noteFor, setNoteFor] = useState<Annotation | null>(null)
   const [shortcutsOpen, setShortcutsOpen] = useState(false)
+  const [zoomedImage, setZoomedImage] = useState<{ src: string; alt?: string } | null>(null)
   const [fullscreen, setFullscreen] = useState(!!document.fullscreenElement)
   const [ttsState, setTtsState] = useState<TTSState>('idle')
   const [expandedLookupWord, setExpandedLookupWord] = useState('')
@@ -149,6 +152,16 @@ export default function Reader() {
   useEffect(() => {
     attachDocRef.current = attachDocument
   }, [attachDocument])
+
+  const { attachDocument: attachTouchDoc } = useReaderTouch({
+    view: viewInstance,
+    flow: settings.flow,
+    onImageZoom: (src, alt) => setZoomedImage({ src, alt }),
+  })
+  const attachTouchDocRef = useRef(attachTouchDoc)
+  useEffect(() => {
+    attachTouchDocRef.current = attachTouchDoc
+  }, [attachTouchDoc])
 
   const fractionRef = useRef(0)
   const rangeRef = useRef<Range | null>(null)
@@ -228,6 +241,7 @@ export default function Reader() {
     const onLoad = (e: Event) => {
       const { doc, index } = (e as CustomEvent).detail as { doc: Document; index: number }
       attachDocRef.current(doc)
+      attachTouchDocRef.current(doc)
       let t: number | undefined
       doc.addEventListener('selectionchange', () => {
         clearTimeout(t)
@@ -428,12 +442,19 @@ export default function Reader() {
   useEffect(() => { lookupRef.current = lookup }, [lookup])
   const popRef = useRef(pop)
   useEffect(() => { popRef.current = pop }, [pop])
+  const zoomedImageRef = useRef(zoomedImage)
+  useEffect(() => { zoomedImageRef.current = zoomedImage }, [zoomedImage])
 
   // Keyboard shortcuts and fullscreen tracking per §5.4
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      // Escape handling: Close topmost layer (shortcuts -> popover/lookup -> panel -> fullscreen)
+      // Escape handling: Close topmost layer (image zoom -> shortcuts -> popover/lookup -> panel -> fullscreen)
       if (e.key === 'Escape') {
+        if (zoomedImageRef.current) {
+          setZoomedImage(null)
+          e.preventDefault()
+          return
+        }
         if (shortcutsOpenRef.current) {
           setShortcutsOpen(false)
           e.preventDefault()
@@ -962,6 +983,14 @@ export default function Reader() {
 
       {/* Keyboard Shortcuts Help Modal */}
       <ShortcutsDialog open={shortcutsOpen} onOpenChange={setShortcutsOpen} />
+
+      {/* Image Pinch-to-Zoom Lightbox Modal */}
+      <ImageViewerDialog
+        open={!!zoomedImage}
+        onOpenChange={(open) => !open && setZoomedImage(null)}
+        src={zoomedImage?.src ?? ''}
+        alt={zoomedImage?.alt}
+      />
     </div>
   )
 }
