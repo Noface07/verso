@@ -13,10 +13,12 @@ import {
   Heart,
   CheckCircle,
   Sparkles,
-} from 'lucide-react';
+ X } from 'lucide-react';
 import { db, dirty, deviceId, type Book, type Progress, type ReadingSession } from '../db';
 import { useFavoriteIds, toggleFavorite } from '../lib/favourites';
 import { BookCover, useCoverBlobUrl } from '../design/components/BookCover';
+import { clearMangaHistory, removeFromMangaHistory } from '../lib/series';
+import { confirmAction } from '../lib/tauri';
 import { BookCard } from '../design/components/BookCard';
 import { Shelf } from '../design/components/Shelf';
 import { Button } from '../design/components/Button';
@@ -77,8 +79,21 @@ export default function Home() {
     [],
     [] as ReadingSession[],
   );
-  const followedSeries = useLiveQuery(
-    () => db.series.filter((s) => !s.deleted_at).toArray(),
+  // Manga reading history: every series read (followed or not), newest first,
+  // with the chapter to resume.
+  const mangaHistory = useLiveQuery(
+    async () => {
+      const series = (await db.series.filter((s) => !s.deleted_at && !!s.last_read_at).toArray()).sort(
+        (a, b) => (b.last_read_at ?? 0) - (a.last_read_at ?? 0),
+      );
+      const progress = await db.chapter_progress.filter((p) => !p.deleted_at).toArray();
+      const latest = new Map<string, (typeof progress)[number]>();
+      for (const p of progress) {
+        const cur = latest.get(p.series_id);
+        if (!cur || p.updated_at > cur.updated_at) latest.set(p.series_id, p);
+      }
+      return series.slice(0, 20).map((s) => ({ series: s, last: latest.get(s.id) }));
+    },
     [],
     [],
   );
@@ -205,7 +220,11 @@ export default function Home() {
   };
 
   return (
-    <div className="flex-1 overflow-y-auto px-4 md:px-8 py-6 space-y-8 max-w-7xl mx-auto w-full">
+    // The scroll container spans the full width (the centred column used to be the
+    // scroller, so the wheel did nothing over the side margins and the scrollbar
+    // floated mid-window); content stays centred inside it.
+    <div className="flex-1 min-h-0 overflow-y-auto">
+    <div className="px-4 md:px-8 py-6 space-y-8 max-w-7xl mx-auto w-full">
       {/* First-run sync prompt */}
       {showSyncPrompt && (
         <div className="p-4 rounded-[var(--r-lg)] bg-[var(--layer-2)] border border-[var(--stroke)] flex flex-col sm:flex-row sm:items-center justify-between gap-3 animate-in fade-in-0 duration-200">
@@ -468,37 +487,73 @@ export default function Home() {
       </section>
 
       {/* Continue Manga Shelf */}
-      {followedSeries && followedSeries.length > 0 && (
+      {mangaHistory.length > 0 && (
         <section className="pt-4 border-t border-[var(--stroke)]">
           <Shelf
             title="Continue manga"
             action={
-              <Link
-                to="/library"
-                className="inline-flex items-center gap-1 hover:underline text-xs"
-              >
-                Manga library <ChevronRight className="w-3.5 h-3.5" />
-              </Link>
+              <span className="inline-flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={async () => {
+                    if (await confirmAction('Clear manga reading history? Series in your library stay there.')) {
+                      await clearMangaHistory();
+                    }
+                  }}
+                  className="text-xs text-[var(--text-3)] hover:text-[var(--danger)] hover:underline cursor-pointer"
+                >
+                  Clear history
+                </button>
+                <Link
+                  to="/library?format=manga"
+                  className="inline-flex items-center gap-1 hover:underline text-xs"
+                >
+                  Manga library <ChevronRight className="w-3.5 h-3.5" />
+                </Link>
+              </span>
             }
           >
-            {followedSeries.map((s) => (
-              <div
-                key={s.id}
-                onClick={() => navigate(`/series/${encodeURIComponent(s.id)}`)}
-                className="w-[130px] shrink-0 cursor-pointer"
-              >
-                <BookCard
-                  id={s.id}
-                  title={s.title}
-                  author={s.author || 'Unknown'}
-                  coverUrl={s.cover_url}
-                  onClick={() => navigate(`/series/${encodeURIComponent(s.id)}`)}
-                />
-              </div>
-            ))}
+            {mangaHistory.map(({ series: s, last }) => {
+              const resume = () =>
+                navigate(
+                  last
+                    ? `/read/manga/${encodeURIComponent(s.id)}/${encodeURIComponent(last.chapter_id)}`
+                    : `/series/${encodeURIComponent(s.id)}`,
+                );
+              return (
+                <div key={s.id} className="relative w-[130px] shrink-0 cursor-pointer group/hist">
+                  <button
+                    type="button"
+                    aria-label={`Remove ${s.title} from history`}
+                    title="Remove from history"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void removeFromMangaHistory(s.id);
+                    }}
+                    className="absolute top-1.5 right-1.5 z-30 w-6 h-6 rounded-full bg-black/65 text-white flex items-center justify-center opacity-100 md:opacity-0 md:group-hover/hist:opacity-100 focus-visible:opacity-100 transition-opacity cursor-pointer"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                  <BookCard
+                    id={s.id}
+                    title={s.title}
+                    author={
+                      last
+                        ? `${last.title || (last.chapter_number != null ? `Ch. ${last.chapter_number}` : 'Chapter')}${
+                            last.total_pages ? ` · p. ${last.page}/${last.total_pages}` : ''
+                          }`
+                        : s.author || 'Unknown'
+                    }
+                    coverUrl={s.cover_url}
+                    onClick={resume}
+                  />
+                </div>
+              );
+            })}
           </Shelf>
         </section>
       )}
+    </div>
     </div>
   );
 }

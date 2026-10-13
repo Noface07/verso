@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   ArrowLeft,
   ChevronLeft,
@@ -9,6 +9,9 @@ import {
   RotateCw,
   CheckCircle,
   AlertCircle,
+  Bookmark,
+  BookmarkCheck,
+  Columns2,
 } from 'lucide-react';
 import { db, dirty, now, uid, type ChapterProgress } from '../../db';
 import { getSourceById } from '../../sources/registry';
@@ -17,11 +20,47 @@ import { Button } from '../../design/components/Button';
 import { IconButton } from '../../design/components/IconButton';
 import { ProgressRing } from '../../design/components/Progress';
 import { useReadingSession } from '../../lib/session';
+import { recordSeriesRead } from '../../lib/series';
 import { setKeepScreenOn, triggerHaptic, useVolumeKeys } from '../../lib/mobileUx';
 import { registerBackHandler } from '../../lib/backStack';
+import { toggleAppFullscreen, useAppFullscreen, exitAppFullscreen } from '../../lib/useAppFullscreen';
+import { isMangaPageBookmarked, toggleMangaBookmark } from '../../lib/series';
+import { useLiveQuery } from 'dexie-react-hooks';
 
 export type ReadingMode = 'paged-rtl' | 'paged-ltr' | 'webtoon';
 export type FitMode = 'width' | 'height' | 'screen' | 'original';
+
+interface MangaPrefs {
+  readingMode: ReadingMode;
+  fitMode: FitMode;
+  /** Show two pages side by side in paged modes. */
+  spread: boolean;
+  /** In spread mode, show the first page (usually the cover) on its own. */
+  coverAlone: boolean;
+  /** Go straight to the next chapter at the end instead of stopping. */
+  autoNext: boolean;
+}
+const PREFS_KEY = 'folio_manga_reader';
+const DEFAULT_PREFS: MangaPrefs = {
+  readingMode: 'paged-rtl',
+  fitMode: 'screen',
+  spread: false,
+  coverAlone: true,
+  autoNext: true,
+};
+function loadPrefs(): MangaPrefs {
+  try {
+    return { ...DEFAULT_PREFS, ...(JSON.parse(localStorage.getItem(PREFS_KEY) ?? '{}') as Partial<MangaPrefs>) };
+  } catch {
+    return DEFAULT_PREFS;
+  }
+}
+
+/** First page of the spread containing `page` (1-based). */
+function spreadStart(page: number, coverAlone: boolean): number {
+  if (coverAlone) return page <= 1 ? 1 : page - ((page - 2) % 2);
+  return page - ((page - 1) % 2);
+}
 
 export default function MangaReader() {
   const { seriesId: rawSeriesId, chapterId: rawChapterId } = useParams<{
@@ -29,6 +68,9 @@ export default function MangaReader() {
     chapterId: string;
   }>();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  // ?page=N (from a bookmark) overrides the saved position for this open.
+  const requestedPage = Number(searchParams.get('page')) || 0;
 
   const seriesId = decodeURIComponent(rawSeriesId || '');
   const chapterId = decodeURIComponent(rawChapterId || '');
@@ -44,11 +86,23 @@ export default function MangaReader() {
 
   // Reader state
   const [currentPage, setCurrentPage] = useState(1);
-  const [readingMode, setReadingMode] = useState<ReadingMode>('paged-rtl');
-  const [fitMode, setFitMode] = useState<FitMode>('width');
+  const [prefs, setPrefs] = useState<MangaPrefs>(loadPrefs);
+  const updatePrefs = (patch: Partial<MangaPrefs>) =>
+    setPrefs((p) => {
+      const next = { ...p, ...patch };
+      try {
+        localStorage.setItem(PREFS_KEY, JSON.stringify(next));
+      } catch {
+        // Storage unavailable: applies for this session only.
+      }
+      return next;
+    });
+  const { readingMode, fitMode } = prefs;
+  const spread = prefs.spread && readingMode !== 'webtoon';
   const [hudVisible, setHudVisible] = useState(true);
-  const [isFullscreen, setIsFullscreen] = useState(false);
+  const isFullscreen = useAppFullscreen();
   const [isTransitionScreen, setIsTransitionScreen] = useState(false);
+  const [chapterToast, setChapterToast] = useState<string | null>(null);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const hudTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -137,9 +191,12 @@ export default function MangaReader() {
         .first();
       if (!isCurrent()) return;
 
-      if (savedProgress && savedProgress.page && savedProgress.page > 0) {
+      if (requestedPage > 0) {
+        setCurrentPage(requestedPage);
+      } else if (savedProgress && savedProgress.page && savedProgress.page > 0 && !savedProgress.read) {
         setCurrentPage(savedProgress.page);
       } else {
+        // New or already-finished chapter: start from the beginning.
         setCurrentPage(1);
       }
     } catch (err) {
@@ -150,7 +207,7 @@ export default function MangaReader() {
         resetHudTimer();
       }
     }
-  }, [seriesId, chapterId, sourceKind, resetHudTimer]);
+  }, [seriesId, chapterId, sourceKind, resetHudTimer, requestedPage]);
 
   useEffect(() => {
     void loadChapterData();
@@ -209,14 +266,12 @@ export default function MangaReader() {
         await db.chapter_progress.put(newProg);
       }
 
-      // Update series last_read_at
-      const seriesRecord = await db.series.get(seriesId);
-      if (seriesRecord) {
-        await db.series.update(seriesId, {
-          last_read_at: now(),
-          ...dirty(),
-        });
-      }
+      // Reading history: previously only followed series got last_read_at, so
+      // anything read without following left no trace.
+      await recordSeriesRead(seriesId, sourceKind, async () => {
+        const source = (await getSourceById(sourceKind)) as MangaSource | undefined;
+        return source?.details ? source.details(seriesId) : null;
+      });
     },
     [seriesId, chapterId, sourceKind, currentChapter, pages.length],
   );
@@ -238,17 +293,46 @@ export default function MangaReader() {
     return chapters.slice(currentChapterIndex + 1).find((c) => !c.externalUrl) ?? null;
   }, [chapters, currentChapterIndex]);
 
+  // Chapter-to-chapter moves replace the history entry: pushing each chapter (and
+  // pushing the series page on "Back") made Back bounce between reader and series.
+  const goToChapter = useCallback(
+    (targetChapterId: string) => {
+      navigate(
+        `/read/manga/${encodeURIComponent(seriesId)}/${encodeURIComponent(targetChapterId)}`,
+        { replace: true },
+      );
+    },
+    [navigate, seriesId],
+  );
+
+  // Pages currently on screen: one, or two in spread mode.
+  const visiblePages = useMemo(() => {
+    if (!spread) return [currentPage];
+    const start = spreadStart(currentPage, prefs.coverAlone);
+    if (prefs.coverAlone && start === 1) return [1];
+    return start + 1 <= pages.length ? [start, start + 1] : [start];
+  }, [spread, currentPage, prefs.coverAlone, pages.length]);
+  const lastVisible = visiblePages[visiblePages.length - 1];
+
   const goToNextPage = useCallback(() => {
     recordActivity();
-    if (currentPage < pages.length) {
-      const next = currentPage + 1;
+    if (lastVisible < pages.length) {
+      const next = lastVisible + 1;
       setCurrentPage(next);
-      void saveProgress(next, next === pages.length);
+      const nextLast = spread ? Math.min(pages.length, next + (prefs.coverAlone && next === 1 ? 0 : 1)) : next;
+      void saveProgress(next, nextLast >= pages.length);
+      return;
+    }
+    void saveProgress(pages.length, true);
+    // Keep reading: jump straight into the next chapter instead of stopping on a
+    // "Finished chapter" screen every time (the end screen remains when caught up).
+    if (prefs.autoNext && nextChapter) {
+      setChapterToast(nextChapter.title || `Chapter ${nextChapter.number ?? ''}`);
+      goToChapter(nextChapter.id);
     } else {
       setIsTransitionScreen(true);
-      void saveProgress(pages.length, true);
     }
-  }, [currentPage, pages.length, saveProgress, recordActivity]);
+  }, [lastVisible, pages.length, spread, prefs.coverAlone, prefs.autoNext, nextChapter, goToChapter, saveProgress, recordActivity]);
 
   const goToPrevPage = useCallback(() => {
     recordActivity();
@@ -256,12 +340,19 @@ export default function MangaReader() {
       setIsTransitionScreen(false);
       return;
     }
-    if (currentPage > 1) {
-      const prev = currentPage - 1;
+    const first = visiblePages[0];
+    if (first > 1) {
+      const prev = spread ? spreadStart(first - 1, prefs.coverAlone) : first - 1;
       setCurrentPage(prev);
       void saveProgress(prev, false);
     }
-  }, [isTransitionScreen, currentPage, saveProgress, recordActivity]);
+  }, [isTransitionScreen, visiblePages, spread, prefs.coverAlone, saveProgress, recordActivity]);
+
+  useEffect(() => {
+    if (!chapterToast) return;
+    const t = setTimeout(() => setChapterToast(null), 1800);
+    return () => clearTimeout(t);
+  }, [chapterToast]);
 
   // Keep screen on while reading manga (P11.1 & P11.3)
   useEffect(() => {
@@ -299,10 +390,10 @@ export default function MangaReader() {
     }, 40);
   }, [isTransitionScreen, hudVisible]);
 
-  const goToChapter = (targetChapterId: string) => {
-    navigate(
-      `/read/manga/${encodeURIComponent(seriesId)}/${encodeURIComponent(targetChapterId)}`,
-    );
+
+  const exitReader = () => {
+    if (((window.history.state as { idx?: number } | null)?.idx ?? 0) > 0) navigate(-1);
+    else navigate(`/series/${encodeURIComponent(seriesId)}`, { replace: true });
   };
 
   // Keyboard navigation
@@ -311,9 +402,9 @@ export default function MangaReader() {
       resetHudTimer();
       if (e.key === 'Escape') {
         if (isFullscreen) {
-          void document.exitFullscreen();
+          void exitAppFullscreen();
         } else {
-          navigate(`/series/${encodeURIComponent(seriesId)}`);
+          exitReader();
         }
       } else if (e.key === 'ArrowRight') {
         if (readingMode === 'paged-rtl') goToPrevPage();
@@ -362,14 +453,18 @@ export default function MangaReader() {
 
   // Toggle fullscreen
   const toggleFullscreen = () => {
-    if (!document.fullscreenElement) {
-      void document.documentElement.requestFullscreen();
-      setIsFullscreen(true);
-    } else {
-      void document.exitFullscreen();
-      setIsFullscreen(false);
-    }
+    void toggleAppFullscreen();
   };
+
+  // Bookmarks live on the series row (synced), keyed by chapter + page.
+  const seriesRow = useLiveQuery(() => db.series.get(seriesId), [seriesId]);
+  const pageBookmarked = isMangaPageBookmarked(seriesRow, chapterId, currentPage);
+  const toggleBookmark = () =>
+    void toggleMangaBookmark(seriesId, sourceKind, {
+      chapterId,
+      chapterTitle: currentChapter?.title || 'Chapter',
+      page: currentPage,
+    });
 
   if (loading) {
     return (
@@ -387,7 +482,7 @@ export default function MangaReader() {
         <h2 className="text-lg font-bold">Failed to load chapter</h2>
         <p className="text-xs text-white/70 mt-1 max-w-sm">{error || 'No pages found'}</p>
         <div className="flex gap-3 mt-4">
-          <Button variant="subtle" onClick={() => navigate(`/series/${encodeURIComponent(seriesId)}`)}>
+          <Button variant="subtle" onClick={exitReader}>
             Back to Series
           </Button>
           <Button variant="standard" onClick={loadChapterData}>
@@ -411,16 +506,16 @@ export default function MangaReader() {
     >
       {/* Top HUD Header */}
       <header
-        className={`absolute top-0 inset-x-0 z-40 bg-black/80 backdrop-blur-md px-4 py-2.5 flex items-center justify-between text-white transition-all duration-200 border-b border-white/10 ${
+        className={`absolute top-0 inset-x-0 z-40 bg-black/90 px-3 sm:px-4 py-2 flex items-center justify-between gap-2 text-white transition-all duration-200 border-b border-white/10 ${
           hudVisible ? 'translate-y-0 opacity-100' : '-translate-y-full opacity-0 pointer-events-none'
         }`}
       >
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 min-w-0 flex-1">
           <IconButton
             icon={<ArrowLeft className="w-5 h-5 text-white" />}
             label="Back to series"
             variant="subtle"
-            onClick={() => navigate(`/series/${encodeURIComponent(seriesId)}`)}
+            onClick={exitReader}
           />
           <div className="min-w-0">
             <h3 className="text-xs font-semibold text-white truncate max-w-xs md:max-w-md">
@@ -433,11 +528,41 @@ export default function MangaReader() {
         </div>
 
         {/* Reader settings in header */}
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center justify-end gap-1.5 sm:gap-2">
+          <IconButton
+            icon={
+              pageBookmarked ? (
+                <BookmarkCheck className="w-4 h-4 text-[var(--accent)]" />
+              ) : (
+                <Bookmark className="w-4 h-4 text-white" />
+              )
+            }
+            label={pageBookmarked ? 'Remove bookmark' : 'Bookmark this page'}
+            variant="subtle"
+            onClick={toggleBookmark}
+          />
+          {readingMode !== 'webtoon' && (
+            <IconButton
+              icon={<Columns2 className={`w-4 h-4 ${prefs.spread ? 'text-[var(--accent)]' : 'text-white'}`} />}
+              label={prefs.spread ? 'Single page' : 'Two pages side by side'}
+              variant="subtle"
+              onClick={() => updatePrefs({ spread: !prefs.spread })}
+            />
+          )}
+          <label className="hidden sm:flex items-center gap-1.5 text-[11px] text-white/80 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={prefs.autoNext}
+              onChange={(e) => updatePrefs({ autoNext: e.target.checked })}
+              className="accent-[var(--accent)]"
+            />
+            Auto next chapter
+          </label>
           {/* Reading Mode Selector */}
           <select
+            aria-label="Reading mode"
             value={readingMode}
-            onChange={(e) => setReadingMode(e.target.value as ReadingMode)}
+            onChange={(e) => updatePrefs({ readingMode: e.target.value as ReadingMode })}
             className="bg-white/10 text-white text-xs px-2 py-1 rounded-[var(--r-sm)] border border-white/20 outline-none cursor-pointer"
           >
             <option value="paged-rtl" className="bg-neutral-900 text-white">RTL (Manga)</option>
@@ -447,8 +572,9 @@ export default function MangaReader() {
 
           {/* Fit Mode Selector */}
           <select
+            aria-label="Fit"
             value={fitMode}
-            onChange={(e) => setFitMode(e.target.value as FitMode)}
+            onChange={(e) => updatePrefs({ fitMode: e.target.value as FitMode })}
             className="bg-white/10 text-white text-xs px-2 py-1 rounded-[var(--r-sm)] border border-white/20 outline-none cursor-pointer"
           >
             <option value="width" className="bg-neutral-900 text-white">Fit Width</option>
@@ -487,15 +613,15 @@ export default function MangaReader() {
               Hosted on MangaDex
             </div>
 
-            <div className="flex gap-3">
+            <div className="flex flex-wrap justify-center gap-3 max-w-full">
               <Button
                 variant="subtle"
-                onClick={() => navigate(`/series/${encodeURIComponent(seriesId)}`)}
+                onClick={exitReader}
               >
                 Back to Series
               </Button>
               {nextChapter ? (
-                <Button variant="accent" onClick={() => goToChapter(nextChapter.id)}>
+                <Button variant="accent" className="max-w-full" onClick={() => goToChapter(nextChapter.id)}>
                   Next: {nextChapter.title || `Chapter ${nextChapter.number}`}
                 </Button>
               ) : (
@@ -529,20 +655,35 @@ export default function MangaReader() {
           </div>
         ) : (
           /* Paged Mode (LTR or RTL) */
-          <div className="relative w-full h-full flex items-center justify-center p-2">
-            <img
-              src={activeImageUrl}
-              alt={`Page ${currentPage}`}
-              className={`select-none transition-all duration-75 ${
-                fitMode === 'width'
-                  ? 'w-full max-w-5xl object-contain'
-                  : fitMode === 'height'
-                    ? 'h-full object-contain'
-                    : fitMode === 'screen'
-                      ? 'max-w-full max-h-full object-contain'
-                      : 'object-none'
-              }`}
-            />
+          <div
+            className={`relative w-full h-full flex items-center justify-center p-2 gap-1 ${
+              readingMode === 'paged-rtl' ? 'flex-row-reverse' : 'flex-row'
+            }`}
+          >
+            {visiblePages.map((n) => {
+              const ref = pages.find((p) => p.index === n);
+              const url = ref ? pageObjectUrls.get(ref.index) || ref.url : activeImageUrl;
+              const two = visiblePages.length === 2;
+              return (
+                <img
+                  key={n}
+                  src={url}
+                  alt={`Page ${n}`}
+                  draggable={false}
+                  className={`select-none ${
+                    two
+                      ? 'max-w-[50%] max-h-full object-contain'
+                      : fitMode === 'width'
+                        ? 'w-full max-w-5xl object-contain'
+                        : fitMode === 'height'
+                          ? 'h-full object-contain'
+                          : fitMode === 'screen'
+                            ? 'max-w-full max-h-full object-contain'
+                            : 'object-none'
+                  }`}
+                />
+              );
+            })}
 
             {/* Credit notice on first page */}
             {currentPage === 1 && (
@@ -554,9 +695,15 @@ export default function MangaReader() {
         )}
       </div>
 
+      {chapterToast && (
+        <div className="absolute top-16 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-full bg-black/85 border border-white/15 text-white text-xs font-medium pointer-events-none animate-in fade-in-0 duration-200 max-w-[90%] truncate">
+          Now reading: {chapterToast}
+        </div>
+      )}
+
       {/* Bottom HUD Scrubber Bar */}
       <footer
-        className={`absolute bottom-0 inset-x-0 z-40 bg-black/80 backdrop-blur-md px-6 py-3 flex flex-col gap-2 text-white transition-all duration-200 border-t border-white/10 ${
+        className={`absolute bottom-0 inset-x-0 z-40 bg-black/90 px-3 sm:px-6 py-3 flex flex-col gap-2 text-white transition-all duration-200 border-t border-white/10 ${
           hudVisible ? 'translate-y-0 opacity-100' : 'translate-y-full opacity-0 pointer-events-none'
         }`}
       >
@@ -571,7 +718,7 @@ export default function MangaReader() {
           </button>
 
           <span>
-            Page {currentPage} of {pages.length}
+            Page {visiblePages.length === 2 ? `${visiblePages[0]}–${visiblePages[1]}` : currentPage} of {pages.length}
           </span>
 
           <button

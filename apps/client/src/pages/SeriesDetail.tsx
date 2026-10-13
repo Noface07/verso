@@ -14,29 +14,49 @@ import {
   RotateCw,
   Trash2,
   AlertCircle,
+  Images,
+  X,
+  Heart,
 } from 'lucide-react';
-import { db, dirty, now, uid, type Series, type ChapterProgress } from '../db';
+import { db, dirty, now, uid, type ChapterProgress } from '../db';
 import { getSourceById } from '../sources/registry';
-import type { ChapterInfo, MangaSource, CatalogEntry } from '../sources/types';
+import { isAdultRating, type ChapterInfo, type MangaSource, type CatalogEntry, type PageRef } from '../sources/types';
 import { safeHtml } from '../lib/safeHtml';
-import { openExternalUrl } from '../lib/tauri';
+import { openInAppWindow } from '../lib/tauri';
+import { toggleFavorite, useFavoriteIds } from '../lib/favourites';
+import { getMangaBookmarks, isFollowedSeries, setSeriesFollowed, toggleMangaBookmark } from '../lib/series';
 import { Button } from '../design/components/Button';
 import { IconButton } from '../design/components/IconButton';
 import { ProgressBar, ProgressRing } from '../design/components/Progress';
 
+// Last state per series, so coming back from the reader shows the page instantly
+// at the same tab and scroll position instead of refetching and jumping to the top.
+const seriesViewCache = new Map<
+  string,
+  { entry: CatalogEntry; chapters: ChapterInfo[]; view: 'chapters' | 'pages'; scrollTop: number }
+>();
+
 export default function SeriesDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const cached = seriesViewCache.get(id || '');
+  const rootRef = useRef<HTMLDivElement>(null);
 
-  const [entry, setEntry] = useState<CatalogEntry | null>(null);
-  const [chapters, setChapters] = useState<ChapterInfo[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [entry, setEntry] = useState<CatalogEntry | null>(cached?.entry ?? null);
+  const [chapters, setChapters] = useState<ChapterInfo[]>(cached?.chapters ?? []);
+  const [loading, setLoading] = useState(!cached);
   const [error, setError] = useState<string | null>(null);
 
   // Filter & sort
   const [searchFilter, setSearchFilter] = useState('');
   const [hideRead, setHideRead] = useState(false);
   const [sortAsc, setSortAsc] = useState(true);
+  const [descExpanded, setDescExpanded] = useState(false);
+  const [tagsExpanded, setTagsExpanded] = useState(false);
+  // Chapters list, or every chapter's pages in one scrolling list. Browsing pages
+  // does not touch reading progress or history; only opening one in the reader does.
+  const [view, setView] = useState<'chapters' | 'pages'>(cached?.view ?? 'chapters');
+  const [pagesChapterId, setPagesChapterId] = useState<string | null>(null);
   const [downloadingChapterId, setDownloadingChapterId] = useState<string | null>(null);
   const [downloadProgress, setDownloadProgress] = useState(0);
 
@@ -48,7 +68,7 @@ export default function SeriesDetail() {
     () => db.series.get(seriesId),
     [seriesId],
   );
-  const isFollowed = Boolean(seriesRow && !seriesRow.deleted_at);
+  const isFollowed = isFollowedSeries(seriesRow);
 
   // Live query for chapter progress
   const chapterProgressList = useLiveQuery(
@@ -85,7 +105,8 @@ export default function SeriesDetail() {
     if (!seriesId) return;
     const ticket = ++loadSeq.current;
     const isCurrent = () => ticket === loadSeq.current;
-    setLoading(true);
+    // With a cached copy on screen, refresh quietly in the background.
+    if (!seriesViewCache.has(seriesId)) setLoading(true);
     setError(null);
     try {
       const source = await getSourceById(sourceKind);
@@ -113,41 +134,33 @@ export default function SeriesDetail() {
     void loadData();
   }, [loadData]);
 
+  const scrollPos = useRef(cached?.scrollTop ?? 0);
+  const latestView = useRef({ entry, chapters, view });
+  latestView.current = { entry, chapters, view };
+  useEffect(() => {
+    const el = rootRef.current;
+    if (el && cached?.scrollTop) el.scrollTop = cached.scrollTop;
+    return () => {
+      const { entry: e, chapters: c, view: v } = latestView.current;
+      if (e) seriesViewCache.set(seriesId, { entry: e, chapters: c, view: v, scrollTop: scrollPos.current });
+    };
+    // Mount/unmount per series only.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [seriesId]);
+
   // Toggle follow/unfollow in db.series
+  const favIds = useFavoriteIds();
+  const isFavourite = favIds.has(seriesId);
+  const handleToggleFavourite = async () => {
+    await toggleFavorite(seriesId, isFavourite);
+    // A favourite belongs in the manga library.
+    if (!isFavourite && !isFollowed && entry) await setSeriesFollowed(seriesId, sourceKind, entry, true);
+  };
+
   const handleToggleFollow = async () => {
     if (!entry) return;
-    if (isFollowed && seriesRow) {
-      await db.series.update(seriesRow.id, {
-        deleted_at: now(),
-        ...dirty(),
-      });
-    } else {
-      const existing = await db.series.get(seriesId);
-      if (existing) {
-        await db.series.update(seriesId, {
-          deleted_at: null,
-          title: entry.title,
-          author: entry.authors.join(', ') || 'Unknown',
-          cover_url: entry.cover,
-          ...dirty(),
-        });
-      } else {
-        const newSeries: Series = {
-          id: seriesId,
-          source: sourceKind,
-          source_id: seriesId.replace(/^[^:]+:/, ''),
-          title: entry.title,
-          author: entry.authors.join(', ') || 'Unknown',
-          cover_url: entry.cover,
-          meta: {},
-          added_at: now(),
-          last_checked_at: now(),
-          deleted_at: null,
-          ...dirty(),
-        };
-        await db.series.put(newSeries);
-      }
-    }
+    // Unfollowing keeps the row so the series stays in reading history.
+    await setSeriesFollowed(seriesId, sourceKind, entry, !isFollowed);
   };
 
   // Mark all previous chapters as read
@@ -239,6 +252,13 @@ export default function SeriesDetail() {
     );
   }, [readableChapters, progressByChapterId]);
 
+  const openChapterAt = (chapterId: string, page?: number) =>
+    navigate(
+      `/read/manga/${encodeURIComponent(seriesId)}/${encodeURIComponent(chapterId)}${page ? `?page=${page}` : ''}`,
+    );
+
+  const bookmarks = getMangaBookmarks(seriesRow);
+
   const handleStartReading = () => {
     if (!firstUnreadChapter) return;
     navigate(`/read/manga/${encodeURIComponent(seriesId)}/${encodeURIComponent(firstUnreadChapter.id)}`);
@@ -288,9 +308,15 @@ export default function SeriesDetail() {
   }
 
   return (
-    <div className="flex-1 flex flex-col h-full overflow-y-auto bg-[var(--bg-base)] select-none">
+    <div
+      ref={rootRef}
+      onScroll={(e) => {
+        scrollPos.current = e.currentTarget.scrollTop;
+      }}
+      className="flex-1 flex flex-col h-full overflow-y-auto bg-[var(--bg-base)] select-none"
+    >
       {/* Top back navigation bar */}
-      <div className="sticky top-0 z-30 px-6 py-3 chrome-surface border-b border-[var(--stroke)] flex items-center justify-between">
+      <div className="sticky top-0 z-30 shrink-0 px-4 sm:px-6 py-3 chrome-surface border-b border-[var(--stroke)] flex items-center justify-between">
         <button
           type="button"
           onClick={() => navigate(-1)}
@@ -304,7 +330,9 @@ export default function SeriesDetail() {
       </div>
 
       {/* Hero Banner with Ambient blurred cover background */}
-      <div className="relative p-6 md:p-8 overflow-hidden border-b border-[var(--stroke)] bg-[var(--layer-1)]">
+      {/* shrink-0: as a child of the scrolling flex column it used to shrink to the
+          viewport and its overflow-hidden cut off the title and details. */}
+      <div className="relative shrink-0 p-4 sm:p-6 md:p-8 overflow-hidden border-b border-[var(--stroke)] bg-[var(--layer-1)]">
         {entry.cover && (
           <div
             className="absolute inset-0 bg-cover bg-center blur-2xl opacity-15 pointer-events-none scale-110"
@@ -331,17 +359,49 @@ export default function SeriesDetail() {
           {/* Series Metadata & Actions */}
           <div className="flex-1 flex flex-col justify-between">
             <div>
-              <h1 className="text-2xl md:text-3xl font-display font-bold text-[var(--text-1)] leading-tight">
+              <h1 className="text-2xl md:text-3xl font-display font-bold text-[var(--text-1)] leading-tight [overflow-wrap:anywhere]">
                 {entry.title}
               </h1>
               <p className="text-sm font-medium text-[var(--text-2)] mt-1.5">
                 {entry.authors.join(', ') || 'Unknown Author'}
               </p>
 
+              {/* Facts row */}
+              <div className="flex flex-wrap items-center gap-1.5 mt-3 text-[11px] font-semibold">
+                {isAdultRating(entry.contentRating) && (
+                  <span className="px-2 py-0.5 rounded-[var(--r-sm)] bg-[var(--danger)] text-white">18+</span>
+                )}
+                {entry.contentRating === 'suggestive' && (
+                  <span className="px-2 py-0.5 rounded-[var(--r-sm)] bg-[var(--warning)]/20 text-[var(--warning)]">Suggestive</span>
+                )}
+                {entry.status && (
+                  <span
+                    className={`px-2 py-0.5 rounded-[var(--r-sm)] capitalize ${
+                      entry.status === 'completed'
+                        ? 'bg-[var(--success-soft)] text-[var(--success)]'
+                        : 'bg-[var(--accent-soft)] text-[var(--accent)]'
+                    }`}
+                  >
+                    {entry.status}
+                  </span>
+                )}
+                {entry.demographic && (
+                  <span className="px-2 py-0.5 rounded-[var(--r-sm)] bg-[var(--layer-3)] text-[var(--text-2)] capitalize">
+                    {entry.demographic}
+                  </span>
+                )}
+                {entry.year && (
+                  <span className="px-2 py-0.5 rounded-[var(--r-sm)] bg-[var(--layer-3)] text-[var(--text-2)]">{entry.year}</span>
+                )}
+                <span className="px-2 py-0.5 rounded-[var(--r-sm)] bg-[var(--layer-3)] text-[var(--text-2)]">
+                  {readableChapters.length} readable chapter{readableChapters.length === 1 ? '' : 's'}
+                </span>
+              </div>
+
               {/* Tags */}
               {entry.tags && entry.tags.length > 0 && (
                 <div className="flex flex-wrap gap-1.5 mt-3">
-                  {entry.tags.map((tag, i) => (
+                  {(tagsExpanded ? entry.tags : entry.tags.slice(0, 10)).map((tag, i) => (
                     <span
                       key={i}
                       className="px-2.5 py-0.5 rounded-full text-xs font-medium bg-[var(--layer-3)] text-[var(--text-2)]"
@@ -349,13 +409,37 @@ export default function SeriesDetail() {
                       {tag}
                     </span>
                   ))}
+                  {entry.tags.length > 10 && (
+                    <button
+                      type="button"
+                      onClick={() => setTagsExpanded((v) => !v)}
+                      className="px-2.5 py-0.5 rounded-full text-xs font-medium text-[var(--accent)] hover:underline cursor-pointer"
+                    >
+                      {tagsExpanded ? 'Show fewer' : `+${entry.tags.length - 10} more`}
+                    </button>
+                  )}
                 </div>
               )}
 
               {/* Description */}
               {entry.summary && (
-                <div className="text-xs text-[var(--text-2)] leading-relaxed mt-4 max-h-36 overflow-y-auto pr-2">
-                  {safeHtml(entry.summary)}
+                <div className="mt-4">
+                  <div
+                    className={`text-sm text-[var(--text-2)] leading-relaxed [overflow-wrap:anywhere] ${
+                      descExpanded ? '' : 'line-clamp-5'
+                    }`}
+                  >
+                    {safeHtml(entry.summary)}
+                  </div>
+                  {entry.summary.length > 320 && (
+                    <button
+                      type="button"
+                      onClick={() => setDescExpanded((v) => !v)}
+                      className="mt-1 text-xs font-semibold text-[var(--accent)] hover:underline cursor-pointer"
+                    >
+                      {descExpanded ? 'Show less' : 'Show more'}
+                    </button>
+                  )}
                 </div>
               )}
             </div>
@@ -374,33 +458,94 @@ export default function SeriesDetail() {
               <Button
                 variant={isFollowed ? 'standard' : 'subtle'}
                 size="lg"
+                title="Keeps this series in Library → Manga and checks it for new chapters (Updates)"
                 onClick={handleToggleFollow}
               >
                 {isFollowed ? (
                   <>
                     <BookmarkCheck className="w-5 h-5 mr-2 text-[var(--accent)]" />
-                    Following
+                    In Library
                   </>
                 ) : (
                   <>
                     <Bookmark className="w-5 h-5 mr-2" />
-                    Follow Series
+                    Add to Library
                   </>
                 )}
               </Button>
+
+              <IconButton
+                label={isFavourite ? 'Remove from favourites' : 'Favourite: pinned to the top of your Manga library (also adds it)'}
+                icon={<Heart className={`w-5 h-5 ${isFavourite ? 'fill-current text-[var(--danger)]' : ''}`} />}
+                variant="subtle"
+                onClick={() => void handleToggleFavourite()}
+              />
             </div>
+
+            {bookmarks.length > 0 && (
+              <div className="mt-4">
+                <h3 className="text-xs font-semibold uppercase tracking-wider text-[var(--text-3)] mb-2">Bookmarks</h3>
+                <div className="flex flex-wrap gap-2">
+                  {bookmarks.map((b) => (
+                    <span
+                      key={`${b.chapterId}:${b.page}`}
+                      className="inline-flex items-center gap-1 pl-2.5 pr-1 py-1 rounded-full bg-[var(--layer-2)] border border-[var(--stroke)] text-xs max-w-full"
+                    >
+                      <button
+                        type="button"
+                        onClick={() => openChapterAt(b.chapterId, b.page)}
+                        className="truncate text-[var(--text-1)] hover:text-[var(--accent)] cursor-pointer"
+                      >
+                        {b.chapterTitle} · p. {b.page}
+                      </button>
+                      <button
+                        type="button"
+                        aria-label="Remove bookmark"
+                        onClick={() =>
+                          void toggleMangaBookmark(seriesId, sourceKind, {
+                            chapterId: b.chapterId,
+                            chapterTitle: b.chapterTitle,
+                            page: b.page,
+                          })
+                        }
+                        className="p-0.5 rounded-full text-[var(--text-3)] hover:text-[var(--danger)] cursor-pointer"
+                      >
+                        <X className="w-3 h-3" />
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </div>
 
       {/* Chapters Section */}
-      <div className="max-w-5xl mx-auto w-full px-6 py-6 flex-1 flex flex-col">
+      <div className="max-w-5xl mx-auto w-full px-4 sm:px-6 py-6 flex-1 flex flex-col">
         {/* Controls: Search, Filter, Sort */}
         <div className="flex flex-wrap items-center justify-between gap-3 mb-4 pb-3 border-b border-[var(--stroke)]">
           <div className="flex items-center gap-3">
-            <h2 className="text-base font-bold text-[var(--text-1)]">
-              Chapters ({chapters.length})
-            </h2>
+            <div role="tablist" aria-label="Series view" className="flex items-center gap-1 p-0.5 rounded-[var(--r-md)] bg-[var(--layer-2)]">
+              {(['chapters', 'pages'] as const).map((v) => (
+                <button
+                  key={v}
+                  type="button"
+                  role="tab"
+                  aria-selected={view === v}
+                  onClick={() => setView(v)}
+                  className={`flex items-center gap-1.5 px-3 py-1 rounded-[var(--r-sm)] text-sm font-semibold cursor-pointer ${
+                    view === v ? 'bg-[var(--layer-solid)] text-[var(--text-1)] shadow-xs' : 'text-[var(--text-3)] hover:text-[var(--text-1)]'
+                  }`}
+                >
+                  {v === 'chapters' ? `Chapters (${chapters.length})` : (
+                    <>
+                      <Images className="w-4 h-4" /> Pages
+                    </>
+                  )}
+                </button>
+              ))}
+            </div>
             <button
               type="button"
               onClick={() => setHideRead((prev) => !prev)}
@@ -434,13 +579,82 @@ export default function SeriesDetail() {
           </div>
         </div>
 
-        {/* Chapters List */}
+        {view === 'pages' ? (
+          (() => {
+            const list = visibleChapters.filter((c) => !c.externalUrl);
+            const selected = list.find((c) => c.id === pagesChapterId) ?? firstUnreadChapter ?? list[0];
+            const idx = selected ? list.indexOf(selected) : -1;
+            if (!selected) {
+              return <p className="text-center text-xs text-[var(--text-3)] py-12">No readable chapters.</p>;
+            }
+            return (
+              <div className="flex flex-col md:flex-row gap-4">
+                {/* Chapter list: sidebar on wide screens, dropdown on phones */}
+                <select
+                  aria-label="Chapter"
+                  value={selected.id}
+                  onChange={(e) => setPagesChapterId(e.target.value)}
+                  className="md:hidden h-9 px-2 rounded-[var(--r-md)] bg-[var(--layer-2)] border border-[var(--stroke)] text-sm text-[var(--text-1)]"
+                >
+                  {list.map((c) => (
+                    <option key={c.id} value={c.id} className="bg-[var(--layer-solid)]">
+                      {c.title || `Chapter ${c.number ?? ''}`}
+                    </option>
+                  ))}
+                </select>
+                <nav
+                  aria-label="Chapters"
+                  className="hidden md:flex flex-col w-60 shrink-0 self-start sticky top-[61px] max-h-[calc(100vh-140px)] overflow-y-auto rounded-[var(--r-md)] border border-[var(--stroke)] bg-[var(--layer-1)] p-1"
+                >
+                  {list.map((c) => {
+                    const active = c.id === selected.id;
+                    return (
+                      <button
+                        key={c.id}
+                        type="button"
+                        onClick={() => setPagesChapterId(c.id)}
+                        aria-current={active ? 'true' : undefined}
+                        className={`flex items-center gap-2 px-2.5 py-2 rounded-[var(--r-sm)] text-left text-xs cursor-pointer ${
+                          active
+                            ? 'bg-[var(--accent-soft)] text-[var(--accent)] font-semibold'
+                            : 'text-[var(--text-2)] hover:bg-[var(--layer-3)] hover:text-[var(--text-1)]'
+                        }`}
+                      >
+                        {progressByChapterId.get(c.id)?.read && (
+                          <Check className="w-3.5 h-3.5 text-[var(--success)] shrink-0" />
+                        )}
+                        <span className="truncate">{c.title || `Chapter ${c.number ?? ''}`}</span>
+                      </button>
+                    );
+                  })}
+                </nav>
+                <div className="flex-1 min-w-0">
+                  <ChapterPages
+                    key={selected.id}
+                    chapter={selected}
+                    sourceKind={sourceKind}
+                    read={!!progressByChapterId.get(selected.id)?.read}
+                    onOpen={(page) => openChapterAt(selected.id, page)}
+                  />
+                  {idx < list.length - 1 && (
+                    <div className="flex justify-end mt-4">
+                      <Button variant="standard" onClick={() => setPagesChapterId(list[idx + 1].id)}>
+                        Next: {list[idx + 1].title || 'Chapter'}
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })()
+        ) : (
+        /* Chapters List */
         <div className="space-y-2">
           {!loading && !error && readableChapters.length === 0 && (
             <div className="p-4 rounded-[var(--r-md)] bg-[var(--layer-2)] border border-[var(--stroke)] text-xs text-[var(--text-2)] leading-relaxed">
               {chapters.length === 0
                 ? 'MangaDex has no English chapters of this series. It is usually because the series is officially licensed and the publisher asked for them to be removed.'
-                : 'This series is only available as official releases on the publisher’s site, so it can’t be read inside Folio. The chapters below open in your browser.'}
+                : 'This series is only available as official releases on the publisher’s site, so it can’t be read inside Folio. The chapters below open the publisher’s own reader.'}
             </div>
           )}
           {visibleChapters.length === 0 ? (
@@ -458,7 +672,7 @@ export default function SeriesDetail() {
               return (
                 <div
                   key={ch.id}
-                  className={`group flex items-center justify-between p-3 rounded-[var(--r-md)] border transition-all ${
+                  className={`group flex flex-wrap items-center justify-between p-3 rounded-[var(--r-md)] border transition-all ${
                     isRead
                       ? 'bg-[var(--layer-1)] border-[var(--stroke)] opacity-70'
                       : 'bg-[var(--layer-2)] border-[var(--stroke)] hover:border-[var(--stroke-strong)]'
@@ -469,9 +683,9 @@ export default function SeriesDetail() {
                     className="flex-1 min-w-0 cursor-pointer pr-3"
                     onClick={() => {
                       if (ch.externalUrl) {
-                        // Opening it in the app's own webview replaced Folio with the
-                        // publisher's site and left no way back; use the system browser.
-                        void openExternalUrl(ch.externalUrl);
+                        // Official releases can't be rendered as pages; open the
+                        // publisher's reader in its own Folio window (browser on mobile).
+                        void openInAppWindow(ch.externalUrl, ch.title || 'Chapter');
                       } else {
                         navigate(
                           `/read/manga/${encodeURIComponent(seriesId)}/${encodeURIComponent(ch.id)}`,
@@ -490,7 +704,7 @@ export default function SeriesDetail() {
                     </div>
                     <div className="text-[11px] text-[var(--text-3)] mt-0.5 truncate">
                       {ch.externalUrl
-                        ? 'Official release · opens on the publisher’s site'
+                        ? 'Official release · opens the publisher’s reader'
                         : `Scanlation: ${ch.scanlationGroup || 'Unknown'} · Hosted on MangaDex`}
                     </div>
                   </div>
@@ -529,12 +743,96 @@ export default function SeriesDetail() {
                       {isRead ? 'Read' : 'Mark Read'}
                     </Button>
                   </div>
+
                 </div>
               );
             })
           )}
         </div>
+        )}
       </div>
     </div>
+  );
+}
+
+// Pages of one chapter, fetched only when the section scrolls near the viewport.
+const pagesCache = new Map<string, PageRef[]>();
+
+function ChapterPages({
+  chapter,
+  sourceKind,
+  read,
+  onOpen,
+}: {
+  chapter: ChapterInfo;
+  sourceKind: string;
+  read: boolean;
+  onOpen: (page: number) => void;
+}) {
+  const ref = useRef<HTMLElement>(null);
+  const [pages, setPages] = useState<PageRef[] | null>(() => pagesCache.get(chapter.id) ?? null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (pages || !ref.current) return;
+    let cancelled = false;
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (!entries.some((e) => e.isIntersecting)) return;
+        io.disconnect();
+        void (async () => {
+          try {
+            const source = (await getSourceById(sourceKind)) as MangaSource;
+            const list = await source.pages(chapter.id, true);
+            pagesCache.set(chapter.id, list);
+            if (!cancelled) setPages(list);
+          } catch (err) {
+            if (!cancelled) setError(err instanceof Error ? err.message : String(err));
+          }
+        })();
+      },
+      { rootMargin: '600px 0px' },
+    );
+    io.observe(ref.current);
+    return () => {
+      cancelled = true;
+      io.disconnect();
+    };
+  }, [pages, chapter.id, sourceKind]);
+
+  return (
+    <section ref={ref} className="min-h-[200px]">
+      <h3 className="py-2 mb-2 text-sm font-semibold text-[var(--text-1)] flex items-center gap-2">
+        {read && <Check className="w-4 h-4 text-[var(--success)] shrink-0" />}
+        <span className="truncate">{chapter.title || `Chapter ${chapter.number ?? ''}`}</span>
+        {pages && <span className="text-xs font-normal text-[var(--text-3)] shrink-0">{pages.length} pages</span>}
+      </h3>
+      {error ? (
+        <p className="text-xs text-[var(--danger)]">{error}</p>
+      ) : !pages ? (
+        <div className="grid grid-cols-[repeat(auto-fill,minmax(170px,1fr))] gap-3">
+          {Array.from({ length: 6 }, (_, i) => (
+            <div key={i} className="aspect-[2/3] rounded-[var(--r-md)] bg-[var(--layer-2)] animate-pulse" />
+          ))}
+        </div>
+      ) : (
+        <div className="grid grid-cols-[repeat(auto-fill,minmax(170px,1fr))] gap-3">
+          {pages.map((pg) => (
+            <button
+              key={pg.index}
+              type="button"
+              onClick={() => onOpen(pg.index)}
+              title={`Read from page ${pg.index}`}
+              className="relative aspect-[2/3] rounded-[var(--r-md)] overflow-hidden bg-[var(--layer-3)] border border-[var(--stroke)] hover:border-[var(--accent)] hover:-translate-y-0.5 transition-transform cursor-pointer focus-visible:ring-2 focus-visible:ring-[var(--accent)] outline-none"
+            >
+              <img src={pg.url} alt={`Page ${pg.index}`} loading="lazy" decoding="async" className="w-full h-full object-cover" />
+              <span className="absolute bottom-1 right-1 text-[11px] font-semibold text-white bg-black/65 rounded px-1.5 py-0.5">
+                {pg.index}
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
+    </section>
   );
 }

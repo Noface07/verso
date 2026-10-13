@@ -5,7 +5,8 @@ import { BookOpen, Check, ExternalLink, RotateCw, Sparkles } from 'lucide-react'
 import { db, type Series } from '../db';
 import { mangaDexSource } from '../sources/mangadex';
 import type { ChapterInfo } from '../sources/types';
-import { openExternalUrl } from '../lib/tauri';
+import { openInAppWindow } from '../lib/tauri';
+import { isFollowedSeries } from '../lib/series';
 import { CommandBar } from '../design/components/CommandBar';
 import { Button } from '../design/components/Button';
 import { IconButton } from '../design/components/IconButton';
@@ -36,7 +37,7 @@ function dayLabel(iso: string | undefined): string {
 export default function Updates() {
   const navigate = useNavigate();
   const followed = useLiveQuery(
-    () => db.series.filter((s) => !s.deleted_at && s.source === 'mangadex').toArray(),
+    () => db.series.filter((s) => isFollowedSeries(s) && s.source === 'mangadex').toArray(),
     [],
   );
   const readIds = useLiveQuery(
@@ -110,7 +111,7 @@ export default function Updates() {
   const unread = (items ?? []).filter((u) => !readIds.has(u.id)).length;
 
   const open = (u: Update) => {
-    if (u.externalUrl) void openExternalUrl(u.externalUrl);
+    if (u.externalUrl) void openInAppWindow(u.externalUrl, u.title || 'Chapter');
     else navigate(`/read/manga/${encodeURIComponent(u.seriesId)}/${encodeURIComponent(u.id)}`);
   };
 

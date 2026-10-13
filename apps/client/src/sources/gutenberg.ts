@@ -130,20 +130,35 @@ export class GutenbergSource implements CatalogSource {
     ];
   }
 
-  async browse(sectionId: string, cursor?: string): Promise<CatalogPage> {
+  filters = [
+    {
+      id: 'languages',
+      label: 'Language',
+      options: [
+        { value: '', label: 'Any language' },
+        { value: 'en', label: 'English' },
+        { value: 'fr', label: 'French' },
+        { value: 'de', label: 'German' },
+        { value: 'es', label: 'Spanish' },
+        { value: 'it', label: 'Italian' },
+        { value: 'pt', label: 'Portuguese' },
+        { value: 'nl', label: 'Dutch' },
+        { value: 'fi', label: 'Finnish' },
+        { value: 'zh', label: 'Chinese' },
+        { value: 'la', label: 'Latin' },
+      ],
+    },
+  ];
+
+  async browse(sectionId: string, cursor?: string, filters?: Record<string, string>): Promise<CatalogPage> {
     let url = cursor;
     if (!url) {
-      const base = 'https://gutendex.com/books';
-      if (sectionId === 'popular') {
-        url = `${base}?sort=popular`;
-      } else if (sectionId === 'latest') {
-        url = `${base}?sort=descending`;
-      } else if (sectionId.startsWith('topic:')) {
-        const topic = encodeURIComponent(sectionId.slice(6));
-        url = `${base}?topic=${topic}`;
-      } else {
-        url = base;
-      }
+      const params = new URLSearchParams();
+      if (sectionId === 'popular') params.set('sort', 'popular');
+      else if (sectionId === 'latest') params.set('sort', 'descending');
+      else if (sectionId.startsWith('topic:')) params.set('topic', sectionId.slice(6));
+      if (filters?.languages) params.set('languages', filters.languages);
+      url = `https://gutendex.com/books?${params.toString()}`;
     }
 
     const data = await gutendexJson<GutendexResponse>(url, 'Failed to browse Gutenberg');

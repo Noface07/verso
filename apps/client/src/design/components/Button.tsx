@@ -42,7 +42,9 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
         {...props}
       >
         {icon && <span className="inline-flex shrink-0">{icon}</span>}
-        {children && <span className="min-w-0 truncate">{children}</span>}
+        {/* inline-flex: callers often put an icon inside children, and preflight makes
+            svg display:block, which stacked the icon above the label. */}
+        {children && <span className="inline-flex items-center min-w-0 gap-[inherit]">{children}</span>}
       </button>
     );
   },

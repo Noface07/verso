@@ -5,6 +5,7 @@ import type { FoliateView } from './foliate'
 
 export type ThemeId = 'auto' | 'light' | 'sepia' | 'green' | 'dusk' | 'dark' | 'black' | 'custom'
 export type PageAnimation = 'none' | 'slide' | 'fade'
+export type TapZones = 'split' | 'reversed' | 'allNext' | 'off'
 
 export interface CustomTheme {
   name: string
@@ -83,7 +84,12 @@ export interface ReaderSettings {
   autoDefine: boolean
   wheelPaging: boolean
   wheelInvert: boolean
-  tapZones: 'split' | 'allNext'
+  /**
+   * What tapping/clicking the page edges does. split: left = back, right = next;
+   * reversed: left = next, right = back; allNext: both edges go forward;
+   * off: edges don't turn pages (only toggle the toolbars).
+   */
+  tapZones: TapZones
   volumeKeysTurn?: boolean
   haptics?: boolean
   keepScreenOn?: boolean

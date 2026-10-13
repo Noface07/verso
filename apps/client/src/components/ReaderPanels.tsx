@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Download, StickyNote, Search, Upload, Trash2, Moon, Sun } from 'lucide-react';
 import type { Annotation } from '../db';
 import { compareCFI, type FoliateView, type SearchHit, type TocItem } from '../lib/foliate';
-import { FONTS, THEMES, colorHex, type ReaderSettings, type ThemeId, type PageAnimation } from '../lib/readerSettings';
+import { FONTS, THEMES, colorHex, type ReaderSettings, type ThemeId, type PageAnimation, type TapZones } from '../lib/readerSettings';
 import { useCustomFonts } from '../lib/customFonts';
 import { Dialog } from '../design/components/Dialog';
 import { Button } from '../design/components/Button';
@@ -815,15 +815,32 @@ export function SettingsPanel({
             <span className="font-semibold text-[11px] text-[var(--text-3)] uppercase tracking-wider">
               Tap Navigation
             </span>
-            <SegmentedControl
-              size="sm"
-              options={[
-                { value: 'split', label: 'Left & Right' },
-                { value: 'allNext', label: 'All Next' },
-              ]}
-              value={s.tapZones}
-              onChange={(val) => onChange({ tapZones: val as 'split' | 'allNext' })}
-            />
+            <div className="grid grid-cols-2 gap-1.5" role="radiogroup" aria-label="Tap navigation">
+              {(
+                [
+                  { value: 'split', label: 'Left back · Right next' },
+                  { value: 'reversed', label: 'Left next · Right back' },
+                  { value: 'allNext', label: 'Both sides next' },
+                  { value: 'off', label: 'Off (taps show menu)' },
+                ] as { value: TapZones; label: string }[]
+              ).map((o) => (
+                <button
+                  key={o.value}
+                  type="button"
+                  role="radio"
+                  aria-checked={s.tapZones === o.value}
+                  onClick={() => onChange({ tapZones: o.value })}
+                  className={`px-2 py-1.5 rounded-[var(--r-md)] border text-[11px] leading-tight text-left cursor-pointer transition-colors ${
+                    s.tapZones === o.value
+                      ? 'border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent)] font-semibold'
+                      : 'border-[var(--stroke)] text-[var(--text-2)] hover:text-[var(--text-1)]'
+                  }`}
+                >
+                  {o.label}
+                </button>
+              ))}
+            </div>
+            <p className="text-[11px] text-[var(--text-3)]">The outer quarter of each side turns the page; the middle shows the menu.</p>
           </div>
         </div>
       )}

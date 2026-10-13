@@ -177,6 +177,12 @@ export class OpdsSource implements CatalogSource {
       const formats: CatalogFormat[] = [];
       let cover: string | undefined;
 
+      // Extract thumbnail from media:thumbnail if present
+      const mediaThumb = entry.getElementsByTagNameNS('*', 'thumbnail')[0] || entry.querySelector('thumbnail');
+      if (mediaThumb) {
+        cover = resolveUrl(mediaThumb.getAttribute('url') || mediaThumb.getAttribute('href'));
+      }
+
       const links = Array.from(entry.querySelectorAll('link'));
       for (const link of links) {
         const rel = link.getAttribute('rel') || '';
@@ -184,18 +190,26 @@ export class OpdsSource implements CatalogSource {
         const type = link.getAttribute('type') || '';
 
         if (
-          (rel.includes('image') || rel.includes('thumbnail')) &&
-          href &&
-          !cover
+          !cover &&
+          (rel.includes('image') || rel.includes('thumbnail') || type.startsWith('image/')) &&
+          href
         ) {
           cover = href;
         }
 
-        if (rel.includes('acquisition') && href) {
-          formats.push({
-            mime: type || 'application/epub+zip',
-            url: href,
-          });
+        if (
+          href &&
+          (rel.includes('acquisition') ||
+            rel === 'enclosure' ||
+            type.includes('epub') ||
+            href.includes('.epub'))
+        ) {
+          if (type.includes('epub') || href.includes('.epub') || rel.includes('acquisition') || rel === 'enclosure') {
+            formats.push({
+              mime: type || 'application/epub+zip',
+              url: href,
+            });
+          }
         }
       }
 
@@ -265,9 +279,9 @@ function uidFallback(): string {
   return Math.random().toString(36).slice(2, 10);
 }
 
-// Built-in Standard Ebooks Source (Public New Releases Feed)
+// Built-in Standard Ebooks Source (Public New Releases Atom Feed)
 export const standardEbooksSource = new OpdsSource(
   'standardebooks',
   'Standard Ebooks',
-  'https://standardebooks.org/feeds/opds/new-releases',
+  'https://standardebooks.org/feeds/atom/new-releases',
 );

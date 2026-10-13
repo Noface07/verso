@@ -47,6 +47,8 @@ import { Dropdown, type DropdownMenuSection } from '../design/components/Dropdow
 import { ContextMenu } from '../design/components/ContextMenu';
 import { Dialog } from '../design/components/Dialog';
 import { CoverGrid } from '../design/components/CoverGrid';
+import { isFollowedSeries } from '../lib/series';
+import { confirmAction } from '../lib/tauri';
 import { BookCard } from '../design/components/BookCard';
 import { EmptyState } from '../design/components/EmptyState';
 import { BulkActionBar } from '../design/components/BulkActionBar';
@@ -75,7 +77,7 @@ export default function Library() {
     [] as Book[],
   );
   const followedSeries = useLiveQuery(
-    () => db.series.filter((s) => !s.deleted_at).toArray(),
+    () => db.series.filter((s) => isFollowedSeries(s)).toArray(),
     [],
     [],
   );
@@ -96,7 +98,10 @@ export default function Library() {
   const [query, setQuery] = useState('');
   const [searchInside, setSearchInside] = useState(false);
   const [ftsMatchingIds, setFtsMatchingIds] = useState<Set<string>>(new Set());
-  const [formatType, setFormatType] = useState<FormatType>('all');
+  const [formatType, setFormatType] = useState<FormatType>(() => {
+    const f = params.get('format') as FormatType | null;
+    return f && ['all', 'books', 'manga', 'comics'].includes(f) ? f : 'all';
+  });
   const [selectedCollection, setSelectedCollection] = useState<string>('all');
   const [filter, setFilter] = useState<FilterKey>(() => {
     const f = params.get('filter') as FilterKey | null;
@@ -263,7 +268,7 @@ export default function Library() {
   );
 
   const removeBook = useCallback(async (b: Book) => {
-    if (!confirm(`Remove “${b.title}” from your library?`)) return;
+    if (!(await confirmAction(`Remove “${b.title}” from your library?`))) return;
     const now = Date.now();
     await db.books.update(b.id, { deleted_at: now, ...dirty() });
     await db.files.delete(b.file_hash);
@@ -986,8 +991,8 @@ export default function Library() {
           followedSeries && followedSeries.length === 0 ? (
             <EmptyState
               icon={<BookOpen className="w-7 h-7" />}
-              title="No followed manga"
-              description="Browse MangaDex in the Store and follow series to keep track of new chapters here."
+              title="No manga in your library"
+              description="Open a series in the Store and tap “Add to Library” (or the heart) to keep it here and get new-chapter updates."
               action={
                 <Button variant="accent" onClick={() => navigate('/store')}>
                   Browse Store
@@ -996,21 +1001,26 @@ export default function Library() {
             />
           ) : (
             <CoverGrid columnWidth={150}>
-              {followedSeries?.map((s) => (
-                <div
-                  key={s.id}
-                  onClick={() => navigate(`/series/${encodeURIComponent(s.id)}`)}
-                  className="cursor-pointer"
-                >
-                  <BookCard
-                    id={s.id}
-                    title={s.title}
-                    author={s.author || 'Unknown'}
-                    coverUrl={s.cover_url}
-                    onClick={() => navigate(`/series/${encodeURIComponent(s.id)}`)}
-                  />
-                </div>
-              ))}
+              {[...(followedSeries ?? [])]
+                // Favourites first, then most recently read.
+                .sort(
+                  (a, b) =>
+                    Number(favIds.has(b.id)) - Number(favIds.has(a.id)) ||
+                    (b.last_read_at ?? 0) - (a.last_read_at ?? 0),
+                )
+                .map((s) => (
+                  <div key={s.id} className="cursor-pointer">
+                    <BookCard
+                      id={s.id}
+                      title={s.title}
+                      author={s.author || 'Unknown'}
+                      coverUrl={s.cover_url}
+                      isFavourite={favIds.has(s.id)}
+                      onToggleFavourite={() => void toggleFavorite(s.id, favIds.has(s.id))}
+                      onClick={() => navigate(`/series/${encodeURIComponent(s.id)}`)}
+                    />
+                  </div>
+                ))}
             </CoverGrid>
           )
         ) : books.length === 0 ? (

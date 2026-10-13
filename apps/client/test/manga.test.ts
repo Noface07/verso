@@ -14,7 +14,7 @@ describe('Phase 7: Manga, MangaDex & Reader', () => {
     it('returns standard sections and formats credit lines per legal guardrails', async () => {
       const source = new MangaDexSource();
       const sections = await source.sections();
-      expect(sections.map((s) => s.id)).toEqual(['popular', 'latest', 'recent']);
+      expect(sections.map((s) => s.id)).toEqual(['popular', 'rating', 'latest', 'recent']);
 
       const creditLine = source.credit({
         id: 'ch-1',

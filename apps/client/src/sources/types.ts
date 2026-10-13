@@ -16,7 +16,17 @@ export interface CatalogEntry {
   tags?: string[];
   formats?: CatalogFormat[];
   kind: 'book' | 'manga' | 'comic';
+  /** Publication status, e.g. "ongoing", "completed". */
+  status?: string;
+  /** safe | suggestive | erotica | pornographic (MangaDex ratings). */
+  contentRating?: string;
+  year?: number;
+  /** shounen, seinen, shoujo, josei. */
+  demographic?: string;
 }
+
+/** Adult content ratings get an 18+ badge everywhere a title is shown. */
+export const isAdultRating = (r?: string) => r === 'erotica' || r === 'pornographic';
 
 export interface CatalogPage {
   items: CatalogEntry[];
@@ -28,13 +38,22 @@ export interface CatalogSection {
   title: string;
 }
 
+/** A single-choice filter a source supports (empty value = any). */
+export interface CatalogFilter {
+  id: string;
+  label: string;
+  options: { value: string; label: string; /** Shown on hover. */ hint?: string }[];
+}
+
 export interface CatalogSource {
   id: string;
   name: string;
   icon: string;
   kind: 'books' | 'manga';
+  /** Filters shown in the Store for this source; values are passed to browse/search. */
+  filters?: CatalogFilter[];
   sections(): Promise<CatalogSection[]>;
-  browse(sectionId: string, cursor?: string): Promise<CatalogPage>;
+  browse(sectionId: string, cursor?: string, filters?: Record<string, string>): Promise<CatalogPage>;
   search(
     query: string,
     cursor?: string,
@@ -64,6 +83,7 @@ export interface PageRef {
 
 export interface MangaSource extends CatalogSource {
   chapters(seriesId: string): Promise<ChapterInfo[]>;
-  pages(chapterId: string): Promise<PageRef[]>;
+  /** `dataSaver` asks for smaller images where the source offers them (thumbnails, mobile data). */
+  pages(chapterId: string, dataSaver?: boolean): Promise<PageRef[]>;
   credit?(chapter: ChapterInfo): string;
 }

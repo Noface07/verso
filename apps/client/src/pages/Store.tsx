@@ -19,10 +19,11 @@ import {
   addCustomOpdsSource,
   removeCustomSource,
 } from '../sources/registry';
-import type {
-  CatalogEntry,
-  CatalogSection,
-  CatalogSource,
+import {
+  isAdultRating,
+  type CatalogEntry,
+  type CatalogSection,
+  type CatalogSource,
 } from '../sources/types';
 import { downloadManager } from '../features/downloads/manager';
 import { safeHtml } from '../lib/safeHtml';
@@ -37,21 +38,55 @@ import { ProgressBar, ProgressRing } from '../design/components/Progress';
 import { EmptyState } from '../design/components/EmptyState';
 import { PullToRefresh } from '../components/PullToRefresh';
 
+// Snapshot of the Store kept while the app runs. Opening a title and pressing Back
+// unmounts the Store; without this, the source, section, search, filters, loaded
+// pages and scroll position were all lost and had to be found again.
+interface StoreSnapshot {
+  sourceId: string;
+  sectionId: string;
+  query: string;
+  filters: Record<string, string>;
+  sections: CatalogSection[];
+  items: CatalogEntry[];
+  nextCursor?: string;
+  scrollTop: number;
+}
+let storeSnapshot: StoreSnapshot | null = null;
+
+// Free, legal OPDS catalogs verified to respond (2026-10). Standard Ebooks is built in.
+const OPDS_PRESETS = [
+  {
+    name: 'unglue.it (free ebooks)',
+    // The EPUB acquisition feed: lists books directly (the root is a navigation feed).
+    url: 'https://unglue.it/api/opds/epub/?order_by=popular',
+    about: 'Books released for free by their rights holders (Creative Commons and similar). EPUB only.',
+  },
+];
+
+// Built-in sources can't be removed; only custom (OPDS) sources get a delete button.
+const BUILT_IN_SOURCE_IDS = new Set(['gutenberg', 'standardebooks', 'mangadex']);
+
 export default function Store() {
+  const snap = storeSnapshot;
+  const rootRef = useRef<HTMLDivElement>(null);
+  // Fetch key the snapshot already satisfies; the first matching fetch is skipped.
+  const restoredKeyRef = useRef<string | null>(
+    snap ? JSON.stringify([snap.sourceId, snap.sectionId, snap.query, snap.filters]) : null,
+  );
   const navigate = useNavigate();
 
   // Sources
   const [sources, setSources] = useState<CatalogSource[]>([]);
-  const [activeSourceId, setActiveSourceId] = useState<string>('gutenberg');
-  const [sections, setSections] = useState<CatalogSection[]>([]);
-  const [activeSectionId, setActiveSectionId] = useState<string>('popular');
+  const [activeSourceId, setActiveSourceId] = useState<string>(snap?.sourceId ?? 'gutenberg');
+  const [sections, setSections] = useState<CatalogSection[]>(snap?.sections ?? []);
+  const [activeSectionId, setActiveSectionId] = useState<string>(snap?.sectionId ?? 'popular');
 
   // Search & Catalog items
-  const [searchQuery, setSearchQuery] = useState('');
-  const [debouncedQuery, setDebouncedQuery] = useState('');
-  const [items, setItems] = useState<CatalogEntry[]>([]);
-  const [nextCursor, setNextCursor] = useState<string | undefined>(undefined);
-  const [loading, setLoading] = useState(true);
+  const [searchQuery, setSearchQuery] = useState(snap?.query ?? '');
+  const [debouncedQuery, setDebouncedQuery] = useState(snap?.query ?? '');
+  const [items, setItems] = useState<CatalogEntry[]>(snap?.items ?? []);
+  const [nextCursor, setNextCursor] = useState<string | undefined>(snap?.nextCursor);
+  const [loading, setLoading] = useState(!snap);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -90,7 +125,12 @@ export default function Store() {
   // Which source the current `sections`/`activeSectionId` belong to. Items are only
   // fetched once this matches the active source, so we never browse source B with
   // a section id left over from source A.
-  const [sectionsFor, setSectionsFor] = useState<string | null>(null);
+  const [sectionsFor, setSectionsFor] = useState<string | null>(snap?.sourceId ?? null);
+  // Per-source filter values (empty string = any).
+  const [filters, setFilters] = useState<Record<string, string>>(snap?.filters ?? {});
+  const filtersKey = JSON.stringify(filters);
+  // Book being fetched by "Read now" (downloads the small edition, then opens it).
+  const [readingNow, setReadingNow] = useState<{ id: string; error?: string } | null>(null);
 
   // Every fetch takes a ticket; only the latest ticket may write results. Without
   // this, a slow response from a previous source (Gutendex can take seconds)
@@ -102,6 +142,7 @@ export default function Store() {
   const switchSource = useCallback((id: string) => {
     requestSeq.current++;
     setActiveSourceId(id);
+    setFilters({});
     setSectionsFor(null);
     setSections([]);
     setItems([]);
@@ -160,14 +201,14 @@ export default function Store() {
 
   // Fetch catalog items (browse or search)
   const fetchItems = useCallback(
-    async (source: CatalogSource, sectionId: string, query: string) => {
+    async (source: CatalogSource, sectionId: string, query: string, f: Record<string, string> = {}) => {
       const ticket = ++requestSeq.current;
       const isCurrent = () => ticket === requestSeq.current;
       setLoading(true);
       setLoadingMore(false);
       setError(null);
       try {
-        const page = query ? await source.search(query) : await source.browse(sectionId);
+        const page = query ? await source.search(query, undefined, f) : await source.browse(sectionId, undefined, f);
         if (!isCurrent()) return;
         setItems(page.items);
         setNextCursor(page.next);
@@ -186,12 +227,18 @@ export default function Store() {
 
   useEffect(() => {
     if (!activeSource || sectionsFor !== activeSource.id) return;
+    if (restoredKeyRef.current) {
+      const key = JSON.stringify([activeSource.id, activeSectionId, debouncedQuery, JSON.parse(filtersKey)]);
+      const skip = key === restoredKeyRef.current;
+      restoredKeyRef.current = null;
+      if (skip) return;
+    }
     if (activeSectionId || debouncedQuery) {
-      void fetchItems(activeSource, activeSectionId, debouncedQuery);
+      void fetchItems(activeSource, activeSectionId, debouncedQuery, JSON.parse(filtersKey));
     } else {
       setLoading(false);
     }
-  }, [activeSource, sectionsFor, activeSectionId, debouncedQuery, fetchItems]);
+  }, [activeSource, sectionsFor, activeSectionId, debouncedQuery, filtersKey, fetchItems]);
 
   // Load more pages
   const handleLoadMore = async () => {
@@ -200,8 +247,8 @@ export default function Store() {
     setLoadingMore(true);
     try {
       const page = debouncedQuery
-        ? await activeSource.search(debouncedQuery, nextCursor)
-        : await activeSource.browse(activeSectionId, nextCursor);
+        ? await activeSource.search(debouncedQuery, nextCursor, filters)
+        : await activeSource.browse(activeSectionId, nextCursor, filters);
       if (ticket !== requestSeq.current) return;
       setItems((prev) => {
         // Sources sometimes overlap pages; duplicate keys break React reconciliation.
@@ -257,6 +304,46 @@ export default function Store() {
   );
 
   // Enqueue download
+  // Continuous scrolling: load the next page when the end of the grid comes near.
+  const loadMoreRef = useRef<() => void>(() => {});
+  const sentinelRef = useCallback((el: HTMLDivElement | null) => {
+    if (!el) return;
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) loadMoreRef.current();
+      },
+      { rootMargin: '800px 0px' },
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, []);
+
+  // "Read now": an EPUB is one file, so it can't be streamed page by page like
+  // manga; instead fetch the small text edition and open it as soon as it lands.
+  const handleReadNow = async (entry: CatalogEntry) => {
+    if (!activeSource) return;
+    setReadingNow({ id: entry.id });
+    const downloadId = await downloadManager.enqueue(entry, activeSource);
+    for (let i = 0; i < 600; i++) {
+      const dl = await db.downloads.get(downloadId);
+      if (dl?.status === 'completed') {
+        const book = await db.books.filter((b) => !b.deleted_at && b.meta?.source?.id === entry.id).first();
+        if (book) {
+          setReadingNow(null);
+          setSelectedBook(null);
+          navigate(`/read/${book.id}`);
+          return;
+        }
+      }
+      if (dl?.status === 'failed' || dl?.status === 'cancelled') {
+        setReadingNow({ id: entry.id, error: dl.error || 'Download failed' });
+        return;
+      }
+      await new Promise((r) => setTimeout(r, 500));
+    }
+    setReadingNow({ id: entry.id, error: 'Timed out waiting for the download.' });
+  };
+
   const handleDownload = async (entry: CatalogEntry) => {
     if (!activeSource) return;
     await downloadManager.enqueue(entry, activeSource);
@@ -297,8 +384,41 @@ export default function Store() {
     await refreshSources();
   };
 
+  const latest = useRef<Omit<StoreSnapshot, 'scrollTop'> | null>(null);
+  latest.current = {
+    sourceId: activeSourceId,
+    sectionId: activeSectionId,
+    query: debouncedQuery,
+    filters,
+    sections,
+    items,
+    nextCursor,
+  };
+  const scroller = () =>
+    rootRef.current?.querySelector<HTMLElement>('[data-testid="pull-to-refresh-container"]') ?? null;
+  useEffect(() => {
+    const el = scroller();
+    let scrollTop = snap?.scrollTop ?? 0;
+    if (el && scrollTop) el.scrollTop = scrollTop;
+    // Track continuously: once unmounted the element is detached and reports 0.
+    const onScroll = () => {
+      scrollTop = el?.scrollTop ?? 0;
+    };
+    el?.addEventListener('scroll', onScroll, { passive: true });
+    return () => {
+      el?.removeEventListener('scroll', onScroll);
+      if (latest.current) storeSnapshot = { ...latest.current, scrollTop };
+    };
+    // Mount/unmount only.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  loadMoreRef.current = () => {
+    if (!loading && !error) void handleLoadMore();
+  };
+
   return (
-    <div className="flex-1 flex flex-col h-full overflow-hidden bg-[var(--bg-base)]">
+    <div ref={rootRef} className="flex-1 flex flex-col h-full overflow-hidden bg-[var(--bg-base)]">
       {/* Top Header & Search Bar */}
       <header className="px-4 sm:px-6 py-3 sm:py-4 border-b border-[var(--stroke)] bg-[var(--layer-1)] flex flex-wrap items-center justify-between gap-3 sm:gap-4 shrink-0">
         <div className="flex items-center gap-3">
@@ -355,8 +475,7 @@ export default function Store() {
 
           {/* Delete active source if custom */}
           {activeSource &&
-            activeSource.id !== 'gutenberg' &&
-            activeSource.id !== 'standardebooks' && (
+            !BUILT_IN_SOURCE_IDS.has(activeSource.id) && (
               <IconButton
                 icon={<Trash2 className="w-4 h-4 text-[var(--danger)]" />}
                 label="Delete this source"
@@ -491,9 +610,38 @@ export default function Store() {
       </header>
 
       {/* Sections Bar (only shown when not actively searching) */}
-      {!debouncedQuery && sections.length > 0 && (
-        <div className="px-4 sm:px-6 py-2.5 border-b border-[var(--stroke)] bg-[var(--layer-1)] flex items-center gap-2 overflow-x-auto no-scrollbar shrink-0">
-          {sections.map((sec) => (
+      {((!debouncedQuery && sections.length > 0) || (activeSource?.filters?.length ?? 0) > 0) && (
+        <div className="px-4 sm:px-6 py-2.5 border-b border-[var(--stroke)] bg-[var(--layer-1)] flex flex-wrap items-center gap-2 shrink-0">
+          {activeSource?.filters?.map((f) => (
+            <select
+              key={f.id}
+              aria-label={f.label}
+              value={filters[f.id] ?? ''}
+              onChange={(e) => setFilters((cur) => ({ ...cur, [f.id]: e.target.value }))}
+              className={`h-7 px-2 rounded-[var(--r-md)] border text-xs outline-none cursor-pointer bg-[var(--layer-2)] ${
+                filters[f.id] ? 'border-[var(--accent)] text-[var(--accent)]' : 'border-[var(--stroke)] text-[var(--text-2)]'
+              }`}
+            >
+              {f.options.map((o) => (
+                <option key={o.value} value={o.value} title={o.hint} className="bg-[var(--layer-solid)] text-[var(--text-1)]">
+                  {o.label}
+                </option>
+              ))}
+            </select>
+          ))}
+          {Object.values(filters).some(Boolean) && (
+            <button
+              type="button"
+              onClick={() => setFilters({})}
+              className="text-xs text-[var(--text-3)] hover:text-[var(--text-1)] underline cursor-pointer"
+            >
+              Clear filters
+            </button>
+          )}
+          {!debouncedQuery && sections.length > 0 && (activeSource?.filters?.length ?? 0) > 0 && (
+            <span className="w-px h-5 bg-[var(--stroke)] mx-1 hidden sm:block" aria-hidden="true" />
+          )}
+          {!debouncedQuery && sections.map((sec) => (
             <button
               key={sec.id}
               type="button"
@@ -514,7 +662,7 @@ export default function Store() {
       <PullToRefresh
         onRefresh={async () => {
           if (activeSource) {
-            await fetchItems(activeSource, activeSectionId, debouncedQuery);
+            await fetchItems(activeSource, activeSectionId, debouncedQuery, filters);
           }
         }}
         className="flex-1 px-4 sm:px-6 py-4"
@@ -537,7 +685,7 @@ export default function Store() {
               variant="standard"
               onClick={() =>
                 activeSource &&
-                fetchItems(activeSource, activeSectionId, debouncedQuery)
+                fetchItems(activeSource, activeSectionId, debouncedQuery, filters)
               }
             >
               <RotateCw className="w-4 h-4 mr-2" />
@@ -568,10 +716,19 @@ export default function Store() {
                       coverUrl={item.cover}
                       onClick={() => setSelectedBook(item)}
                       badge={
-                        owned ? (
-                          <span className="flex items-center gap-1 text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-[var(--accent)] text-white shadow-sm">
-                            <Check className="w-3 h-3" />
-                            In Library
+                        owned || isAdultRating(item.contentRating) ? (
+                          <span className="flex items-center gap-1">
+                            {isAdultRating(item.contentRating) && (
+                              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-[var(--danger)] text-white shadow-sm">
+                                18+
+                              </span>
+                            )}
+                            {owned && (
+                              <span className="flex items-center gap-1 text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-[var(--accent)] text-white shadow-sm">
+                                <Check className="w-3 h-3" />
+                                In Library
+                              </span>
+                            )}
                           </span>
                         ) : undefined
                       }
@@ -581,22 +738,14 @@ export default function Store() {
               })}
             </CoverGrid>
 
-            {/* Load More Button */}
+            {/* Continuous scroll: the next page loads as this comes into view. */}
             {nextCursor && (
-              <div className="flex justify-center pb-8 pt-2">
-                <Button
-                  variant="standard"
-                  onClick={handleLoadMore}
-                  disabled={loadingMore}
-                >
-                  {loadingMore ? (
-                    <span className="flex items-center gap-2">
-                      <ProgressRing size={16} /> Loading more…
-                    </span>
-                  ) : (
-                    'Load More'
-                  )}
-                </Button>
+              <div ref={sentinelRef} className="flex justify-center items-center gap-2 pb-8 pt-2 text-xs text-[var(--text-3)] min-h-10">
+                {loadingMore && (
+                  <>
+                    <ProgressRing size={16} /> Loading more…
+                  </>
+                )}
               </div>
             )}
           </div>
@@ -724,13 +873,26 @@ export default function Store() {
                     <>
                       <Button
                         variant="accent"
+                        disabled={readingNow?.id === selectedBook.id && !readingNow.error}
+                        onClick={() => {
+                          void handleReadNow(selectedBook);
+                        }}
+                      >
+                        <BookOpen className="w-4 h-4 mr-2" />
+                        {readingNow?.id === selectedBook.id && !readingNow.error ? 'Opening…' : 'Read now'}
+                      </Button>
+                      <Button
+                        variant="standard"
                         onClick={() => {
                           void handleDownload(selectedBook);
                         }}
                       >
                         <Download className="w-4 h-4 mr-2" />
-                        Download EPUB
+                        Download
                       </Button>
+                      {readingNow?.id === selectedBook.id && readingNow.error && (
+                        <p className="basis-full text-xs text-[var(--danger)]">{readingNow.error}</p>
+                      )}
                       {illustrated && (
                         <Button
                           variant="standard"
@@ -765,6 +927,31 @@ export default function Store() {
         title="Add Custom Source (OPDS)"
       >
         <form onSubmit={handleAddSource} className="flex flex-col gap-4 py-1">
+          {/* Curated, legal catalogs checked to serve working OPDS feeds. */}
+          <div>
+            <span className="block text-xs font-semibold text-[var(--text-2)] mb-1.5">Quick add</span>
+            <div className="flex flex-wrap gap-2">
+              {OPDS_PRESETS.map((preset) => (
+                <button
+                  key={preset.url}
+                  type="button"
+                  title={preset.about}
+                  onClick={() => {
+                    setNewSourceName(preset.name);
+                    setNewSourceUrl(preset.url);
+                  }}
+                  className="px-2.5 py-1 rounded-[var(--r-md)] border border-[var(--stroke)] bg-[var(--layer-2)] text-xs text-[var(--text-1)] hover:border-[var(--accent)] cursor-pointer"
+                >
+                  {preset.name}
+                </button>
+              ))}
+            </div>
+            <p className="text-[11px] text-[var(--text-3)] mt-1.5">
+              Your own server works too: Calibre <code>http://PC-IP:8080/opds</code>, Komga{' '}
+              <code>https://host/opds/v1.2/catalog</code>, Kavita <code>https://host/api/opds/API-KEY</code>.
+            </p>
+          </div>
+
           {addSourceError && (
             <div className="p-2.5 rounded-[var(--r-md)] bg-[var(--danger-soft)] text-[var(--danger)] text-xs">
               {addSourceError}

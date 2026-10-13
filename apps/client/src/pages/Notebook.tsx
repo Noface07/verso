@@ -213,7 +213,7 @@ export default function Notebook() {
       </div>
 
       {/* Main Highlights List */}
-      <div className="flex-1 overflow-y-auto px-6 py-6 space-y-6 max-w-5xl mx-auto w-full">
+      <div className="flex-1 overflow-y-auto py-6 space-y-6 w-full px-[max(1.5rem,calc((100%-64rem)/2))]">
         {annotations.length === 0 ? (
           <EmptyState
             icon={<NotebookPen className="w-7 h-7" />}

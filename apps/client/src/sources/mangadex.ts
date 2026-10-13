@@ -1,6 +1,8 @@
 import { net } from '../lib/net';
 import { getContentRatings } from '../lib/mangaPrefs';
+import { cachedJson } from '../lib/apiCache';
 import type {
+  CatalogFilter,
   CatalogEntry,
   CatalogPage,
   CatalogSection,
@@ -23,6 +25,8 @@ interface MangaDexMangaAttributes {
   description: Record<string, string>;
   status: string;
   contentRating: string;
+  year?: number | null;
+  publicationDemographic?: string | null;
   tags: Array<{
     id: string;
     attributes: {
@@ -110,9 +114,28 @@ function parseMangaDexItem(item: MangaDexMangaItem): CatalogEntry {
     authors,
     cover: coverUrl,
     summary,
-    tags: tags.slice(0, 8),
+    tags,
     kind: 'manga',
+    status: item.attributes.status || undefined,
+    contentRating: item.attributes.contentRating || undefined,
+    year: item.attributes.year ?? undefined,
+    demographic: item.attributes.publicationDemographic ?? undefined,
   };
+}
+
+function applyMangaDexFilters(params: URLSearchParams, filters?: Record<string, string>): void {
+  if (filters?.rating === 'adult') {
+    const adult = getContentRatings().filter((r) => r === 'erotica' || r === 'pornographic');
+    // Only reachable when opted in; never widen beyond what Settings allows.
+    if (adult.length) {
+      params.delete('contentRating[]');
+      for (const r of adult) params.append('contentRating[]', r);
+    }
+  }
+  if (filters?.genre) params.append('includedTags[]', filters.genre);
+  if (filters?.origin) params.append('originalLanguage[]', filters.origin);
+  if (filters?.status) params.append('status[]', filters.status);
+  if (filters?.demographic) params.append('publicationDemographic[]', filters.demographic);
 }
 
 export class MangaDexSource implements MangaSource {
@@ -124,12 +147,94 @@ export class MangaDexSource implements MangaSource {
   async sections(): Promise<CatalogSection[]> {
     return [
       { id: 'popular', title: 'Popular' },
+      { id: 'rating', title: 'Top Rated' },
       { id: 'latest', title: 'Latest Updates' },
       { id: 'recent', title: 'Recently Added' },
     ];
   }
 
-  async browse(sectionId: string, cursor?: string): Promise<CatalogPage> {
+  // Shown in the Store. The 18+ filter only exists once adult content has been
+  // enabled in Settings (opt-in with age confirmation); otherwise it's not offered.
+  get filters(): CatalogFilter[] {
+    const adultOn = getContentRatings().some((r) => r === 'erotica' || r === 'pornographic');
+    return adultOn
+      ? [
+          ...this.baseFilters,
+          {
+            id: 'rating',
+            label: '18+',
+            options: [
+              { value: '', label: 'All ratings' },
+              { value: 'adult', label: '18+ only', hint: 'Only erotica and pornographic titles.' },
+            ],
+          },
+        ]
+      : this.baseFilters;
+  }
+
+  private baseFilters: CatalogFilter[] = [
+    {
+      // Tag IDs from GET /manga/tag (stable UUIDs).
+      id: 'genre',
+      label: 'Genre',
+      options: [
+        { value: '', label: 'Any genre' },
+        { value: '391b0423-d847-456f-aff0-8b0cfc03066b', label: 'Action' },
+        { value: '87cc87cd-a395-47af-b27a-93258283bbc6', label: 'Adventure' },
+        { value: '4d32cc48-9f00-4cca-9b5a-a839f0764984', label: 'Comedy' },
+        { value: 'b9af3a63-f058-46de-a9a0-e0c13906197a', label: 'Drama' },
+        { value: 'cdc58593-87dd-415e-bbc0-2ec27bf404cc', label: 'Fantasy' },
+        { value: '33771934-028e-4cb3-8744-691e866a923e', label: 'Historical' },
+        { value: 'cdad7e68-1419-41dd-bdce-27753074a640', label: 'Horror' },
+        { value: 'ace04997-f6bd-436e-b261-779182193d3d', label: 'Isekai' },
+        { value: '799c202e-7daa-44eb-9cf7-8a3c0441531e', label: 'Martial Arts' },
+        { value: '50880a9d-5440-4732-9afb-8f457127e836', label: 'Mecha' },
+        { value: 'ee968100-4191-4968-93d3-f82d72be7e46', label: 'Mystery' },
+        { value: '3b60b75c-a2d7-4860-ab56-05f391bb889c', label: 'Psychological' },
+        { value: '423e2eae-a7a2-4a8b-ac03-a8351462d71d', label: 'Romance' },
+        { value: 'caaa44eb-cd40-4177-b930-79d3ef2afe87', label: 'School Life' },
+        { value: '256c8bd9-4904-4360-bf4f-508a76d67183', label: 'Sci-Fi' },
+        { value: 'e5301a23-ebd9-49dd-a0cb-2add944c7fe9', label: 'Slice of Life' },
+        { value: '69964a64-2f90-4d33-beeb-f3ed2875eb4c', label: 'Sports' },
+        { value: 'eabc5b4c-6aff-42f3-b657-3e90cbd00b75', label: 'Supernatural' },
+        { value: '07251805-a27e-4d59-b488-f0bfbec15168', label: 'Thriller' },
+        { value: 'f8f62932-27da-4fe4-8ee1-6779a8c5edba', label: 'Tragedy' },
+      ],
+    },
+    {
+      id: 'origin',
+      label: 'Type',
+      options: [
+        { value: '', label: 'All types' },
+        { value: 'ja', label: 'Manga (Japanese)' },
+        { value: 'ko', label: 'Manhwa (Korean)' },
+        { value: 'zh', label: 'Manhua (Chinese)' },
+      ],
+    },
+    {
+      id: 'status',
+      label: 'Status',
+      options: [
+        { value: '', label: 'Any status' },
+        { value: 'ongoing', label: 'Ongoing' },
+        { value: 'completed', label: 'Completed' },
+        { value: 'hiatus', label: 'Hiatus' },
+      ],
+    },
+    {
+      id: 'demographic',
+      label: 'Audience',
+      options: [
+        { value: '', label: 'Any audience' },
+        { value: 'shounen', label: 'Shounen · teen boys', hint: 'Shounen: aimed at teenage boys. Action, rivalry, friendship (e.g. One Piece, Naruto).' },
+        { value: 'shoujo', label: 'Shoujo · teen girls', hint: 'Shoujo: aimed at teenage girls. Romance, relationships, drama (e.g. Fruits Basket).' },
+        { value: 'seinen', label: 'Seinen · adult men', hint: 'Seinen: aimed at adult men. Often darker or more mature themes (e.g. Berserk, Vagabond).' },
+        { value: 'josei', label: 'Josei · adult women', hint: 'Josei: aimed at adult women. Realistic romance and everyday life (e.g. Nana).' },
+      ],
+    },
+  ];
+
+  async browse(sectionId: string, cursor?: string, filters?: Record<string, string>): Promise<CatalogPage> {
     const limit = 24;
     const offset = cursor ? parseInt(cursor, 10) : 0;
     const params = new URLSearchParams();
@@ -141,9 +246,12 @@ export class MangaDexSource implements MangaSource {
     params.append('includes[]', 'artist');
     for (const rating of getContentRatings()) params.append('contentRating[]', rating);
     params.append('availableTranslatedLanguage[]', 'en');
+    applyMangaDexFilters(params, filters);
 
     if (sectionId === 'popular') {
       params.set('order[followedCount]', 'desc');
+    } else if (sectionId === 'rating') {
+      params.set('order[rating]', 'desc');
     } else if (sectionId === 'recent') {
       params.set('order[createdAt]', 'desc');
     } else {
@@ -151,12 +259,15 @@ export class MangaDexSource implements MangaSource {
     }
 
     const url = `https://api.mangadex.org/manga?${params.toString()}`;
-    const res = await net.fetch(url);
-    if (!res.ok) {
-      throw new Error(`Failed to browse MangaDex: ${res.statusText}`);
-    }
-
-    const json = (await res.json()) as MangaDexListResponse;
+    const json = await cachedJson<MangaDexListResponse>(
+      url,
+      async () => {
+        const res = await net.fetch(url);
+        if (!res.ok) throw new Error(`Failed to browse MangaDex: ${res.statusText}`);
+        return (await res.json()) as MangaDexListResponse;
+      },
+      { freshMs: 30 * 60_000 },
+    );
     const items = json.data.map(parseMangaDexItem);
     const hasMore = offset + limit < json.total;
     const next = hasMore ? String(offset + limit) : undefined;
@@ -167,7 +278,7 @@ export class MangaDexSource implements MangaSource {
   async search(
     query: string,
     cursor?: string,
-    _filters?: Record<string, string>,
+    filters?: Record<string, string>,
   ): Promise<CatalogPage> {
     const limit = 24;
     const offset = cursor ? parseInt(cursor, 10) : 0;
@@ -180,17 +291,21 @@ export class MangaDexSource implements MangaSource {
     for (const rating of getContentRatings()) params.append('contentRating[]', rating);
     params.append('availableTranslatedLanguage[]', 'en');
 
+    applyMangaDexFilters(params, filters);
     if (query.trim()) {
       params.set('title', query.trim());
     }
 
     const url = `https://api.mangadex.org/manga?${params.toString()}`;
-    const res = await net.fetch(url);
-    if (!res.ok) {
-      throw new Error(`Failed to search MangaDex: ${res.statusText}`);
-    }
-
-    const json = (await res.json()) as MangaDexListResponse;
+    const json = await cachedJson<MangaDexListResponse>(
+      url,
+      async () => {
+        const res = await net.fetch(url);
+        if (!res.ok) throw new Error(`Failed to search MangaDex: ${res.statusText}`);
+        return (await res.json()) as MangaDexListResponse;
+      },
+      { freshMs: 30 * 60_000 },
+    );
     const items = json.data.map(parseMangaDexItem);
     const hasMore = offset + limit < json.total;
     const next = hasMore ? String(offset + limit) : undefined;
@@ -201,17 +316,29 @@ export class MangaDexSource implements MangaSource {
   async details(id: string): Promise<CatalogEntry> {
     const rawId = id.replace(/^mangadex:/, '');
     const url = `https://api.mangadex.org/manga/${rawId}?includes[]=cover_art&includes[]=author&includes[]=artist`;
-    const res = await net.fetch(url);
-    if (!res.ok) {
-      throw new Error(`Failed to fetch manga details: ${res.statusText}`);
-    }
-
-    const json = (await res.json()) as { data: MangaDexMangaItem };
+    const json = await cachedJson<{ data: MangaDexMangaItem }>(
+      url,
+      async () => {
+        const res = await net.fetch(url);
+        if (!res.ok) throw new Error(`Failed to fetch manga details: ${res.statusText}`);
+        return (await res.json()) as { data: MangaDexMangaItem };
+      },
+      { freshMs: 6 * 60 * 60_000 },
+    );
     return parseMangaDexItem(json.data);
   }
 
   async chapters(seriesId: string): Promise<ChapterInfo[]> {
     const rawId = seriesId.replace(/^mangadex:/, '');
+    const items = await cachedJson<MangaDexChapterItem[]>(
+      `mangadex:chapters:${rawId}`,
+      () => this.fetchFeed(rawId, seriesId),
+      { freshMs: 30 * 60_000 },
+    );
+    return this.buildChapterList(items);
+  }
+
+  private async fetchFeed(rawId: string, seriesId: string): Promise<MangaDexChapterItem[]> {
     const PAGE = 500;
     const items: MangaDexChapterItem[] = [];
     // The feed is paginated; long series (Berserk, One Piece) have far more than one page.
@@ -231,7 +358,10 @@ export class MangaDexSource implements MangaSource {
       items.push(...json.data);
       if (json.data.length < PAGE || offset + PAGE >= json.total) break;
     }
+    return items;
+  }
 
+  private buildChapterList(items: MangaDexChapterItem[]): ChapterInfo[] {
     const rawChapters: ChapterInfo[] = [];
     for (const ch of items) {
       const externalUrl = ch.attributes.externalUrl || undefined;
@@ -284,47 +414,56 @@ export class MangaDexSource implements MangaSource {
   }
 
   /**
-   * Chapters published since `sinceMs` across many followed series, newest first.
-   * Batched (100 series per request) so checking a whole follow list stays well
-   * inside MangaDex's rate limits.
+   * Chapters published since `sinceMs` across followed series, newest first.
+   * GET /chapter only accepts a single `manga` id, so each series' own feed is
+   * queried, three at a time (the shared rate limiter keeps us under 4 req/s).
    */
   async recentChapters(
     seriesIds: string[],
     sinceMs: number,
   ): Promise<(ChapterInfo & { seriesId: string })[]> {
-    const rawIds = seriesIds.map((id) => id.replace(/^mangadex:/, ''));
     // MangaDex wants "YYYY-MM-DDTHH:MM:SS" (no milliseconds or zone).
     const since = new Date(sinceMs).toISOString().slice(0, 19);
     const out: (ChapterInfo & { seriesId: string })[] = [];
-    for (let i = 0; i < rawIds.length; i += 100) {
-      const params = new URLSearchParams();
-      for (const id of rawIds.slice(i, i + 100)) params.append('manga[]', id);
-      params.append('translatedLanguage[]', 'en');
-      params.append('includes[]', 'scanlation_group');
-      params.set('publishAtSince', since);
-      params.set('order[publishAt]', 'desc');
-      params.set('includeFuturePublishAt', '0');
-      params.set('limit', '100');
-      const res = await net.fetch(`https://api.mangadex.org/chapter?${params.toString()}`);
-      if (!res.ok) throw new Error(`Failed to check for new chapters: ${res.statusText}`);
-      const json = (await res.json()) as MangaDexFeedResponse;
-      for (const ch of json.data) {
-        const externalUrl = ch.attributes.externalUrl || undefined;
-        if (!externalUrl && !ch.attributes.pages) continue;
-        const mangaRel = ch.relationships.find((r) => r.type === 'manga');
-        if (!mangaRel) continue;
-        const groupRel = ch.relationships.find((r) => r.type === 'scanlation_group');
-        const label = ch.attributes.chapter ? `Ch. ${ch.attributes.chapter}` : 'Oneshot';
-        out.push({
-          id: ch.id,
-          seriesId: `mangadex:${mangaRel.id}`,
-          number: ch.attributes.chapter ? parseFloat(ch.attributes.chapter) : undefined,
-          title: ch.attributes.title ? `${label} — ${ch.attributes.title}` : label,
-          scanlationGroup: groupRel?.attributes?.name || 'No Group',
-          publishedAt: ch.attributes.publishAt,
-          externalUrl,
-        });
+    let failures = 0;
+    const queue = [...seriesIds];
+    const worker = async () => {
+      for (let id = queue.shift(); id; id = queue.shift()) {
+        const params = new URLSearchParams();
+        params.append('translatedLanguage[]', 'en');
+        params.append('includes[]', 'scanlation_group');
+        params.set('publishAtSince', since);
+        params.set('order[publishAt]', 'desc');
+        params.set('includeFuturePublishAt', '0');
+        params.set('limit', '50');
+        const rawId = id.replace(/^mangadex:/, '');
+        try {
+          const res = await net.fetch(`https://api.mangadex.org/manga/${rawId}/feed?${params.toString()}`);
+          if (!res.ok) throw new Error(res.statusText);
+          const json = (await res.json()) as MangaDexFeedResponse;
+          for (const ch of json.data) {
+            const externalUrl = ch.attributes.externalUrl || undefined;
+            if (!externalUrl && !ch.attributes.pages) continue;
+            const groupRel = ch.relationships.find((r) => r.type === 'scanlation_group');
+            const label = ch.attributes.chapter ? `Ch. ${ch.attributes.chapter}` : 'Oneshot';
+            out.push({
+              id: ch.id,
+              seriesId: `mangadex:${rawId}`,
+              number: ch.attributes.chapter ? parseFloat(ch.attributes.chapter) : undefined,
+              title: ch.attributes.title ? `${label} — ${ch.attributes.title}` : label,
+              scanlationGroup: groupRel?.attributes?.name || 'No Group',
+              publishedAt: ch.attributes.publishAt,
+              externalUrl,
+            });
+          }
+        } catch {
+          failures++;
+        }
       }
+    };
+    await Promise.all([worker(), worker(), worker()]);
+    if (failures && failures === seriesIds.length) {
+      throw new Error('MangaDex did not answer. Check your connection and try again.');
     }
     return out.sort((a, b) => (b.publishedAt ?? '').localeCompare(a.publishedAt ?? ''));
   }

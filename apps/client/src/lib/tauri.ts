@@ -160,3 +160,51 @@ export async function openExternalUrl(url: string): Promise<void> {
 export function isAndroidDevice(): boolean {
   return typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent);
 }
+
+/**
+ * Opens an external page (e.g. an official publisher's chapter) inside Folio: in a
+ * separate app window on desktop, falling back to the system browser elsewhere.
+ * The window loads remote content only; it gets no access to Folio's APIs because
+ * capabilities are granted to the "main" window alone.
+ */
+export async function openInAppWindow(url: string, title = 'Folio'): Promise<void> {
+  if (isTauri() && !isAndroidDevice()) {
+    try {
+      const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow');
+      const win = new WebviewWindow(`external-${Date.now()}`, {
+        url,
+        title,
+        width: 1100,
+        height: 900,
+        center: true,
+        focus: true,
+      });
+      await new Promise<void>((resolve, reject) => {
+        void win.once('tauri://created', () => resolve());
+        void win.once('tauri://error', (e) => reject(new Error(String(e.payload))));
+      });
+      return;
+    } catch (err) {
+      console.warn('In-app window failed, using the browser instead:', err);
+    }
+  }
+  await openExternalUrl(url);
+}
+
+/**
+ * Asks for confirmation and waits for the answer. In Tauri, window.confirm does
+ * not block (it returns before the user answers), so actions ran immediately and
+ * the dialog appeared afterwards. Uses the native dialog there instead.
+ */
+export async function confirmAction(message: string, title = 'Folio'): Promise<boolean> {
+  if (isTauri()) {
+    try {
+      const { ask } = await import('@tauri-apps/plugin-dialog');
+      return await ask(message, { title, kind: 'warning' });
+    } catch {
+      // Fall through to the browser dialog.
+    }
+  }
+  return window.confirm(message);
+}
+

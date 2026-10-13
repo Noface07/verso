@@ -25,6 +25,8 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { AccountSettings } from '../features/auth/AccountSettings';
 import { getContentRatings, setContentRating, type ContentRating } from '../lib/mangaPrefs';
 import { isAndroidDevice } from '../lib/tauri';
+import { clearMangaHistory } from '../lib/series';
+import { clearApiCache } from '../lib/apiCache';
 
 type SettingsTab =
   | 'appearance'
@@ -401,6 +403,28 @@ export default function Settings() {
               </div>
             </div>
 
+            {/* Clear manga reading history */}
+            <div className="flex items-center justify-between gap-4 p-4 rounded-[var(--r-md)] bg-[var(--surface-subtle)] border border-[var(--border-subtle)]">
+              <div className="min-w-0">
+                <h4 className="text-sm font-semibold">Manga reading history</h4>
+                <p className="text-xs text-[var(--text-muted)]">
+                  Removes series you only read from history. Series in your library stay.
+                </p>
+              </div>
+              <Button
+                variant="standard"
+                size="sm"
+                className="shrink-0"
+                icon={<Trash2 className="w-4 h-4 text-[var(--danger)]" />}
+                onClick={async () => {
+                  const n = await clearMangaHistory();
+                  showToast(n ? `Cleared ${n} series from history` : 'History was already empty');
+                }}
+              >
+                Clear
+              </Button>
+            </div>
+
             {/* Clear Manga Cache */}
             <div className="flex items-center justify-between gap-4 p-4 rounded-[var(--r-md)] bg-[var(--surface-subtle)] border border-[var(--border-subtle)]">
               <div className="min-w-0">
@@ -454,6 +478,34 @@ export default function Settings() {
                 <h3 className="text-2xl font-bold mt-1">{mangaPagesCount} pages</h3>
                 <p className="text-xs text-[var(--text-muted)] mt-1">Offline cache</p>
               </div>
+            </div>
+
+            {/* App cache: catalog lists, series details, chapter lists, image cache.
+                Your books, downloads, progress and settings are not touched. */}
+            <div className="flex items-center justify-between gap-4 p-4 rounded-[var(--r-md)] bg-[var(--surface-subtle)] border border-[var(--border-subtle)]">
+              <div className="min-w-0">
+                <h4 className="text-sm font-semibold">Clear app cache</h4>
+                <p className="text-xs text-[var(--text-muted)]">
+                  Cached store listings, manga details and chapter lists. Books, downloads, reading progress and settings are kept.
+                </p>
+              </div>
+              <Button
+                variant="standard"
+                size="sm"
+                className="shrink-0"
+                icon={<Trash2 className="w-4 h-4 text-[var(--danger)]" />}
+                onClick={async () => {
+                  const n = await clearApiCache();
+                  try {
+                    for (const key of await caches.keys()) await caches.delete(key);
+                  } catch {
+                    // Cache Storage unavailable (some WebViews): nothing else to clear.
+                  }
+                  showToast(`Cleared ${n} cached responses`);
+                }}
+              >
+                Clear cache
+              </Button>
             </div>
           </div>
         )}

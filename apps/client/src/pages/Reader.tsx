@@ -26,6 +26,7 @@ import { getFile } from '../features/sync/api'
 import { getRefreshToken } from '../features/auth/storage'
 import { useWheelPaging } from '../lib/useWheelPaging'
 import { useReaderTouch } from '../lib/useReaderTouch'
+import { exitAppFullscreen, isAppFullscreen, toggleAppFullscreen, useAppFullscreen } from '../lib/useAppFullscreen'
 import { isInputTarget } from '../lib/useHotkeys'
 import { registerBackHandler } from '../lib/backStack'
 import { setKeepScreenOn, triggerHaptic, useVolumeKeys } from '../lib/mobileUx'
@@ -196,7 +197,7 @@ export default function Reader() {
   const [noteFor, setNoteFor] = useState<Annotation | null>(null)
   const [shortcutsOpen, setShortcutsOpen] = useState(false)
   const [zoomedImage, setZoomedImage] = useState<{ src: string; alt?: string } | null>(null)
-  const [fullscreen, setFullscreen] = useState(!!document.fullscreenElement)
+  const fullscreen = useAppFullscreen()
   const [ttsState, setTtsState] = useState<TTSState>('idle')
   const [expandedLookupWord, setExpandedLookupWord] = useState('')
   const [quoteShareText, setQuoteShareText] = useState<string | null>(null)
@@ -465,15 +466,13 @@ export default function Reader() {
         const x = ev.clientX + (frame?.left ?? 0)
         const w = window.innerWidth
         const paged = settingsRef.current.flow === 'paginated'
-        if (paged) {
-          if (x < w * 0.25) {
-            if (settingsRef.current.tapZones === 'allNext') viewRef.current?.goRight()
-            else viewRef.current?.goLeft()
-          } else if (x > w * 0.75) {
-            viewRef.current?.goRight()
-          } else {
-            setChrome((c) => !c)
-          }
+        const zones = settingsRef.current.tapZones
+        if (paged && zones !== 'off' && (x < w * 0.25 || x > w * 0.75)) {
+          const left = x < w * 0.25
+          // 'next' on the left edge for reversed/allNext; otherwise left goes back.
+          const forward = zones === 'allNext' || (zones === 'reversed' ? left : !left)
+          if (forward) viewRef.current?.goRight()
+          else viewRef.current?.goLeft()
         } else {
           setChrome((c) => !c)
         }
@@ -775,8 +774,8 @@ export default function Reader() {
           e.preventDefault()
           return
         }
-        if (document.fullscreenElement) {
-          void document.exitFullscreen()
+        if (isAppFullscreen()) {
+          void exitAppFullscreen()
           e.preventDefault()
           return
         }
@@ -857,12 +856,9 @@ export default function Reader() {
     }
 
     onKeyRef.current = onKey
-    const onFs = () => setFullscreen(!!document.fullscreenElement)
     window.addEventListener('keydown', onKey)
-    document.addEventListener('fullscreenchange', onFs)
     return () => {
       window.removeEventListener('keydown', onKey)
-      document.removeEventListener('fullscreenchange', onFs)
     }
   }, [updateSettings])
 
@@ -959,8 +955,7 @@ export default function Reader() {
     setScrub(null)
   }
   function toggleFullscreen() {
-    if (document.fullscreenElement) void document.exitFullscreen()
-    else void document.documentElement.requestFullscreen?.()
+    void toggleAppFullscreen()
   }
 
   const theme = getEffectiveTheme(settings)

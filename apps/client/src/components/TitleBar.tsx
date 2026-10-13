@@ -6,9 +6,9 @@ import {
   toggleMaximizeWindow,
   isWindowMaximized,
   closeWindow,
-  toggleTauriFullscreen,
   onWindowResized,
 } from '../lib/tauri';
+import { toggleAppFullscreen, useAppFullscreen } from '../lib/useAppFullscreen';
 
 export function TitleBar() {
   const [maximized, setMaximized] = useState(false);
@@ -35,7 +35,7 @@ export function TitleBar() {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'F11') {
         e.preventDefault();
-        void toggleTauriFullscreen();
+        void toggleAppFullscreen();
       }
     };
     window.addEventListener('keydown', onKey);
@@ -47,17 +47,20 @@ export function TitleBar() {
     };
   }, [runningInTauri]);
 
+  // Hidden in fullscreen, like a native title bar.
+  const fullscreen = useAppFullscreen();
+
   // Full-window (position: fixed) screens like the reader offset themselves by this
   // so their top bar isn't hidden underneath the custom title bar.
   useEffect(() => {
     if (!runningInTauri) return;
-    document.documentElement.style.setProperty('--titlebar-h', '32px');
+    document.documentElement.style.setProperty('--titlebar-h', fullscreen ? '0px' : '32px');
     return () => {
       document.documentElement.style.removeProperty('--titlebar-h');
     };
-  }, [runningInTauri]);
+  }, [runningInTauri, fullscreen]);
 
-  if (!runningInTauri) return null;
+  if (!runningInTauri || fullscreen) return null;
 
   return (
     <div

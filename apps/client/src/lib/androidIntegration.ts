@@ -26,7 +26,7 @@ export function initAndroidIntegration(
       cleanupFileOpen = await listen<string>('folio://file-open', (event) => {
         if (event.payload) {
           void handleOpenedFile(event.payload, (bookId) => {
-            navigate(`/reader/${bookId}`);
+            navigate(`/read/${bookId}`);
           });
         }
       });
