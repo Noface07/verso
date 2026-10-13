@@ -89,6 +89,8 @@ const DIRECT_CORS_HOSTS = new Set([
   'archive.org',
   'raw.githubusercontent.com',
   'cdn.jsdelivr.net',
+  'localhost',
+  '127.0.0.1',
 ]);
 
 /**
@@ -195,9 +197,11 @@ export async function netFetch(
 
     // Route through /proxy when:
     // - The target is not the Folio server itself (different origin)
-    // - AND user is authenticated OR the target host doesn't support CORS
+    // - AND target is not a direct CORS host or localhost server
+    // (Direct CORS hosts and local servers like Suwayomi/Komga natively allow CORS from the browser)
     const isTargetingServer = serverOrigin && targetOrigin && serverOrigin === targetOrigin;
-    if (serverOrigin && !isTargetingServer && (token || (!DIRECT_CORS_HOSTS.has(targetHost) && !isLocalhostDirectFetch(urlStr)))) {
+    const isDirect = DIRECT_CORS_HOSTS.has(targetHost) || isLocalhostDirectFetch(urlStr);
+    if (serverOrigin && !isTargetingServer && !isDirect) {
       targetUrl = `${serverUrl}/proxy?url=${encodeURIComponent(urlStr)}`;
       if (token) {
         headers.set('Authorization', `Bearer ${token}`);

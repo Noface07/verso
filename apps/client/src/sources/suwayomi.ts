@@ -161,8 +161,15 @@ export class SuwayomiSource implements MangaSource {
           };
         };
 
-        const nodes = data.data?.extensions?.nodes;
-        if (Array.isArray(nodes) && nodes.length > 0) {
+        const rawNodes = data.data?.extensions?.nodes;
+        if (Array.isArray(rawNodes) && rawNodes.length > 0) {
+          const nodes = rawNodes.filter(
+            (node) =>
+              !node.pkgName.endsWith('.keiyoushi') &&
+              !node.pkgName.endsWith('.mihon') &&
+              !node.name.toLowerCase().includes('outdated app') &&
+              !node.name.toLowerCase().includes('update to mihon'),
+          );
           return nodes.map((node) => {
             const verMatch = node.apkName?.match(/-v?([0-9.]+)\.apk$/i);
             const versionName = verMatch ? verMatch[1] : '1.0';
@@ -180,41 +187,25 @@ export class SuwayomiSource implements MangaSource {
         }
       }
     } catch {
-      // Fallback to Keiyoushi index if GraphQL is unavailable
+      // Fallback below
     }
 
-    // Fallback: If GraphQL returned no extensions or errored, fetch Keiyoushi repo index
+    // Fallback: If GraphQL returned no extensions or errored, list installed sources from Suwayomi REST API
     try {
-      const keiyoushiUrl = 'https://raw.githubusercontent.com/keiyoushi/extensions/repo/index.min.json';
-      const cdnUrl = 'https://cdn.jsdelivr.net/gh/keiyoushi/extensions@repo/index.min.json';
-      let res = await net.fetch(keiyoushiUrl).catch(() => null);
-      if (!res || !res.ok) {
-        res = await net.fetch(cdnUrl).catch(() => null);
-      }
-      if (res && res.ok) {
-        const rawList = (await res.json()) as Array<{
-          name: string;
-          pkg: string;
-          version?: string;
-          lang?: string;
-          nsfw?: number;
-          icon?: string;
-        }>;
-        if (Array.isArray(rawList)) {
-          const installedSources = await this.getInstalledExtensions();
-          const installedNames = new Set(installedSources.map((s) => s.name.toLowerCase()));
-
-          return rawList.map((item) => ({
-            name: item.name,
-            pkgName: item.pkg,
-            versionName: item.version || '1.0',
-            lang: item.lang || 'all',
-            isNsfw: Boolean(item.nsfw),
-            installed: installedNames.has(item.name.toLowerCase()),
+      const installedSources = await this.getInstalledExtensions();
+      if (installedSources.length > 0) {
+        return installedSources
+          .filter((s) => s.id !== '0')
+          .map((s) => ({
+            name: s.name,
+            pkgName: `source:${s.id}`,
+            versionName: '1.0',
+            lang: s.lang || 'all',
+            isNsfw: false,
+            installed: true,
             hasUpdate: false,
-            iconUrl: item.icon,
+            iconUrl: s.iconUrl ? this.resolveUrl(s.iconUrl) : undefined,
           }));
-        }
       }
     } catch {
       // Ignore
