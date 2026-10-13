@@ -226,16 +226,16 @@ export default function MangaReader() {
     return chapters.findIndex((c) => c.id === chapterId);
   }, [chapters, chapterId]);
 
+  // Skip official external-only chapters: their pages aren't hosted, so they can't
+  // be shown here and used to dead-end the reader.
   const prevChapter = useMemo(() => {
-    if (currentChapterIndex > 0) return chapters[currentChapterIndex - 1];
-    return null;
+    if (currentChapterIndex <= 0) return null;
+    return chapters.slice(0, currentChapterIndex).reverse().find((c) => !c.externalUrl) ?? null;
   }, [chapters, currentChapterIndex]);
 
   const nextChapter = useMemo(() => {
-    if (currentChapterIndex !== -1 && currentChapterIndex < chapters.length - 1) {
-      return chapters[currentChapterIndex + 1];
-    }
-    return null;
+    if (currentChapterIndex === -1) return null;
+    return chapters.slice(currentChapterIndex + 1).find((c) => !c.externalUrl) ?? null;
   }, [chapters, currentChapterIndex]);
 
   const goToNextPage = useCallback(() => {
@@ -373,7 +373,7 @@ export default function MangaReader() {
 
   if (loading) {
     return (
-      <div className="fixed inset-0 z-50 bg-black flex flex-col items-center justify-center text-white">
+      <div className="fixed inset-x-0 bottom-0 top-[var(--titlebar-h,0px)] z-50 bg-black flex flex-col items-center justify-center text-white">
         <ProgressRing size={40} />
         <p className="text-xs text-white/70 mt-3">Loading chapter pages…</p>
       </div>
@@ -382,7 +382,7 @@ export default function MangaReader() {
 
   if (error || pages.length === 0) {
     return (
-      <div className="fixed inset-0 z-50 bg-black flex flex-col items-center justify-center p-6 text-center text-white">
+      <div className="fixed inset-x-0 bottom-0 top-[var(--titlebar-h,0px)] z-50 bg-black flex flex-col items-center justify-center p-6 text-center text-white">
         <AlertCircle className="w-12 h-12 text-[var(--danger)] mb-3" />
         <h2 className="text-lg font-bold">Failed to load chapter</h2>
         <p className="text-xs text-white/70 mt-1 max-w-sm">{error || 'No pages found'}</p>
@@ -407,7 +407,7 @@ export default function MangaReader() {
     <div
       ref={containerRef}
       onMouseMove={resetHudTimer}
-      className="fixed inset-0 z-50 bg-black flex flex-col select-none overflow-hidden"
+      className="fixed inset-x-0 bottom-0 top-[var(--titlebar-h,0px)] z-50 bg-black flex flex-col select-none overflow-hidden"
     >
       {/* Top HUD Header */}
       <header

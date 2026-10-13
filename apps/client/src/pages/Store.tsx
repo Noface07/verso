@@ -719,16 +719,30 @@ export default function Store() {
                     );
                   }
 
+                  const illustrated = selectedBook.formats?.find((f) => f.label === 'With illustrations');
                   return (
-                    <Button
-                      variant="accent"
-                      onClick={() => {
-                        void handleDownload(selectedBook);
-                      }}
-                    >
-                      <Download className="w-4 h-4 mr-2" />
-                      Download EPUB
-                    </Button>
+                    <>
+                      <Button
+                        variant="accent"
+                        onClick={() => {
+                          void handleDownload(selectedBook);
+                        }}
+                      >
+                        <Download className="w-4 h-4 mr-2" />
+                        Download EPUB
+                      </Button>
+                      {illustrated && (
+                        <Button
+                          variant="standard"
+                          title="Includes the book's illustrations; can be many times larger"
+                          onClick={() => {
+                            if (activeSource) void downloadManager.enqueue(selectedBook, activeSource, illustrated.url);
+                          }}
+                        >
+                          With illustrations
+                        </Button>
+                      )}
+                    </>
                   );
                 })()}
 

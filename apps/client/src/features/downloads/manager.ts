@@ -11,7 +11,11 @@ class DownloadManager {
     formatMime = 'application/epub+zip',
   ): Promise<string> {
     const downloadId = `dl:${entry.id}`;
-    const format = entry.formats?.find((f) => f.mime === formatMime) || entry.formats?.[0];
+    // `formatMime` may also be a specific format URL (e.g. one edition of several).
+    const format =
+      entry.formats?.find((f) => f.url === formatMime) ||
+      entry.formats?.find((f) => f.mime === formatMime) ||
+      entry.formats?.[0];
     const url = format?.url || '';
 
     const existing = await db.downloads.get(downloadId);

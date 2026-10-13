@@ -21,6 +21,7 @@ const SeriesDetail = lazy(() => import('./pages/SeriesDetail'))
 const MangaReader = lazy(() => import('./features/manga/MangaReader'))
 const Reader = lazy(() => import('./pages/Reader'))
 const Stats = lazy(() => import('./pages/Stats'))
+const Updates = lazy(() => import('./pages/Updates'))
 const Settings = lazy(() => import('./pages/Settings'))
 const DevComponents = lazy(() => import('./pages/DevComponents'))
 
@@ -65,6 +66,7 @@ function AppRoutes() {
                 <Route path="/notebook" element={<Notebook />} />
                 <Route path="/store" element={<Store />} />
                 <Route path="/stats" element={<Stats />} />
+                <Route path="/updates" element={<Updates />} />
                 <Route path="/series/:id" element={<SeriesDetail />} />
                 <Route path="/settings" element={<Settings />} />
                 <Route path="/dev/components" element={<DevComponents />} />

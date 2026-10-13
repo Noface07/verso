@@ -15,6 +15,8 @@ import {
   getAuthUser,
   getServerUrl,
   setServerUrl,
+  normalizeServerUrl,
+  resetServerUrl,
   clearAuth,
   DEFAULT_SERVER_URL,
   type StoredUser,
@@ -43,6 +45,8 @@ export const AccountSettings: React.FC<AccountSettingsProps> = ({ onAuthChange }
   const [currentUser, setCurrentUser] = useState<StoredUser | null>(null);
   const [serverUrlVal, setServerUrlVal] = useState(DEFAULT_SERVER_URL);
   const [isEditingServer, setIsEditingServer] = useState(false);
+  const [serverError, setServerError] = useState<string | null>(null);
+  const [serverCheck, setServerCheck] = useState<'checking' | 'ok' | 'unreachable' | null>(null);
 
   // Auth form states
   const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
@@ -96,7 +100,30 @@ export const AccountSettings: React.FC<AccountSettingsProps> = ({ onAuthChange }
   }, []);
 
   const handleSaveServerUrl = async () => {
-    await setServerUrl(serverUrlVal);
+    const checked = normalizeServerUrl(serverUrlVal);
+    if ('error' in checked) {
+      setServerError(checked.error);
+      return;
+    }
+    setServerError(null);
+    await setServerUrl(checked.url);
+    setServerUrlVal(checked.url);
+    setIsEditingServer(false);
+    // Tell the user straight away whether the server answers.
+    setServerCheck('checking');
+    try {
+      const res = await fetch(`${checked.url}/health`, { signal: AbortSignal.timeout(8000) });
+      setServerCheck(res.ok ? 'ok' : 'unreachable');
+    } catch {
+      setServerCheck('unreachable');
+    }
+  };
+
+  const handleResetServerUrl = async () => {
+    await resetServerUrl();
+    setServerUrlVal(DEFAULT_SERVER_URL);
+    setServerError(null);
+    setServerCheck(null);
     setIsEditingServer(false);
   };
 
@@ -241,31 +268,54 @@ export const AccountSettings: React.FC<AccountSettingsProps> = ({ onAuthChange }
             <button
               type="button"
               onClick={() => setIsEditingServer(true)}
-              className="text-xs font-medium text-[var(--accent)] hover:underline cursor-pointer"
+              className="text-xs font-medium text-[var(--text-3)] hover:text-[var(--accent)] hover:underline cursor-pointer"
+              title="Only needed if you run your own Folio server"
             >
-              Change
+              Advanced…
             </button>
           )}
         </div>
 
         {isEditingServer ? (
-          <div className="flex items-center gap-2 mt-1">
-            <input
-              type="url"
-              value={serverUrlVal}
-              onChange={(e) => setServerUrlVal(e.target.value)}
-              className="flex-1 px-3 py-1.5 text-xs rounded-[var(--r-sm)] bg-[var(--bg-base)] border border-[var(--stroke)] text-[var(--text-1)] outline-none focus:border-[var(--accent)]"
-              placeholder={DEFAULT_SERVER_URL}
-            />
-            <Button size="sm" variant="accent" onClick={handleSaveServerUrl}>
-              Save
-            </Button>
-            <Button size="sm" variant="subtle" onClick={() => setIsEditingServer(false)}>
-              Cancel
-            </Button>
+          <div className="flex flex-col gap-2 mt-1">
+            <p className="text-[11px] text-[var(--text-3)]">
+              The address of a Folio API server, not the database. Leave the default unless you host your own.
+            </p>
+            <div className="flex flex-wrap items-center gap-2">
+              <input
+                type="url"
+                aria-label="Folio server address"
+                value={serverUrlVal}
+                onChange={(e) => {
+                  setServerUrlVal(e.target.value);
+                  setServerError(null);
+                }}
+                className="flex-1 min-w-[180px] px-3 py-1.5 text-xs rounded-[var(--r-sm)] bg-[var(--bg-base)] border border-[var(--stroke)] text-[var(--text-1)] outline-none focus:border-[var(--accent)]"
+                placeholder={DEFAULT_SERVER_URL}
+              />
+              <Button size="sm" variant="accent" onClick={handleSaveServerUrl}>
+                Save
+              </Button>
+              <Button size="sm" variant="subtle" onClick={handleResetServerUrl}>
+                Use default
+              </Button>
+              <Button size="sm" variant="subtle" onClick={() => setIsEditingServer(false)}>
+                Cancel
+              </Button>
+            </div>
+            {serverError && <p className="text-xs text-[var(--danger)]">{serverError}</p>}
           </div>
         ) : (
-          <span className="text-xs font-mono text-[var(--text-2)] truncate">{serverUrlVal}</span>
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="text-xs font-mono text-[var(--text-2)] truncate">{serverUrlVal}</span>
+            {serverCheck === 'checking' && (
+              <span className="text-[11px] text-[var(--text-3)] shrink-0">checking…</span>
+            )}
+            {serverCheck === 'ok' && <span className="text-[11px] text-[var(--success)] shrink-0">reachable</span>}
+            {serverCheck === 'unreachable' && (
+              <span className="text-[11px] text-[var(--danger)] shrink-0">not reachable</span>
+            )}
+          </div>
         )}
       </section>
 

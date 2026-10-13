@@ -155,3 +155,8 @@ export async function openExternalUrl(url: string): Promise<void> {
   }
   window.open(url, '_blank', 'noopener,noreferrer');
 }
+
+/** Running on an Android device (the Tauri mobile build or a mobile browser). */
+export function isAndroidDevice(): boolean {
+  return typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent);
+}

@@ -124,7 +124,11 @@ describe('Phase 6: Network Layer and Book Store', () => {
       expect(book.authors).toEqual(['Jane Austen']);
       expect(book.cover).toContain('pg1342.cover.medium.jpg');
       expect(book.formats?.[0].mime).toBe('application/epub+zip');
-      expect(book.formats?.[0].url).toContain('1342.epub3.images');
+      // Text-only edition first (often a fraction of the size), illustrated second.
+      expect(book.formats?.[0]).toMatchObject({ label: 'Text only' });
+      expect(book.formats?.[0].url).toContain('1342.epub.noimages');
+      expect(book.formats?.[1]).toMatchObject({ label: 'With illustrations' });
+      expect(book.formats?.[1].url).toContain('1342.epub3.images');
       expect(page.next).toBe('https://gutendex.com/books?page=2');
     });
   });

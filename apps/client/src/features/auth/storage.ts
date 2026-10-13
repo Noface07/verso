@@ -33,14 +33,56 @@ export async function setRefreshToken(token: string | null): Promise<void> {
   }
 }
 
+/**
+ * Validates and normalises a Folio server address. Returns an error message for
+ * values that can't work, notably a database address: the app talks to the Folio
+ * API, and only the API talks to Postgres/Supabase.
+ */
+export function normalizeServerUrl(input: string): { url: string } | { error: string } {
+  let raw = input.trim().replace(/\/+$/, '');
+  if (!raw) return { error: 'Enter the address of your Folio server.' };
+  if (/^postgres(ql)?:/i.test(raw)) {
+    return {
+      error:
+        'That is a database connection string. Enter the Folio server address instead (for example https://folio.example.com).',
+    };
+  }
+  if (!/^https?:\/\//i.test(raw)) {
+    const local = /^(localhost|127\.|10\.|192\.168\.)/.test(raw);
+    raw = `${local ? 'http' : 'https'}://${raw}`;
+  }
+  let u: URL;
+  try {
+    u = new URL(raw);
+  } catch {
+    return { error: 'That does not look like a web address.' };
+  }
+  if (/supabase\.(co|com)$/i.test(u.hostname) || u.port === '5432' || u.port === '6543') {
+    return {
+      error:
+        'That is the Supabase database address. The app connects to the Folio API server, which then talks to Supabase (for example http://localhost:8080 or your deployed server).',
+    };
+  }
+  return { url: `${u.origin}${u.pathname.replace(/\/+$/, '')}` };
+}
+
 export async function getServerUrl(): Promise<string> {
   const row = await db.kv.get('server_url');
-  return typeof row?.value === 'string' ? row.value : DEFAULT_SERVER_URL;
+  if (typeof row?.value !== 'string') return DEFAULT_SERVER_URL;
+  // Ignore a previously saved unusable value (e.g. a database address).
+  const checked = normalizeServerUrl(row.value);
+  return 'url' in checked ? checked.url : DEFAULT_SERVER_URL;
 }
 
 export async function setServerUrl(url: string): Promise<void> {
-  const normalized = url.trim().replace(/\/+$/, '');
-  await db.kv.put({ key: 'server_url', value: normalized });
+  const checked = normalizeServerUrl(url);
+  if ('error' in checked) throw new Error(checked.error);
+  await db.kv.put({ key: 'server_url', value: checked.url });
+}
+
+/** Forget a custom server and use the address built into the app. */
+export async function resetServerUrl(): Promise<void> {
+  await db.kv.delete('server_url');
 }
 
 export async function getAuthUser(): Promise<StoredUser | null> {

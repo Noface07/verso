@@ -1,6 +1,8 @@
 import { net } from '../lib/net';
+import { db } from '../db';
 import type {
   CatalogEntry,
+  CatalogFormat,
   CatalogPage,
   CatalogSection,
   CatalogSource,
@@ -34,7 +36,7 @@ interface GutendexResponse {
 }
 
 function parseGutendexBook(b: GutendexBook): CatalogEntry {
-  const formats: { mime: string; url: string }[] = [];
+  const formats: CatalogFormat[] = [];
 
   // Look for preferred EPUB versions first: epub3.images -> epub.images -> general epub
   let epubUrl: string | undefined;
@@ -57,7 +59,10 @@ function parseGutendexBook(b: GutendexBook): CatalogEntry {
   }
 
   if (epubUrl) {
-    formats.push({ mime: 'application/epub+zip', url: epubUrl });
+    // Text-only edition first: it's often a tiny fraction of the illustrated one
+    // (Pride and Prejudice: 0.5 MB vs 24.8 MB). download() picks between them.
+    formats.push({ mime: 'application/epub+zip', url: `https://www.gutenberg.org/ebooks/${b.id}.epub.noimages`, label: 'Text only' });
+    formats.push({ mime: 'application/epub+zip', url: epubUrl, label: 'With illustrations' });
   }
 
   // Cover image
@@ -78,6 +83,33 @@ function parseGutendexBook(b: GutendexBook): CatalogEntry {
     formats,
     kind: 'book',
   };
+}
+
+const MAX_AUTO_ILLUSTRATED_BYTES = 6 * 1024 * 1024;
+
+// Gutendex can take a minute to answer. Catalog pages are cached on the device:
+// fresh copies (< 6h) are returned instantly, and a stale copy is shown if the
+// live request hasn't answered within a few seconds (it still refreshes the cache).
+const GUTENDEX_FRESH_MS = 6 * 60 * 60 * 1000;
+const GUTENDEX_STALE_WAIT_MS = 6000;
+
+async function gutendexJson<T>(url: string, errorPrefix: string): Promise<T> {
+  const key = `gutendex:${url}`;
+  const cached = (await db.kv.get(key).catch(() => undefined))?.value as { at: number; data: T } | undefined;
+  if (cached && Date.now() - cached.at < GUTENDEX_FRESH_MS) return cached.data;
+
+  const live = (async () => {
+    const res = await net.fetch(url);
+    if (!res.ok) throw new Error(`${errorPrefix}: ${res.statusText}`);
+    const data = (await res.json()) as T;
+    void db.kv.put({ key, value: { at: Date.now(), data } }).catch(() => {});
+    return data;
+  })();
+  if (!cached) return live;
+  return Promise.race([
+    live,
+    new Promise<T>((resolve) => setTimeout(() => resolve(cached.data), GUTENDEX_STALE_WAIT_MS)),
+  ]).catch(() => cached.data);
 }
 
 export class GutenbergSource implements CatalogSource {
@@ -114,11 +146,7 @@ export class GutenbergSource implements CatalogSource {
       }
     }
 
-    const res = await net.fetch(url);
-    if (!res.ok) {
-      throw new Error(`Failed to browse Gutenberg: ${res.statusText}`);
-    }
-    const data = (await res.json()) as GutendexResponse;
+    const data = await gutendexJson<GutendexResponse>(url, 'Failed to browse Gutenberg');
 
     return {
       items: data.results.map(parseGutendexBook),
@@ -140,11 +168,7 @@ export class GutenbergSource implements CatalogSource {
       url = `https://gutendex.com/books?${params.toString()}`;
     }
 
-    const res = await net.fetch(url);
-    if (!res.ok) {
-      throw new Error(`Failed to search Gutenberg: ${res.statusText}`);
-    }
-    const data = (await res.json()) as GutendexResponse;
+    const data = await gutendexJson<GutendexResponse>(url, 'Failed to search Gutenberg');
 
     return {
       items: data.results.map(parseGutendexBook),
@@ -168,21 +192,27 @@ export class GutenbergSource implements CatalogSource {
     _format: string,
     onProgress?: (p: number) => void,
   ): Promise<File> {
-    const formatEntry = entry.formats?.find(
-      (f) => f.mime === 'application/epub+zip',
-    ) || entry.formats?.[0];
-    if (!formatEntry) {
+    const epubs = (entry.formats ?? []).filter((f) => f.mime === 'application/epub+zip');
+    if (!epubs.length) {
       throw new Error('No downloadable EPUB format available for this book.');
     }
-
-    onProgress?.(0.1);
-    const res = await net.fetch(formatEntry.url);
-    if (!res.ok) {
-      throw new Error(`Failed to download book: ${res.statusText}`);
+    // An explicit URL picks that edition; otherwise take the illustrated edition
+    // only when it's small enough to arrive in reasonable time.
+    let chosen = epubs.find((f) => f.url === _format);
+    if (!chosen) {
+      const illustrated = epubs.find((f) => f.label === 'With illustrations');
+      const textOnly = epubs.find((f) => f.label === 'Text only');
+      const size = illustrated ? await net.size(illustrated.url) : undefined;
+      chosen =
+        illustrated && (!textOnly || (size !== undefined && size <= MAX_AUTO_ILLUSTRATED_BYTES))
+          ? illustrated
+          : (textOnly ?? epubs[0]);
     }
 
-    onProgress?.(0.5);
-    const blob = await res.blob();
+    onProgress?.(0.05);
+    const blob = await net.download(chosen.url, {
+      onProgress: (f) => onProgress?.(0.05 + f * 0.9),
+    });
     onProgress?.(1.0);
 
     const safeTitle = entry.title.replace(/[<>:"/\\|?*]/g, '_').slice(0, 80);

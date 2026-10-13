@@ -11,7 +11,8 @@ import {
 import { getRefreshToken, getServerUrl } from '../auth/storage';
 import type { SyncTableName } from '@folio/shared';
 
-export type SyncStatus = 'idle' | 'syncing' | 'offline' | 'error';
+// 'signedOut': no account, so nothing is synced (previously shown as 'idle' = "Synced").
+export type SyncStatus = 'idle' | 'syncing' | 'offline' | 'error' | 'signedOut';
 
 export interface SyncState {
   status: SyncStatus;
@@ -26,7 +27,7 @@ export interface SyncState {
 }
 
 export const useSyncStore = create<SyncState>((set) => ({
-  status: typeof navigator !== 'undefined' && !navigator.onLine ? 'offline' : 'idle',
+  status: typeof navigator !== 'undefined' && !navigator.onLine ? 'offline' : 'signedOut',
   lastSyncAt: null,
   lastError: null,
   pendingChanges: 0,
@@ -117,7 +118,7 @@ export class SyncEngine {
 
     const signedIn = await this.isUserSignedIn();
     if (!signedIn) {
-      useSyncStore.setState({ status: 'idle' });
+      useSyncStore.setState({ status: 'signedOut' });
       return;
     }
 

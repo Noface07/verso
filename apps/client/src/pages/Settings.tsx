@@ -22,6 +22,9 @@ import { exportBackup, importBackup, downloadBackupBlob } from '../lib/backup';
 import { t, setAppLanguage } from '../lib/i18n';
 import { isCrashReportingEnabled, setCrashReportingEnabled } from '../lib/crashReporter';
 import { useLiveQuery } from 'dexie-react-hooks';
+import { AccountSettings } from '../features/auth/AccountSettings';
+import { getContentRatings, setContentRating, type ContentRating } from '../lib/mangaPrefs';
+import { isAndroidDevice } from '../lib/tauri';
 
 type SettingsTab =
   | 'appearance'
@@ -53,6 +56,9 @@ export default function Settings() {
   // Adult rating confirmation
   const [adultConfirmOpen, setAdultConfirmOpen] = useState(false);
   const [pendingAdultKey, setPendingAdultKey] = useState<'erotica' | 'pornographic' | null>(null);
+  // Previously the opt-in only showed a toast; nothing was stored or sent to MangaDex.
+  const [ratings, setRatings] = useState<ContentRating[]>(() => getContentRatings());
+  const toggleRating = (rating: ContentRating, enabled: boolean) => setRatings(setContentRating(rating, enabled));
 
   // Crash reporting opt-in
   const [crashReporting, setCrashReporting] = useState(isCrashReportingEnabled());
@@ -266,7 +272,8 @@ export default function Settings() {
               />
             </div>
 
-            {/* Volume Key Navigation */}
+            {/* Volume Key Navigation (phones only: desktops have no volume rocker) */}
+            {isAndroidDevice() && (
             <div className="flex items-center justify-between p-4 rounded-[var(--r-md)] bg-[var(--surface-subtle)] border border-[var(--border-subtle)]">
               <div>
                 <h4 className="text-sm font-semibold">{t('settings.volumeKeys')}</h4>
@@ -281,6 +288,7 @@ export default function Settings() {
                 className="w-5 h-5 rounded cursor-pointer accent-[var(--accent)]"
               />
             </div>
+            )}
 
             {/* Haptic Feedback */}
             <div className="flex items-center justify-between p-4 rounded-[var(--r-md)] bg-[var(--surface-subtle)] border border-[var(--border-subtle)]">
@@ -300,6 +308,22 @@ export default function Settings() {
           </div>
         )}
 
+        {/* Library Tab */}
+        {activeTab === 'library' && <LibraryPrefs />}
+
+        {/* Account & Sync Tab (the tab existed but nothing was rendered for it) */}
+        {activeTab === 'account' && (
+          <div className="flex flex-col gap-6 animate-in fade-in-50 duration-150">
+            <div>
+              <h2 className="text-xl font-bold">{t('settings.account')}</h2>
+              <p className="text-sm text-[var(--text-muted)]">
+                Sign in to sync your library, progress and highlights across devices.
+              </p>
+            </div>
+            <AccountSettings />
+          </div>
+        )}
+
         {/* Manga Tab */}
         {activeTab === 'manga' && (
           <div className="flex flex-col gap-8 animate-in fade-in-50 duration-150">
@@ -313,54 +337,86 @@ export default function Settings() {
             {/* Content Ratings */}
             <div className="flex flex-col gap-3">
               <label className="text-sm font-semibold">{t('settings.contentRating')}</label>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div className="flex items-center justify-between p-3 rounded-[var(--r-md)] bg-[var(--surface-subtle)] border border-[var(--border-subtle)]">
                   <span className="text-sm">{t('settings.safe')}</span>
                   <input type="checkbox" defaultChecked disabled className="w-4 h-4 accent-[var(--accent)]" />
                 </div>
                 <div className="flex items-center justify-between p-3 rounded-[var(--r-md)] bg-[var(--surface-subtle)] border border-[var(--border-subtle)]">
                   <span className="text-sm">{t('settings.suggestive')}</span>
-                  <input type="checkbox" defaultChecked className="w-4 h-4 accent-[var(--accent)] cursor-pointer" />
+                  <input
+                    type="checkbox"
+                    aria-label={t('settings.suggestive')}
+                    checked={ratings.includes('suggestive')}
+                    onChange={(e) => toggleRating('suggestive', e.target.checked)}
+                    className="w-4 h-4 accent-[var(--accent)] cursor-pointer"
+                  />
                 </div>
                 <div className="flex items-center justify-between p-3 rounded-[var(--r-md)] bg-[var(--surface-subtle)] border border-[var(--border-subtle)]">
                   <span className="text-sm text-[var(--warning)] font-medium">{t('settings.erotica')}</span>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setPendingAdultKey('erotica');
-                      setAdultConfirmOpen(true);
-                    }}
-                    className="text-xs font-semibold px-2.5 py-1 rounded bg-[var(--surface-overlay)] border border-[var(--border-subtle)] hover:bg-[var(--surface-base)]"
-                  >
-                    Opt-in (18+)
-                  </button>
+                  {ratings.includes('erotica') ? (
+                    <button
+                      type="button"
+                      onClick={() => toggleRating('erotica', false)}
+                      className="shrink-0 text-xs font-semibold px-2.5 py-1 rounded bg-[var(--accent-soft)] text-[var(--accent)] border border-[var(--accent)] cursor-pointer"
+                    >
+                      On · Turn off
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPendingAdultKey('erotica');
+                        setAdultConfirmOpen(true);
+                      }}
+                      className="shrink-0 text-xs font-semibold px-2.5 py-1 rounded bg-[var(--surface-overlay)] border border-[var(--border-subtle)] hover:bg-[var(--surface-base)] cursor-pointer"
+                    >
+                      Opt-in (18+)
+                    </button>
+                  )}
                 </div>
                 <div className="flex items-center justify-between p-3 rounded-[var(--r-md)] bg-[var(--surface-subtle)] border border-[var(--border-subtle)]">
                   <span className="text-sm text-[var(--danger)] font-medium">{t('settings.pornographic')}</span>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setPendingAdultKey('pornographic');
-                      setAdultConfirmOpen(true);
-                    }}
-                    className="text-xs font-semibold px-2.5 py-1 rounded bg-[var(--surface-overlay)] border border-[var(--border-subtle)] hover:bg-[var(--surface-base)]"
-                  >
-                    Opt-in (18+)
-                  </button>
+                  {ratings.includes('pornographic') ? (
+                    <button
+                      type="button"
+                      onClick={() => toggleRating('pornographic', false)}
+                      className="shrink-0 text-xs font-semibold px-2.5 py-1 rounded bg-[var(--accent-soft)] text-[var(--accent)] border border-[var(--accent)] cursor-pointer"
+                    >
+                      On · Turn off
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPendingAdultKey('pornographic');
+                        setAdultConfirmOpen(true);
+                      }}
+                      className="shrink-0 text-xs font-semibold px-2.5 py-1 rounded bg-[var(--surface-overlay)] border border-[var(--border-subtle)] hover:bg-[var(--surface-base)] cursor-pointer"
+                    >
+                      Opt-in (18+)
+                    </button>
+                  )}
                 </div>
               </div>
             </div>
 
             {/* Clear Manga Cache */}
-            <div className="flex items-center justify-between p-4 rounded-[var(--r-md)] bg-[var(--surface-subtle)] border border-[var(--border-subtle)]">
-              <div>
+            <div className="flex items-center justify-between gap-4 p-4 rounded-[var(--r-md)] bg-[var(--surface-subtle)] border border-[var(--border-subtle)]">
+              <div className="min-w-0">
                 <h4 className="text-sm font-semibold">{t('settings.clearMangaCache')}</h4>
                 <p className="text-xs text-[var(--text-muted)]">
                   {mangaPagesCount} pages cached offline.
                 </p>
               </div>
-              <Button variant="standard" size="sm" onClick={clearMangaCache}>
-                <Trash2 className="w-4 h-4 mr-1 text-[var(--danger)]" /> Clear
+              <Button
+                variant="standard"
+                size="sm"
+                className="shrink-0"
+                icon={<Trash2 className="w-4 h-4 text-[var(--danger)]" />}
+                onClick={clearMangaCache}
+              >
+                Clear
               </Button>
             </div>
           </div>
@@ -514,6 +570,7 @@ export default function Settings() {
               variant="accent"
               onClick={() => {
                 setAdultConfirmOpen(false);
+                if (pendingAdultKey) toggleRating(pendingAdultKey, true);
                 showToast(`Opted into ${pendingAdultKey} ratings`);
               }}
             >
@@ -522,6 +579,90 @@ export default function Settings() {
           </div>
         </div>
       </Dialog>
+    </div>
+  );
+}
+
+// Defaults the Library page reads on open (it also remembers the last choice).
+const LAYOUTS = [
+  { value: 'grid', label: 'Grid' },
+  { value: 'list', label: 'List' },
+] as const;
+const SORTS = [
+  { value: 'recent', label: 'Recently read' },
+  { value: 'added', label: 'Recently added' },
+  { value: 'title', label: 'Title' },
+  { value: 'author', label: 'Author' },
+  { value: 'progress', label: 'Progress' },
+  { value: 'series', label: 'Series' },
+] as const;
+
+function readPref(key: string, fallback: string): string {
+  try {
+    return localStorage.getItem(key) || fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function LibraryPrefs() {
+  const [layout, setLayout] = useState(() => readPref('folio_lib_layout', 'grid'));
+  const [sort, setSort] = useState(() => readPref('folio_lib_sort', 'recent'));
+  const save = (key: string, value: string, set: (v: string) => void) => {
+    set(value);
+    try {
+      localStorage.setItem(key, value);
+    } catch {
+      // Storage unavailable: the choice still applies for this session.
+    }
+  };
+  const chip = (active: boolean) =>
+    `px-3 py-2 rounded-[var(--r-md)] border text-sm cursor-pointer transition-colors ${
+      active
+        ? 'border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent)] font-semibold'
+        : 'border-[var(--stroke)] bg-[var(--layer-2)] text-[var(--text-2)] hover:text-[var(--text-1)]'
+    }`;
+
+  return (
+    <div className="flex flex-col gap-8 animate-in fade-in-50 duration-150">
+      <div>
+        <h2 className="text-xl font-bold">{t('settings.library')}</h2>
+        <p className="text-sm text-[var(--text-muted)]">How your library is shown when you open it.</p>
+      </div>
+      <div className="flex flex-col gap-3">
+        <span className="text-sm font-semibold">Layout</span>
+        <div className="flex flex-wrap gap-2" role="radiogroup" aria-label="Library layout">
+          {LAYOUTS.map((o) => (
+            <button
+              key={o.value}
+              type="button"
+              role="radio"
+              aria-checked={layout === o.value}
+              className={chip(layout === o.value)}
+              onClick={() => save('folio_lib_layout', o.value, setLayout)}
+            >
+              {o.label}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="flex flex-col gap-3">
+        <span className="text-sm font-semibold">Sort by</span>
+        <div className="flex flex-wrap gap-2" role="radiogroup" aria-label="Library sort order">
+          {SORTS.map((o) => (
+            <button
+              key={o.value}
+              type="button"
+              role="radio"
+              aria-checked={sort === o.value}
+              className={chip(sort === o.value)}
+              onClick={() => save('folio_lib_sort', o.value, setSort)}
+            >
+              {o.label}
+            </button>
+          ))}
+        </div>
+      </div>
     </div>
   );
 }

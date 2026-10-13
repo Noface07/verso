@@ -39,7 +39,7 @@ export const MAIN_NAV_ITEMS: NavRailItem[] = [
 ];
 
 export interface NavRailProps {
-  syncStatus?: 'idle' | 'syncing' | 'error' | 'offline';
+  syncStatus?: 'idle' | 'syncing' | 'error' | 'offline' | 'signedOut';
   className?: string;
   onOpenSettings?: () => void;
 }
@@ -70,7 +70,8 @@ export const NavRail: React.FC<NavRailProps> = ({
   }, [expanded]);
 
   const syncLabels = {
-    idle: 'Synced',
+    idle: lastSyncAt ? 'Synced' : 'Not synced yet',
+    signedOut: 'Sync off · not signed in',
     syncing: 'Syncing…',
     error: 'Sync error',
     offline: 'Offline',
@@ -78,6 +79,7 @@ export const NavRail: React.FC<NavRailProps> = ({
 
   const syncIcons = {
     idle: <Check className="w-4 h-4 text-[var(--success)] shrink-0" />,
+    signedOut: <CloudOff className="w-4 h-4 text-[var(--text-3)] shrink-0" />,
     syncing: <RefreshCw className="w-4 h-4 animate-spin text-[var(--accent)] shrink-0" />,
     offline: <CloudOff className="w-4 h-4 text-[var(--text-3)] shrink-0" />,
     error: <AlertCircle className="w-4 h-4 text-[var(--danger)] shrink-0" />,

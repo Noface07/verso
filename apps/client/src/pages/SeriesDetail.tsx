@@ -19,6 +19,7 @@ import { db, dirty, now, uid, type Series, type ChapterProgress } from '../db';
 import { getSourceById } from '../sources/registry';
 import type { ChapterInfo, MangaSource, CatalogEntry } from '../sources/types';
 import { safeHtml } from '../lib/safeHtml';
+import { openExternalUrl } from '../lib/tauri';
 import { Button } from '../design/components/Button';
 import { IconButton } from '../design/components/IconButton';
 import { ProgressBar, ProgressRing } from '../design/components/Progress';
@@ -229,16 +230,17 @@ export default function SeriesDetail() {
   };
 
   // Continue or Start Reading
+  // Only chapters MangaDex actually hosts can be read in the app; official
+  // publisher releases (externalUrl) live on the publisher's site.
+  const readableChapters = useMemo(() => chapters.filter((ch) => !ch.externalUrl), [chapters]);
   const firstUnreadChapter = useMemo(() => {
-    return chapters.find((ch) => !progressByChapterId.get(ch.id)?.read) || chapters[0];
-  }, [chapters, progressByChapterId]);
+    return (
+      readableChapters.find((ch) => !progressByChapterId.get(ch.id)?.read) || readableChapters[0]
+    );
+  }, [readableChapters, progressByChapterId]);
 
   const handleStartReading = () => {
     if (!firstUnreadChapter) return;
-    if (firstUnreadChapter.externalUrl) {
-      window.open(firstUnreadChapter.externalUrl, '_blank');
-      return;
-    }
     navigate(`/read/manga/${encodeURIComponent(seriesId)}/${encodeURIComponent(firstUnreadChapter.id)}`);
   };
 
@@ -434,10 +436,19 @@ export default function SeriesDetail() {
 
         {/* Chapters List */}
         <div className="space-y-2">
+          {!loading && !error && readableChapters.length === 0 && (
+            <div className="p-4 rounded-[var(--r-md)] bg-[var(--layer-2)] border border-[var(--stroke)] text-xs text-[var(--text-2)] leading-relaxed">
+              {chapters.length === 0
+                ? 'MangaDex has no English chapters of this series. It is usually because the series is officially licensed and the publisher asked for them to be removed.'
+                : 'This series is only available as official releases on the publisher’s site, so it can’t be read inside Folio. The chapters below open in your browser.'}
+            </div>
+          )}
           {visibleChapters.length === 0 ? (
-            <p className="text-center text-xs text-[var(--text-3)] py-12">
-              No chapters match your filters.
-            </p>
+            chapters.length > 0 && (
+              <p className="text-center text-xs text-[var(--text-3)] py-12">
+                No chapters match your filters.
+              </p>
+            )
           ) : (
             visibleChapters.map((ch, idx) => {
               const isRead = progressByChapterId.get(ch.id)?.read;
@@ -458,7 +469,9 @@ export default function SeriesDetail() {
                     className="flex-1 min-w-0 cursor-pointer pr-3"
                     onClick={() => {
                       if (ch.externalUrl) {
-                        window.open(ch.externalUrl, '_blank');
+                        // Opening it in the app's own webview replaced Folio with the
+                        // publisher's site and left no way back; use the system browser.
+                        void openExternalUrl(ch.externalUrl);
                       } else {
                         navigate(
                           `/read/manga/${encodeURIComponent(seriesId)}/${encodeURIComponent(ch.id)}`,
@@ -476,7 +489,9 @@ export default function SeriesDetail() {
                       )}
                     </div>
                     <div className="text-[11px] text-[var(--text-3)] mt-0.5 truncate">
-                      Scanlation: {ch.scanlationGroup || 'Unknown'} · Hosted on MangaDex
+                      {ch.externalUrl
+                        ? 'Official release · opens on the publisher’s site'
+                        : `Scanlation: ${ch.scanlationGroup || 'Unknown'} · Hosted on MangaDex`}
                     </div>
                   </div>
 

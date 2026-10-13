@@ -2,6 +2,8 @@ export interface CatalogFormat {
   mime: string;
   url: string;
   size?: number;
+  /** Human label when a source offers several editions of one format. */
+  label?: string;
 }
 
 export interface CatalogEntry {
