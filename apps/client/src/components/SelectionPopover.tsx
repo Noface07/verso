@@ -1,48 +1,66 @@
+import React from 'react';
 import {
-  BookA, Bookmark, Copy, Globe, Highlighter, Languages, Search,
-  StickyNote, Strikethrough, Trash2, Underline, Volume2, Waves,
-} from 'lucide-react'
-import type { HighlightStyle } from '../db'
-import { HIGHLIGHT_COLORS } from '../lib/readerSettings'
-import { LookupCard, type LookupTab } from './LookupCard'
+  BookA,
+  Bookmark,
+  Copy,
+  Globe,
+  Highlighter,
+  Languages,
+  Search,
+  StickyNote,
+  Strikethrough,
+  Trash2,
+  Underline,
+  Volume2,
+  Waves,
+} from 'lucide-react';
+import type { HighlightStyle } from '../db';
+import { HIGHLIGHT_COLORS } from '../lib/readerSettings';
+import { LookupCard, type LookupTab } from './LookupCard';
+import { IconButton } from '../design/components/IconButton';
 
-export interface MenuAnchor { x: number; top: number; bottom: number }
+export interface MenuAnchor {
+  x: number;
+  top: number;
+  bottom: number;
+}
 
-const STYLES: { id: HighlightStyle; label: string; icon: typeof Highlighter }[] = [
+const STYLES: { id: HighlightStyle; label: string; icon: React.FC<{ className?: string }> }[] = [
   { id: 'highlight', label: 'Highlight', icon: Highlighter },
   { id: 'underline', label: 'Underline', icon: Underline },
   { id: 'strikethrough', label: 'Strikethrough', icon: Strikethrough },
-  { id: 'squiggly', label: 'Squiggly underline', icon: Waves },
-]
+  { id: 'squiggly', label: 'Squiggly', icon: Waves },
+];
 
 export function SelectionPopover(props: {
-  anchor: MenuAnchor
-  text: string
-  color: string
-  style: HighlightStyle
-  existing: boolean
-  hasNote: boolean
-  lookup: LookupTab | null
-  lang: string
-  translateTo: string
-  onLookup: (tab: LookupTab | null) => void
-  onTranslateTo: (lang: string) => void
-  onSpeakText: (text: string) => void
-  onColor: (color: string) => void
-  onStyle: (style: HighlightStyle) => void
-  onNote: () => void
-  onBookmark: () => void
-  onReadAloud: () => void
-  onSearch: () => void
-  onCopy: () => void
-  onDelete?: () => void
+  anchor: MenuAnchor;
+  text: string;
+  color: string;
+  style: HighlightStyle;
+  existing: boolean;
+  hasNote: boolean;
+  lookup: LookupTab | null;
+  lang: string;
+  translateTo: string;
+  onLookup: (tab: LookupTab | null) => void;
+  onTranslateTo: (lang: string) => void;
+  onSpeakText: (text: string) => void;
+  onColor: (color: string) => void;
+  onStyle: (style: HighlightStyle) => void;
+  onNote: () => void;
+  onBookmark: () => void;
+  onReadAloud: () => void;
+  onSearch: () => void;
+  onCopy: () => void;
+  onDelete?: () => void;
+  onExpandLookup?: () => void;
 }) {
-  const { anchor, lookup } = props
-  const width = Math.min(410, window.innerWidth - 16)
-  const left = Math.min(Math.max(anchor.x - width / 2, 8), window.innerWidth - width - 8)
-  const needed = lookup ? 420 : 130
-  const above = anchor.top > needed + 56
-  const pos = above ? { bottom: window.innerHeight - anchor.top + 10 } : { top: anchor.bottom + 10 }
+  const { anchor, lookup } = props;
+  const width = Math.min(390, window.innerWidth - 16);
+  const left = Math.min(Math.max(anchor.x - width / 2, 8), window.innerWidth - width - 8);
+  const needed = lookup ? 420 : 130;
+  const above = anchor.top > needed + 56;
+  const pos = above ? { bottom: window.innerHeight - anchor.top + 10 } : { top: anchor.bottom + 10 };
 
   const card = lookup && (
     <LookupCard
@@ -55,52 +73,121 @@ export function SelectionPopover(props: {
       onTranslateTo={props.onTranslateTo}
       onSpeak={props.onSpeakText}
       onClose={() => props.onLookup(null)}
+      onExpand={props.onExpandLookup}
     />
-  )
+  );
 
-  const toggle = (t: LookupTab) => props.onLookup(lookup === t ? null : t)
+  const toggle = (t: LookupTab) => props.onLookup(lookup === t ? null : t);
 
   return (
-    <div className={`popover ${above ? 'above' : 'below'}`} style={{ left, width, ...pos }}>
+    <div
+      className="fixed z-50 rounded-[var(--r-lg)] bg-[var(--layer-solid)] text-[var(--text-1)] border border-[var(--stroke)] shadow-[var(--shadow-flyout)] overflow-hidden select-none animate-in fade-in-0 duration-150"
+      style={{ left, width, ...pos }}
+    >
       {above && card}
-      <div className="pop-toolbar">
-        <div className="pop-row">
+
+      {/* Row 1: 6 Color dots + 4 style selectors */}
+      <div className="flex items-center justify-between px-3 py-2 border-b border-[var(--stroke)] bg-[var(--layer-1)]">
+        <div className="flex items-center gap-2">
           {HIGHLIGHT_COLORS.map((c) => (
             <button
               key={c.id}
-              className={`swatch ${props.existing && props.color === c.id ? 'active' : ''}`}
-              style={{ background: c.hex }}
+              type="button"
               title={c.label}
               aria-label={`${c.label} highlight`}
               onClick={() => props.onColor(c.id)}
+              className={`w-5 h-5 rounded-full cursor-pointer transition-transform hover:scale-115 flex items-center justify-center ${
+                props.existing && props.color === c.id
+                  ? 'ring-2 ring-[var(--text-1)] ring-offset-2 ring-offset-[var(--layer-solid)] scale-110'
+                  : ''
+              }`}
+              style={{ backgroundColor: c.hex }}
             />
           ))}
-          <span className="sep" />
+        </div>
+
+        <div className="h-4 w-[1px] bg-[var(--stroke)]" />
+
+        <div className="flex items-center gap-1">
           {STYLES.map((s) => (
             <button
               key={s.id}
-              className={`icon-btn sm ${props.style === s.id ? 'active' : ''}`}
+              type="button"
               title={s.label}
               aria-label={s.label}
               onClick={() => props.onStyle(s.id)}
+              className={`p-1 rounded-[var(--r-sm)] text-[var(--text-2)] hover:text-[var(--text-1)] hover:bg-[var(--layer-2)] cursor-pointer ${
+                props.style === s.id ? 'bg-[var(--accent-soft)] text-[var(--accent)] font-semibold' : ''
+              }`}
             >
-              <s.icon size={16} />
+              <s.icon className="w-4 h-4" />
             </button>
           ))}
         </div>
-        <div className="pop-row tools">
-          <button className={`pop-btn ${props.hasNote ? 'active' : ''}`} title={props.hasNote ? 'Edit note' : 'Add note'} onClick={props.onNote}><StickyNote size={17} /></button>
-          <button className="pop-btn" title="Bookmark here" onClick={props.onBookmark}><Bookmark size={17} /></button>
-          <button className={`pop-btn ${lookup === 'define' ? 'active' : ''}`} title="Dictionary" onClick={() => toggle('define')}><BookA size={17} /></button>
-          <button className={`pop-btn ${lookup === 'translate' ? 'active' : ''}`} title="Translate" onClick={() => toggle('translate')}><Languages size={17} /></button>
-          <button className={`pop-btn ${lookup === 'wiki' ? 'active' : ''}`} title="Wikipedia" onClick={() => toggle('wiki')}><Globe size={17} /></button>
-          <button className="pop-btn" title="Read aloud from here" onClick={props.onReadAloud}><Volume2 size={17} /></button>
-          <button className="pop-btn" title="Search in book" onClick={props.onSearch}><Search size={17} /></button>
-          <button className="pop-btn" title="Copy" onClick={props.onCopy}><Copy size={17} /></button>
-          {props.onDelete && <button className="pop-btn danger" title="Delete highlight" onClick={props.onDelete}><Trash2 size={17} /></button>}
-        </div>
       </div>
+
+      {/* Row 2: 9 Action tool icons */}
+      <div className="flex items-center justify-around px-2 py-1.5 bg-[var(--layer-solid)]">
+        <IconButton
+          label={props.hasNote ? 'Edit note' : 'Add note'}
+          icon={<StickyNote className={`w-4 h-4 ${props.hasNote ? 'text-[var(--accent)]' : ''}`} />}
+          size="sm"
+          onClick={props.onNote}
+        />
+        <IconButton
+          label="Bookmark here"
+          icon={<Bookmark className="w-4 h-4" />}
+          size="sm"
+          onClick={props.onBookmark}
+        />
+        <IconButton
+          label="Dictionary"
+          icon={<BookA className={`w-4 h-4 ${lookup === 'define' ? 'text-[var(--accent)]' : ''}`} />}
+          size="sm"
+          onClick={() => toggle('define')}
+        />
+        <IconButton
+          label="Translate"
+          icon={<Languages className={`w-4 h-4 ${lookup === 'translate' ? 'text-[var(--accent)]' : ''}`} />}
+          size="sm"
+          onClick={() => toggle('translate')}
+        />
+        <IconButton
+          label="Wikipedia"
+          icon={<Globe className={`w-4 h-4 ${lookup === 'wiki' ? 'text-[var(--accent)]' : ''}`} />}
+          size="sm"
+          onClick={() => toggle('wiki')}
+        />
+        <IconButton
+          label="Read aloud"
+          icon={<Volume2 className="w-4 h-4" />}
+          size="sm"
+          onClick={props.onReadAloud}
+        />
+        <IconButton
+          label="Search in book"
+          icon={<Search className="w-4 h-4" />}
+          size="sm"
+          onClick={props.onSearch}
+        />
+        <IconButton
+          label="Copy text"
+          icon={<Copy className="w-4 h-4" />}
+          size="sm"
+          onClick={props.onCopy}
+        />
+        {props.onDelete && (
+          <IconButton
+            label="Delete highlight"
+            icon={<Trash2 className="w-4 h-4" />}
+            size="sm"
+            variant="danger"
+            onClick={props.onDelete}
+          />
+        )}
+      </div>
+
       {!above && card}
     </div>
-  )
+  );
 }

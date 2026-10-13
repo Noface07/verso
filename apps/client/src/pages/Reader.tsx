@@ -11,17 +11,20 @@ import { THEMES, applyLayout, colorHex, useReaderSettings } from '../lib/readerS
 import { useReadingSession } from '../lib/session'
 import { ReadAloud, speakOnce, useVoices, type TTSState } from '../lib/tts'
 import { SelectionPopover, type MenuAnchor } from '../components/SelectionPopover'
-import type { LookupTab } from '../components/LookupCard'
+import { LookupCard, type LookupTab } from '../components/LookupCard'
 import { TTSBar } from '../components/TTSBar'
 import { AnnotationsPanel, NoteEditor, SearchPanel, SettingsPanel, TocPanel } from '../components/ReaderPanels'
+import { IconButton } from '../design/components/IconButton'
+import { Button } from '../design/components/Button'
 
-type Panel = 'toc' | 'search' | 'notes' | 'bookmarks' | 'settings' | null
-const PANEL_TITLE = {
+type Panel = 'toc' | 'search' | 'notes' | 'bookmarks' | 'settings' | 'lookup' | null
+const PANEL_TITLE: Record<Exclude<Panel, null>, string> = {
   toc: 'Contents',
   search: 'Search in book',
   notes: 'Highlights & notes',
   bookmarks: 'Bookmarks',
   settings: 'Reading settings',
+  lookup: 'Dictionary & Lookup',
 }
 
 interface Loc {
@@ -100,7 +103,9 @@ export default function Reader() {
 
   const [settings, updateSettings] = useReaderSettings()
   const settingsRef = useRef(settings)
-  settingsRef.current = settings
+  useEffect(() => {
+    settingsRef.current = settings
+  }, [settings])
 
   const book = useLiveQuery(() => db.books.get(id), [id])
   const annotations = useLiveQuery(
@@ -109,7 +114,9 @@ export default function Reader() {
     [] as Annotation[],
   )
   const annotationsRef = useRef(annotations)
-  annotationsRef.current = annotations
+  useEffect(() => {
+    annotationsRef.current = annotations
+  }, [annotations])
 
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading')
   const [error, setError] = useState('')
@@ -124,6 +131,8 @@ export default function Reader() {
   const [noteFor, setNoteFor] = useState<Annotation | null>(null)
   const [fullscreen, setFullscreen] = useState(!!document.fullscreenElement)
   const [ttsState, setTtsState] = useState<TTSState>('idle')
+  const [expandedLookupWord, setExpandedLookupWord] = useState('')
+  const [viewInstance, setViewInstance] = useState<FoliateView | null>(null)
   const voices = useVoices()
 
   const fractionRef = useRef(0)
@@ -131,7 +140,9 @@ export default function Reader() {
   const ttsRef = useRef<ReadAloud | null>(null)
   const lastAnnotationTap = useRef(0)
   const popOpenRef = useRef(false)
-  popOpenRef.current = !!pop
+  useEffect(() => {
+    popOpenRef.current = !!pop
+  }, [pop])
   const drawn = useRef(new Map<string, string>())
 
   const lang = book?.meta.language || 'en'
@@ -279,6 +290,7 @@ export default function Reader() {
         if (cancelled) return dispose()
 
         viewRef.current = view
+        setViewInstance(view)
         setToc(view.book.toc ?? [])
         applyLayout(view.renderer, settingsRef.current)
         view.addEventListener('relocate', onRelocate)
@@ -313,6 +325,7 @@ export default function Reader() {
       ttsRef.current?.stop()
       ttsRef.current = null
       viewRef.current = null
+      setViewInstance(null)
       drawn.current = new Map()
       dispose()
     }
@@ -383,7 +396,7 @@ export default function Reader() {
     } catch {
       return []
     }
-  }, [annotations, loc?.cfi])
+  }, [annotations, loc])
 
   async function addBookmark(cfi: string, text: string) {
     await db.annotations.put({
@@ -455,10 +468,9 @@ export default function Reader() {
     if (ttsRef.current?.state === 'playing') ttsRef.current.pause()
     speakOnce(text, lang, settings.ttsVoice, settings.ttsRate)
   }
-
   const go = (target: string) => {
     void viewRef.current?.goTo(target)
-    if (window.innerWidth < 760) setPanel(null)
+    if (window.innerWidth < 768) setPanel(null)
   }
   const togglePanel = (p: Panel) => setPanel((cur) => (cur === p ? null : p))
   const commitScrub = () => {
@@ -474,77 +486,261 @@ export default function Reader() {
   const theme = THEMES[settings.theme] ?? THEMES.light
   const fraction = scrub ?? loc?.fraction ?? 0
 
+  const isLeftPanel = panel === 'toc' || panel === 'notes' || panel === 'bookmarks'
+  const isRightPanel = panel === 'search' || panel === 'settings' || panel === 'lookup'
+
+  const renderPanelContent = () => {
+    if (!panel) return null
+    if (panel === 'toc') return <TocPanel toc={toc} current={loc?.href} onGo={go} />
+    if (panel === 'search' && viewInstance) {
+      return <SearchPanel key={searchSeed} view={viewInstance} initial={searchSeed} onGo={go} />
+    }
+    if (panel === 'notes' || panel === 'bookmarks') {
+      return (
+        <AnnotationsPanel
+          key={panel}
+          initialTab={panel === 'bookmarks' ? 'bookmark' : 'all'}
+          annotations={annotations}
+          title={book?.title ?? 'Book'}
+          author={book?.author ?? ''}
+          onGo={go}
+          onEditNote={setNoteFor}
+          onDelete={(a) => void patchAnnotation(a, { deleted_at: Date.now() })}
+        />
+      )
+    }
+    if (panel === 'settings') return <SettingsPanel s={settings} onChange={updateSettings} />
+    if (panel === 'lookup') {
+      return (
+        <LookupCard
+          text={expandedLookupWord}
+          tab={lookup ?? 'define'}
+          onTab={setLookup}
+          lang={lang}
+          translateTo={settings.translateTo}
+          onTranslateTo={(l) => updateSettings({ translateTo: l })}
+          onSpeak={speakText}
+          onClose={() => setPanel(null)}
+        />
+      )
+    }
+    return null
+  }
+
   return (
-    <div className={`reader ${chrome ? '' : 'hide-chrome'}`} style={{ '--rbg': theme.bg, '--rfg': theme.fg } as CSSProperties}>
-      <header className="reader-top">
-        <div className="tb-group">
-          <button className="icon-btn" onClick={() => navigate(-1)} aria-label="Back" title="Back"><ArrowLeft size={20} /></button>
-          <button className={`icon-btn ${panel === 'toc' ? 'active' : ''}`} onClick={() => togglePanel('toc')} title="Contents"><List size={20} /></button>
-          <button className={`icon-btn ${panel === 'notes' ? 'active' : ''}`} onClick={() => togglePanel('notes')} title="Highlights & notes"><Highlighter size={20} /></button>
-          <button className={`icon-btn ${panel === 'bookmarks' ? 'active' : ''}`} onClick={() => togglePanel('bookmarks')} title="Bookmarks"><BookMarked size={20} /></button>
+    <div
+      className="fixed inset-0 overflow-hidden flex flex-col select-none"
+      style={{
+        backgroundColor: 'var(--rbg)',
+        color: 'var(--rfg)',
+        '--rbg': theme.bg,
+        '--rfg': theme.fg,
+        '--rmuted': `color-mix(in srgb, ${theme.fg} 55%, ${theme.bg})`,
+        '--rline': `color-mix(in srgb, ${theme.fg} 12%, ${theme.bg})`,
+        '--rsurface': `color-mix(in srgb, ${theme.fg} 6%, ${theme.bg})`,
+      } as CSSProperties}
+    >
+      {/* Top chrome header */}
+      <header
+        className={`fixed top-0 inset-x-0 h-12 z-30 transition-all duration-200 ease-[var(--ease-out)] bg-[color-mix(in_srgb,var(--rbg)_90%,transparent)] backdrop-blur-[var(--blur)] border-b border-[var(--rline)] flex items-center justify-between px-3 ${
+          chrome ? 'translate-y-0 opacity-100' : '-translate-y-full opacity-0 pointer-events-none'
+        }`}
+      >
+        <div className="flex items-center gap-1 shrink-0">
+          <IconButton label="Back" icon={<ArrowLeft className="w-4.5 h-4.5" />} onClick={() => navigate(-1)} />
+          <IconButton
+            label="Contents"
+            icon={<List className="w-4.5 h-4.5" />}
+            variant={panel === 'toc' ? 'accent' : 'subtle'}
+            onClick={() => togglePanel('toc')}
+          />
+          <IconButton
+            label="Highlights & notes"
+            icon={<Highlighter className="w-4.5 h-4.5" />}
+            variant={panel === 'notes' ? 'accent' : 'subtle'}
+            onClick={() => togglePanel('notes')}
+          />
+          <IconButton
+            label="Bookmarks"
+            icon={<BookMarked className="w-4.5 h-4.5" />}
+            variant={panel === 'bookmarks' ? 'accent' : 'subtle'}
+            onClick={() => togglePanel('bookmarks')}
+          />
         </div>
-        <div className="reader-title">
-          <div>{book?.title ?? ''}</div>
-          <small>{book?.author}</small>
+
+        <div className="flex-1 min-w-0 px-4 text-center select-none">
+          <div className="font-display font-semibold text-sm truncate text-[var(--rfg)]">{book?.title ?? ''}</div>
+          <div className="text-xs text-[var(--rmuted)] truncate">{book?.author}</div>
         </div>
-        <div className="tb-group">
-          <button className={`icon-btn ${panel === 'search' ? 'active' : ''}`} onClick={() => { setSearchSeed(''); togglePanel('search') }} title="Search"><Search size={20} /></button>
-          <button
-            className={`icon-btn ${ttsState !== 'idle' ? 'active' : ''}`}
+
+        <div className="flex items-center gap-1 shrink-0">
+          <IconButton
+            label="Search in book"
+            icon={<Search className="w-4.5 h-4.5" />}
+            variant={panel === 'search' ? 'accent' : 'subtle'}
+            onClick={() => { setSearchSeed(''); togglePanel('search') }}
+          />
+          <IconButton
+            label={ttsState === 'idle' ? 'Read aloud' : 'Stop reading'}
+            icon={<Headphones className="w-4.5 h-4.5" />}
+            variant={ttsState !== 'idle' ? 'accent' : 'subtle'}
             onClick={() => (ttsState === 'idle' ? void startReading() : ttsRef.current?.stop())}
-            title={ttsState === 'idle' ? 'Read aloud' : 'Stop reading'}
-          >
-            <Headphones size={20} />
-          </button>
-          <span className="tb-sep" />
-          <button className={`icon-btn ${panel === 'settings' ? 'active' : ''}`} onClick={() => togglePanel('settings')} title="Reading settings"><Type size={20} /></button>
-          <button
-            className="icon-btn hide-mobile"
+          />
+          <span className="w-px h-5 mx-1 bg-[var(--rline)]" />
+          <IconButton
+            label="Reading settings"
+            icon={<Type className="w-4.5 h-4.5" />}
+            variant={panel === 'settings' ? 'accent' : 'subtle'}
+            onClick={() => togglePanel('settings')}
+          />
+          <IconButton
+            className="hidden sm:inline-flex"
+            label={settings.columns === 2 ? 'Single page' : 'Two pages'}
+            icon={settings.columns === 2 ? <RectangleVertical className="w-4.5 h-4.5" /> : <Columns2 className="w-4.5 h-4.5" />}
             onClick={() => updateSettings({ columns: settings.columns === 2 ? 1 : 2 })}
-            title={settings.columns === 2 ? 'Single page' : 'Two pages'}
-          >
-            {settings.columns === 2 ? <RectangleVertical size={20} /> : <Columns2 size={20} />}
-          </button>
-          <button className="icon-btn" onClick={() => void togglePageBookmark()} title={pageBookmarks.length ? 'Remove bookmark' : 'Bookmark this page'}>
-            <Bookmark size={20} fill={pageBookmarks.length ? 'currentColor' : 'none'} />
-          </button>
-          <button className="icon-btn hide-mobile" onClick={toggleFullscreen} title={fullscreen ? 'Exit full screen' : 'Full screen'}>
-            {fullscreen ? <Minimize2 size={20} /> : <Maximize2 size={20} />}
-          </button>
+          />
+          <IconButton
+            label={pageBookmarks.length ? 'Remove bookmark' : 'Bookmark this page'}
+            icon={<Bookmark className={`w-4.5 h-4.5 ${pageBookmarks.length ? 'fill-[var(--accent)] text-[var(--accent)]' : ''}`} />}
+            onClick={() => void togglePageBookmark()}
+          />
+          <IconButton
+            className="hidden sm:inline-flex"
+            label={fullscreen ? 'Exit full screen' : 'Full screen'}
+            icon={fullscreen ? <Minimize2 className="w-4.5 h-4.5" /> : <Maximize2 className="w-4.5 h-4.5" />}
+            onClick={toggleFullscreen}
+          />
         </div>
       </header>
 
-      <div className="reader-stage" ref={stageRef} />
-      {pageBookmarks.length > 0 && <div className="ribbon" aria-hidden="true" />}
+      {/* Main viewport with docked side panels */}
+      <main
+        className="flex-1 flex overflow-hidden relative transition-all duration-200"
+        style={{
+          paddingTop: chrome ? '48px' : '0px',
+          paddingBottom: chrome ? '72px' : '28px',
+        }}
+      >
+        {/* Left docked panel (360px on desktop) */}
+        {panel && isLeftPanel && (
+          <aside className="hidden md:flex w-[360px] h-full shrink-0 border-r border-[var(--rline)] bg-[var(--rbg)] flex-col z-10 animate-in slide-in-from-left duration-200">
+            <div className="flex items-center justify-between h-12 px-4 border-b border-[var(--rline)] shrink-0">
+              <h3 className="font-display font-semibold text-sm">{PANEL_TITLE[panel]}</h3>
+              <IconButton label="Close panel" icon={<X className="w-4 h-4" />} size="sm" onClick={() => setPanel(null)} />
+            </div>
+            <div className="flex-1 overflow-y-auto p-3">
+              {renderPanelContent()}
+            </div>
+          </aside>
+        )}
 
-      {status === 'loading' && <div className="reader-msg">Opening book…</div>}
-      {status === 'error' && (
-        <div className="reader-msg">
-          <p>{error}</p>
-          <button className="btn" onClick={() => navigate('/library')}>Back to library</button>
+        {/* Reading stage */}
+        <div className="flex-1 h-full relative overflow-hidden">
+          <div className="w-full h-full relative" ref={stageRef} />
+
+          {/* Bookmark ribbon */}
+          {pageBookmarks.length > 0 && (
+            <div
+              className="absolute top-0 right-6 z-10 w-[18px] h-[30px] bg-[var(--danger)] shadow-sm pointer-events-none transition-all duration-150"
+              style={{ clipPath: 'polygon(0 0, 100% 0, 100% 100%, 50% 74%, 0 100%)' }}
+              aria-hidden="true"
+            />
+          )}
+
+          {status === 'loading' && (
+            <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 bg-[var(--rbg)] text-[var(--rmuted)]">
+              <div className="w-8 h-8 rounded-full border-2 border-[var(--rline)] border-t-[var(--accent)] animate-spin" />
+              <span className="text-sm">Opening book…</span>
+            </div>
+          )}
+
+          {status === 'error' && (
+            <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-4 p-6 bg-[var(--rbg)] text-center text-[var(--rmuted)]">
+              <p className="max-w-md text-sm text-[var(--danger)]">{error}</p>
+              <Button variant="standard" onClick={() => navigate('/library')}>
+                Back to library
+              </Button>
+            </div>
+          )}
+        </div>
+
+        {/* Right docked panel (360px on desktop) */}
+        {panel && isRightPanel && (
+          <aside className="hidden md:flex w-[360px] h-full shrink-0 border-l border-[var(--rline)] bg-[var(--rbg)] flex-col z-10 animate-in slide-in-from-right duration-200">
+            <div className="flex items-center justify-between h-12 px-4 border-b border-[var(--rline)] shrink-0">
+              <h3 className="font-display font-semibold text-sm">{PANEL_TITLE[panel]}</h3>
+              <IconButton label="Close panel" icon={<X className="w-4 h-4" />} size="sm" onClick={() => setPanel(null)} />
+            </div>
+            <div className="flex-1 overflow-y-auto p-3">
+              {renderPanelContent()}
+            </div>
+          </aside>
+        )}
+      </main>
+
+      {/* Mobile Bottom Sheet for panels (< 768px) */}
+      {panel && (
+        <div className="md:hidden fixed inset-0 z-50 flex flex-col justify-end">
+          <button
+            type="button"
+            aria-label="Close panel"
+            className="fixed inset-0 bg-black/60 backdrop-blur-xs animate-in fade-in duration-200 border-none p-0 cursor-default"
+            onClick={() => setPanel(null)}
+          />
+          <aside className="relative z-10 w-full max-h-[85vh] rounded-t-2xl bg-[var(--rbg)] border-t border-[var(--rline)] shadow-[var(--shadow-flyout)] flex flex-col animate-in slide-in-from-bottom duration-200">
+            <div className="w-10 h-1 rounded-full bg-[var(--rline)] mx-auto mt-2.5 mb-1" />
+            <div className="flex items-center justify-between h-11 px-4 border-b border-[var(--rline)] shrink-0">
+              <h3 className="font-display font-semibold text-sm">{PANEL_TITLE[panel]}</h3>
+              <IconButton label="Close panel" icon={<X className="w-4 h-4" />} size="sm" onClick={() => setPanel(null)} />
+            </div>
+            <div className="flex-1 overflow-y-auto p-4 pb-8">
+              {renderPanelContent()}
+            </div>
+          </aside>
         </div>
       )}
 
-      <div className="reader-scrub">
-        <span className="rb-chapter">
-          {loc?.minutesLeft ? `${Math.max(1, Math.ceil(loc.minutesLeft))} min left in chapter` : ''}
+      {/* Scrub bar */}
+      <div
+        className={`fixed bottom-7 inset-x-0 h-11 z-30 transition-all duration-200 ease-[var(--ease-out)] bg-[color-mix(in_srgb,var(--rbg)_92%,transparent)] backdrop-blur-[var(--blur)] border-t border-[var(--rline)] flex items-center gap-3 px-4 text-xs text-[var(--rmuted)] select-none ${
+          chrome ? 'translate-y-0 opacity-100' : 'translate-y-full opacity-0 pointer-events-none'
+        }`}
+      >
+        <span className="shrink-0 w-36 truncate text-[11px] font-medium hidden sm:inline">
+          {loc?.minutesLeft ? `${Math.max(1, Math.ceil(loc.minutesLeft))} min left in chapter` : loc?.chapter || ''}
         </span>
-        <input
-          type="range"
-          className="progress-range"
-          aria-label="Book progress"
-          min={0}
-          max={1000}
-          value={Math.round(fraction * 1000)}
-          onChange={(e) => setScrub(Number(e.target.value) / 1000)}
-          onPointerUp={commitScrub}
-          onKeyUp={commitScrub}
-        />
+
+        <div className="flex-1 relative flex items-center">
+          {scrub !== null && (
+            <div
+              className="absolute -top-7 px-2 py-0.5 rounded-[var(--r-sm)] bg-[var(--layer-solid)] text-[var(--text-1)] border border-[var(--stroke)] text-[11px] font-mono shadow-md -translate-x-1/2 pointer-events-none"
+              style={{ left: `${Math.round(fraction * 100)}%` }}
+            >
+              {(fraction * 100).toFixed(1)}%
+            </div>
+          )}
+          <input
+            type="range"
+            className="w-full h-1.5 rounded-full cursor-pointer appearance-none bg-[var(--rline)] accent-[var(--rfg)] outline-none"
+            aria-label="Book progress"
+            min={0}
+            max={1000}
+            value={Math.round(fraction * 1000)}
+            onChange={(e) => setScrub(Number(e.target.value) / 1000)}
+            onPointerUp={commitScrub}
+            onKeyUp={commitScrub}
+          />
+        </div>
+
+        <span className="shrink-0 w-12 text-right font-mono text-[11px] tabular-nums">
+          {(fraction * 100).toFixed(1)}%
+        </span>
       </div>
 
-      <footer className="reader-status">
+      {/* 28px Status line */}
+      <footer className="fixed bottom-0 inset-x-0 h-7 z-20 flex items-center justify-between px-4 text-[12px] opacity-55 text-[var(--rfg)] bg-[var(--rbg)] font-mono tabular-nums select-none pointer-events-none border-t border-[var(--rline)]/40">
         <span>{loc?.page ? `${loc.page.current} / ${loc.page.total}` : ''}</span>
-        <span className="rs-chapter">{loc?.chapter}</span>
+        <span className="truncate max-w-[50vw] px-2 text-center">{loc?.chapter || ''}</span>
         <span>{(fraction * 100).toFixed(2)}%</span>
       </footer>
 
@@ -586,35 +782,12 @@ export default function Reader() {
           onSearch={() => { setSearchSeed(pop.text.slice(0, 80)); setPanel('search'); closePop() }}
           onCopy={() => { void navigator.clipboard.writeText(pop.text); closePop() }}
           onDelete={pop.annotation ? () => { void patchAnnotation(pop.annotation!, { deleted_at: Date.now() }); closePop() } : undefined}
+          onExpandLookup={() => {
+            setExpandedLookupWord(pop.text)
+            setPanel('lookup')
+            closePop()
+          }}
         />
-      )}
-
-      {panel && (
-        <aside className="panel">
-          <div className="panel-head">
-            <h3>{PANEL_TITLE[panel]}</h3>
-            <button className="icon-btn" onClick={() => setPanel(null)} aria-label="Close panel"><X size={18} /></button>
-          </div>
-          <div className="panel-body">
-            {panel === 'toc' && <TocPanel toc={toc} current={loc?.href} onGo={go} />}
-            {panel === 'search' && viewRef.current && (
-              <SearchPanel key={searchSeed} view={viewRef.current} initial={searchSeed} onGo={go} />
-            )}
-            {(panel === 'notes' || panel === 'bookmarks') && (
-              <AnnotationsPanel
-                key={panel}
-                initialTab={panel === 'bookmarks' ? 'bookmark' : 'all'}
-                annotations={annotations}
-                title={book?.title ?? 'Book'}
-                author={book?.author ?? ''}
-                onGo={go}
-                onEditNote={setNoteFor}
-                onDelete={(a) => void patchAnnotation(a, { deleted_at: Date.now() })}
-              />
-            )}
-            {panel === 'settings' && <SettingsPanel s={settings} onChange={updateSettings} />}
-          </div>
-        </aside>
       )}
 
       {noteFor && (

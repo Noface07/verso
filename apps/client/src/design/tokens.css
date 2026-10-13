@@ -1,0 +1,143 @@
+@import "tailwindcss";
+
+@import "@fontsource-variable/inter";
+@import "@fontsource/literata/400.css";
+@import "@fontsource/literata/600.css";
+@import "@fontsource/source-serif-4";
+@import "@fontsource/atkinson-hyperlegible";
+@import "@fontsource-variable/jetbrains-mono";
+
+:root {
+  /* Typography */
+  --font-ui: "Inter Variable", "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  --font-display: "Literata", Georgia, serif;
+  --font-mono: "JetBrains Mono Variable", "JetBrains Mono", ui-monospace, monospace;
+
+  /* Type ramp (Fluent-style): size / line-height / weight */
+  --t-caption: 12px/16px var(--font-ui);
+  --t-body: 14px/20px var(--font-ui);
+  --t-body-strong: 600 14px/20px var(--font-ui);
+  --t-body-large: 18px/24px var(--font-ui);
+  --t-subtitle: 600 20px/28px var(--font-ui);
+  --t-title: 600 28px/36px var(--font-ui);
+  --t-title-large: 600 40px/52px var(--font-display);
+  --t-display: 600 56px/64px var(--font-display);
+
+  /* Spacing (4px grid) */
+  --s-1: 4px; --s-2: 8px; --s-3: 12px; --s-4: 16px; --s-5: 20px;
+  --s-6: 24px; --s-8: 32px; --s-10: 40px; --s-12: 48px; --s-16: 64px;
+
+  /* Radius */
+  --r-sm: 4px;      /* inputs, small chips */
+  --r-md: 8px;      /* buttons, cards, menus */
+  --r-lg: 12px;     /* panels, dialogs */
+  --r-xl: 16px;     /* hero cards */
+  --r-cover: 3px 6px 6px 3px; /* book spine feel */
+  --r-pill: 999px;
+
+  /* Motion */
+  --ease-out: cubic-bezier(0.1, 0.9, 0.2, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --d-fast: 120ms; --d-normal: 200ms; --d-slow: 320ms;
+
+  /* Accent (overridden at runtime by user choice or cover colour) */
+  --accent: #4cc2ff;
+  --accent-hover: color-mix(in oklab, var(--accent) 88%, white);
+  --accent-pressed: color-mix(in oklab, var(--accent) 80%, black);
+  --on-accent: #001a2b;
+  --accent-soft: color-mix(in oklab, var(--accent) 18%, transparent);
+}
+
+/* ---------- Dark (default) ---------- */
+:root, [data-theme="dark"] {
+  color-scheme: dark;
+  --bg-base: #0e0f11;                         /* window backdrop under ambient */
+  --bg-ambient-opacity: 0.32;                 /* blurred cover strength */
+  --layer-1: rgb(255 255 255 / 0.035);        /* nav rail, command bar */
+  --layer-2: rgb(255 255 255 / 0.055);        /* cards, panels */
+  --layer-3: rgb(255 255 255 / 0.085);        /* hover, inputs */
+  --layer-solid: #1c1d20;                     /* menus, dialogs (no blur) */
+  --stroke: rgb(255 255 255 / 0.08);
+  --stroke-strong: rgb(255 255 255 / 0.16);
+  --text-1: #f5f5f5;
+  --text-2: rgb(255 255 255 / 0.72);
+  --text-3: rgb(255 255 255 / 0.48);
+  --danger: #ff8a80; --success: #6ccb5f; --warning: #fce100;
+  --shadow-cover: 0 0 0 1px rgb(255 255 255 / 0.06), 0 10px 30px rgb(0 0 0 / 0.55);
+  --shadow-flyout: 0 16px 48px rgb(0 0 0 / 0.55);
+  --blur: 40px;
+}
+
+/* ---------- Light ---------- */
+[data-theme="light"] {
+  color-scheme: light;
+  --bg-base: #f3f3f3;
+  --bg-ambient-opacity: 0.22;
+  --layer-1: rgb(255 255 255 / 0.55);
+  --layer-2: rgb(255 255 255 / 0.72);
+  --layer-3: rgb(255 255 255 / 0.9);
+  --layer-solid: #fbfbfb;
+  --stroke: rgb(0 0 0 / 0.07);
+  --stroke-strong: rgb(0 0 0 / 0.14);
+  --text-1: #1a1a1a;
+  --text-2: rgb(0 0 0 / 0.66);
+  --text-3: rgb(0 0 0 / 0.45);
+  --danger: #c42b1c; --success: #0f7b0f; --warning: #9d5d00;
+  --accent: #005fb8; --on-accent: #ffffff;
+  --shadow-cover: 0 0 0 1px rgb(0 0 0 / 0.06), 0 10px 26px rgb(0 0 0 / 0.22);
+  --shadow-flyout: 0 16px 40px rgb(0 0 0 / 0.18);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root { --d-fast: 0ms; --d-normal: 0ms; --d-slow: 0ms; }
+}
+
+@theme {
+  --color-bg-base: var(--bg-base);
+  --color-layer-1: var(--layer-1);
+  --color-layer-2: var(--layer-2);
+  --color-layer-3: var(--layer-3);
+  --color-layer-solid: var(--layer-solid);
+  --color-stroke: var(--stroke);
+  --color-stroke-strong: var(--stroke-strong);
+  --color-text-1: var(--text-1);
+  --color-text-2: var(--text-2);
+  --color-text-3: var(--text-3);
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-pressed: var(--accent-pressed);
+  --color-on-accent: var(--on-accent);
+  --color-accent-soft: var(--accent-soft);
+  --color-danger: var(--danger);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+
+  --font-ui: var(--font-ui);
+  --font-display: var(--font-display);
+  --font-mono: var(--font-mono);
+
+  --radius-sm: var(--r-sm);
+  --radius-md: var(--r-md);
+  --radius-lg: var(--r-lg);
+  --radius-xl: var(--r-xl);
+  --radius-cover: var(--r-cover);
+  --radius-pill: var(--r-pill);
+}
+
+html, body, #root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background-color: var(--bg-base);
+  color: var(--text-1);
+  font: var(--t-body);
+  -webkit-font-smoothing: antialiased;
+}
+
+foliate-view {
+  display: block;
+  width: 100%;
+  height: 100%;
+}

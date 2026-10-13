@@ -51,7 +51,7 @@ export class ReadAloud {
     void r?.scrollToAnchor?.(range, true)
     const c = r?.getContents?.()[0]
     c?.overlayer?.remove('tts')
-    c?.overlayer?.add('tts', range, Overlayer.highlight, { color: '#38bdf8' })
+    c?.overlayer?.add('tts', range, Overlayer.highlight, { color: 'var(--accent)' })
   }
 
   private clearHighlight() {

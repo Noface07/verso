@@ -22,3 +22,13 @@ export async function setFavorite(bookId: string, favorite: boolean) {
     ...dirty(),
   })
 }
+
+export async function toggleFavorite(bookId: string, current?: boolean) {
+  if (current !== undefined) {
+    await setFavorite(bookId, !current)
+  } else {
+    const existing = await db.collection_books.get(`fav:${bookId}`)
+    const isFav = !!existing && !existing.deleted_at
+    await setFavorite(bookId, !isFav)
+  }
+}

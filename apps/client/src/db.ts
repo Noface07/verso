@@ -16,6 +16,10 @@ export interface BookMeta {
   series?: string
   word_count?: number
   paragraph_count?: number
+  accent?: string
+  tags?: string[]
+  rating?: number
+  finished_at?: number | null
 }
 
 export interface Book extends Syncable {
