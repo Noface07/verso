@@ -52,6 +52,9 @@ export interface ReaderSettings {
   ttsVoice: string
   translateTo: string
   autoDefine: boolean
+  wheelPaging: boolean
+  wheelInvert: boolean
+  tapZones: 'split' | 'allNext'
 }
 
 export const DEFAULT_SETTINGS: ReaderSettings = {
@@ -72,6 +75,9 @@ export const DEFAULT_SETTINGS: ReaderSettings = {
   ttsVoice: '',
   translateTo: 'hi',
   autoDefine: true,
+  wheelPaging: true,
+  wheelInvert: false,
+  tapZones: 'split',
 }
 
 export function bookCSS(s: ReaderSettings): string {

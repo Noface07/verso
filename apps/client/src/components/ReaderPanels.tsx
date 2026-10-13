@@ -448,6 +448,34 @@ export function SettingsPanel({
           checked={s.autoDefine}
           onCheckedChange={(val) => onChange({ autoDefine: val })}
         />
+        <Switch
+          label="Mouse wheel turns pages"
+          checked={s.wheelPaging}
+          onCheckedChange={(val) => onChange({ wheelPaging: val })}
+        />
+        {s.wheelPaging && (
+          <Switch
+            label="Invert wheel direction"
+            checked={s.wheelInvert}
+            onCheckedChange={(val) => onChange({ wheelInvert: val })}
+          />
+        )}
+      </div>
+
+      {/* Tap Zones */}
+      <div className="space-y-2 pt-2 border-t border-[var(--stroke)]">
+        <span className="font-semibold text-[11px] text-[var(--text-3)] uppercase tracking-wider">
+          Tap Navigation
+        </span>
+        <SegmentedControl
+          size="sm"
+          options={[
+            { value: 'split', label: 'Left & Right' },
+            { value: 'allNext', label: 'All Next' },
+          ]}
+          value={s.tapZones}
+          onChange={(val) => onChange({ tapZones: val as 'split' | 'allNext' })}
+        />
       </div>
     </div>
   );

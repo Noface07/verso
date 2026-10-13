@@ -16,6 +16,7 @@ import { TTSBar } from '../components/TTSBar'
 import { AnnotationsPanel, NoteEditor, SearchPanel, SettingsPanel, TocPanel } from '../components/ReaderPanels'
 import { IconButton } from '../design/components/IconButton'
 import { Button } from '../design/components/Button'
+import { useWheelPaging } from '../lib/useWheelPaging'
 
 type Panel = 'toc' | 'search' | 'notes' | 'bookmarks' | 'settings' | 'lookup' | null
 const PANEL_TITLE: Record<Exclude<Panel, null>, string> = {
@@ -135,6 +136,16 @@ export default function Reader() {
   const [viewInstance, setViewInstance] = useState<FoliateView | null>(null)
   const voices = useVoices()
 
+  const { attachDocument } = useWheelPaging({
+    view: viewInstance,
+    settings,
+    onFontSizeChange: (newSize) => updateSettings({ fontSize: newSize }),
+  })
+  const attachDocRef = useRef(attachDocument)
+  useEffect(() => {
+    attachDocRef.current = attachDocument
+  }, [attachDocument])
+
   const fractionRef = useRef(0)
   const rangeRef = useRef<Range | null>(null)
   const ttsRef = useRef<ReadAloud | null>(null)
@@ -212,6 +223,7 @@ export default function Reader() {
 
     const onLoad = (e: Event) => {
       const { doc, index } = (e as CustomEvent).detail as { doc: Document; index: number }
+      attachDocRef.current(doc)
       let t: number | undefined
       doc.addEventListener('selectionchange', () => {
         clearTimeout(t)
@@ -228,9 +240,18 @@ export default function Reader() {
         const x = ev.clientX + (frame?.left ?? 0)
         const w = window.innerWidth
         const paged = settingsRef.current.flow === 'paginated'
-        if (paged && x < w * 0.25) viewRef.current?.goLeft()
-        else if (paged && x > w * 0.75) viewRef.current?.goRight()
-        else setChrome((c) => !c)
+        if (paged) {
+          if (x < w * 0.25) {
+            if (settingsRef.current.tapZones === 'allNext') viewRef.current?.goRight()
+            else viewRef.current?.goLeft()
+          } else if (x > w * 0.75) {
+            viewRef.current?.goRight()
+          } else {
+            setChrome((c) => !c)
+          }
+        } else {
+          setChrome((c) => !c)
+        }
       })
     }
 
