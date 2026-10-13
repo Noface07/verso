@@ -56,7 +56,8 @@ export default function SeriesDetail() {
   // Chapters list, or every chapter's pages in one scrolling list. Browsing pages
   // does not touch reading progress or history; only opening one in the reader does.
   const [view, setView] = useState<'chapters' | 'pages'>(cached?.view ?? 'chapters');
-  const [pagesChapterId, setPagesChapterId] = useState<string | null>(null);
+  const [activePageChapter, setActivePageChapter] = useState<string | null>(null);
+  const chapterNavRef = useRef<HTMLElement>(null);
   const [downloadingChapterId, setDownloadingChapterId] = useState<string | null>(null);
   const [downloadProgress, setDownloadProgress] = useState(0);
 
@@ -279,6 +280,55 @@ export default function SeriesDetail() {
     }
     return list;
   }, [chapters, searchFilter, hideRead, sortAsc, progressByChapterId]);
+
+  const pageChapters = useMemo(() => visibleChapters.filter((c) => !c.externalUrl), [visibleChapters]);
+  // Before any scrolling there is no observed section yet: highlight the first.
+  const currentPageChapter = activePageChapter ?? pageChapters[0]?.id ?? null;
+
+  // Jump (not smooth): smooth-scrolling past dozens of chapters would make each
+  // of them start loading its pages on the way.
+  const jumpToChapter = (chapterId: string) => {
+    const el = rootRef.current?.querySelector<HTMLElement>(`[data-chapter-id="${CSS.escape(chapterId)}"]`);
+    if (el) el.scrollIntoView({ block: 'start' });
+    setActivePageChapter(chapterId);
+  };
+
+  // Scroll-spy: the chapter crossing the upper third of the viewport is active.
+  useEffect(() => {
+    const root = rootRef.current;
+    if (view !== 'pages' || !root) return;
+    const io = new IntersectionObserver(
+      (entries) => {
+        const hit = entries.find((e) => e.isIntersecting);
+        const id = hit?.target.getAttribute('data-chapter-id');
+        if (id) setActivePageChapter(id);
+      },
+      { root, rootMargin: '-25% 0px -70% 0px' },
+    );
+    root.querySelectorAll('[data-chapter-id]').forEach((el) => io.observe(el));
+    return () => io.disconnect();
+  }, [view, pageChapters]);
+
+  // Opening the Pages view starts at the first unread chapter.
+  const firstUnreadId = firstUnreadChapter?.id;
+  useEffect(() => {
+    if (view !== 'pages' || !firstUnreadId || firstUnreadId === pageChapters[0]?.id) return;
+    const t = requestAnimationFrame(() => jumpToChapter(firstUnreadId));
+    return () => cancelAnimationFrame(t);
+    // Only when switching into the view.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view]);
+
+  // Keep the active chapter centred in the sidebar, like synced lyrics.
+  useEffect(() => {
+    const nav = chapterNavRef.current;
+    const item = activePageChapter
+      ? nav?.querySelector<HTMLElement>(`[data-nav-chapter="${CSS.escape(activePageChapter)}"]`)
+      : null;
+    if (!nav || !item) return;
+    nav.scrollTo({ top: item.offsetTop - nav.clientHeight / 2 + item.offsetHeight / 2, behavior: 'smooth' });
+  }, [activePageChapter]);
+
 
   if (loading) {
     return (
@@ -580,73 +630,71 @@ export default function SeriesDetail() {
         </div>
 
         {view === 'pages' ? (
-          (() => {
-            const list = visibleChapters.filter((c) => !c.externalUrl);
-            const selected = list.find((c) => c.id === pagesChapterId) ?? firstUnreadChapter ?? list[0];
-            const idx = selected ? list.indexOf(selected) : -1;
-            if (!selected) {
-              return <p className="text-center text-xs text-[var(--text-3)] py-12">No readable chapters.</p>;
-            }
-            return (
-              <div className="flex flex-col md:flex-row gap-4">
-                {/* Chapter list: sidebar on wide screens, dropdown on phones */}
-                <select
-                  aria-label="Chapter"
-                  value={selected.id}
-                  onChange={(e) => setPagesChapterId(e.target.value)}
-                  className="md:hidden h-9 px-2 rounded-[var(--r-md)] bg-[var(--layer-2)] border border-[var(--stroke)] text-sm text-[var(--text-1)]"
-                >
-                  {list.map((c) => (
-                    <option key={c.id} value={c.id} className="bg-[var(--layer-solid)]">
-                      {c.title || `Chapter ${c.number ?? ''}`}
-                    </option>
-                  ))}
-                </select>
-                <nav
-                  aria-label="Chapters"
-                  className="hidden md:flex flex-col w-60 shrink-0 self-start sticky top-[61px] max-h-[calc(100vh-140px)] overflow-y-auto rounded-[var(--r-md)] border border-[var(--stroke)] bg-[var(--layer-1)] p-1"
-                >
-                  {list.map((c) => {
-                    const active = c.id === selected.id;
-                    return (
-                      <button
-                        key={c.id}
-                        type="button"
-                        onClick={() => setPagesChapterId(c.id)}
-                        aria-current={active ? 'true' : undefined}
-                        className={`flex items-center gap-2 px-2.5 py-2 rounded-[var(--r-sm)] text-left text-xs cursor-pointer ${
-                          active
-                            ? 'bg-[var(--accent-soft)] text-[var(--accent)] font-semibold'
-                            : 'text-[var(--text-2)] hover:bg-[var(--layer-3)] hover:text-[var(--text-1)]'
-                        }`}
-                      >
+          pageChapters.length === 0 ? (
+            <p className="text-center text-xs text-[var(--text-3)] py-12">No readable chapters.</p>
+          ) : (
+            <div className="flex flex-col md:flex-row gap-6">
+              {/* Phones: compact jump menu that follows the scroll position */}
+              <select
+                aria-label="Jump to chapter"
+                value={currentPageChapter ?? ''}
+                onChange={(e) => jumpToChapter(e.target.value)}
+                className="md:hidden sticky top-[57px] z-20 h-9 px-2 rounded-[var(--r-md)] bg-[var(--layer-solid)] border border-[var(--stroke)] text-sm text-[var(--text-1)]"
+              >
+                {pageChapters.map((c) => (
+                  <option key={c.id} value={c.id} className="bg-[var(--layer-solid)]">
+                    {c.title || `Chapter ${c.number ?? ''}`}
+                  </option>
+                ))}
+              </select>
+
+              {/* Lyrics-style chapter list: the chapter in view is bright and kept
+                  centred; the rest are dimmed. Click to jump. */}
+              <nav
+                ref={chapterNavRef}
+                aria-label="Chapters"
+                className="hidden md:block w-60 shrink-0 self-start sticky top-[73px] max-h-[calc(100vh-170px)] overflow-y-auto no-scrollbar py-[30vh] [mask-image:linear-gradient(transparent,black_18%,black_82%,transparent)]"
+              >
+                {pageChapters.map((c) => {
+                  const active = c.id === currentPageChapter;
+                  return (
+                    <button
+                      key={c.id}
+                      type="button"
+                      data-nav-chapter={c.id}
+                      onClick={() => jumpToChapter(c.id)}
+                      aria-current={active ? 'true' : undefined}
+                      className={`block w-full text-left px-2 py-1.5 rounded-[var(--r-sm)] cursor-pointer transition-all duration-300 origin-left ${
+                        active
+                          ? 'text-[var(--text-1)] text-base font-bold scale-100'
+                          : 'text-[var(--text-3)] text-sm font-semibold opacity-60 hover:opacity-100 hover:text-[var(--text-2)]'
+                      }`}
+                    >
+                      <span className="flex items-center gap-1.5">
                         {progressByChapterId.get(c.id)?.read && (
                           <Check className="w-3.5 h-3.5 text-[var(--success)] shrink-0" />
                         )}
                         <span className="truncate">{c.title || `Chapter ${c.number ?? ''}`}</span>
-                      </button>
-                    );
-                  })}
-                </nav>
-                <div className="flex-1 min-w-0">
+                      </span>
+                    </button>
+                  );
+                })}
+              </nav>
+
+              {/* Every chapter's pages, one after another; each loads as it nears view. */}
+              <div className="flex-1 min-w-0 flex flex-col gap-10">
+                {pageChapters.map((ch) => (
                   <ChapterPages
-                    key={selected.id}
-                    chapter={selected}
+                    key={ch.id}
+                    chapter={ch}
                     sourceKind={sourceKind}
-                    read={!!progressByChapterId.get(selected.id)?.read}
-                    onOpen={(page) => openChapterAt(selected.id, page)}
+                    read={!!progressByChapterId.get(ch.id)?.read}
+                    onOpen={(page) => openChapterAt(ch.id, page)}
                   />
-                  {idx < list.length - 1 && (
-                    <div className="flex justify-end mt-4">
-                      <Button variant="standard" onClick={() => setPagesChapterId(list[idx + 1].id)}>
-                        Next: {list[idx + 1].title || 'Chapter'}
-                      </Button>
-                    </div>
-                  )}
-                </div>
+                ))}
               </div>
-            );
-          })()
+            </div>
+          )
         ) : (
         /* Chapters List */
         <div className="space-y-2">
@@ -801,8 +849,8 @@ function ChapterPages({
   }, [pages, chapter.id, sourceKind]);
 
   return (
-    <section ref={ref} className="min-h-[200px]">
-      <h3 className="py-2 mb-2 text-sm font-semibold text-[var(--text-1)] flex items-center gap-2">
+    <section ref={ref} data-chapter-id={chapter.id} className="min-h-[200px] scroll-mt-[72px]">
+      <h3 className="py-2 mb-3 border-b border-[var(--stroke)] text-base font-semibold text-[var(--text-1)] flex items-center gap-2">
         {read && <Check className="w-4 h-4 text-[var(--success)] shrink-0" />}
         <span className="truncate">{chapter.title || `Chapter ${chapter.number ?? ''}`}</span>
         {pages && <span className="text-xs font-normal text-[var(--text-3)] shrink-0">{pages.length} pages</span>}
