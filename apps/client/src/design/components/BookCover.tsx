@@ -9,6 +9,7 @@ export interface BookCoverProps {
   title: string;
   author: string;
   coverHash?: string | null;
+  coverUrl?: string | null;
   progressPercent?: number; // 0 to 100
   badge?: React.ReactNode;
   isFavourite?: boolean;
@@ -52,6 +53,7 @@ export const BookCover: React.FC<BookCoverProps> = ({
   title,
   author,
   coverHash,
+  coverUrl: coverUrlProp,
   progressPercent,
   badge,
   isFavourite,
@@ -63,7 +65,8 @@ export const BookCover: React.FC<BookCoverProps> = ({
   isSelectable = false,
   onToggleSelect,
 }) => {
-  const coverUrl = useCoverBlobUrl(id, coverHash);
+  const blobCoverUrl = useCoverBlobUrl(id, coverHash);
+  const coverUrl = coverUrlProp || blobCoverUrl;
   const hue = parseInt(id.slice(0, 6), 16) % 360;
   const fallbackBg = `hsl(${hue} 35% 32%)`;
 

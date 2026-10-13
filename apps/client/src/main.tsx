@@ -6,6 +6,7 @@ import Shell from './components/Shell'
 import Home from './pages/Home'
 import Library from './pages/Library'
 import Notebook from './pages/Notebook'
+import Store from './pages/Store'
 import Reader from './pages/Reader'
 import DevComponents from './pages/DevComponents'
 import { syncEngine } from './features/sync/engine'
@@ -22,6 +23,7 @@ createRoot(document.getElementById('root')!).render(
             <Route path="/" element={<Home />} />
             <Route path="/library" element={<Library />} />
             <Route path="/notebook" element={<Notebook />} />
+            <Route path="/store" element={<Store />} />
             <Route path="/dev/components" element={<DevComponents />} />
           </Route>
           <Route path="/read/:id" element={<Reader />} />

@@ -23,6 +23,12 @@ export interface BookMeta {
   finished_at?: number | null
   series_number?: number
   favorite?: boolean
+  source?: {
+    kind: string
+    id: string
+    url?: string
+  }
+  kind?: 'book' | 'comic'
 }
 
 export interface Book extends Syncable {
@@ -129,6 +135,32 @@ export interface FileRow { hash: string; blob: Blob }
 export interface CoverRow { id: string; blob: Blob }
 export interface KV { key: string; value: unknown }
 
+export interface DownloadItem {
+  id: string
+  kind: 'book' | 'manga'
+  source: string
+  title: string
+  url: string
+  status: 'pending' | 'downloading' | 'completed' | 'failed' | 'cancelled'
+  progress: number
+  error?: string
+  created_at: number
+  entry?: Record<string, unknown>
+}
+
+export interface SourceCredential {
+  id: string
+  username?: string
+  password?: string
+  apiKey?: string
+}
+
+export interface CatalogCacheItem {
+  key: string
+  data: unknown
+  expires_at: number
+}
+
 export const db = new Dexie('folio') as Dexie & {
   books: EntityTable<Book, 'id'>
   progress: EntityTable<Progress, 'id'>
@@ -144,6 +176,9 @@ export const db = new Dexie('folio') as Dexie & {
   files: EntityTable<FileRow, 'hash'>
   covers: EntityTable<CoverRow, 'id'>
   kv: EntityTable<KV, 'key'>
+  downloads: EntityTable<DownloadItem, 'id'>
+  source_credentials: EntityTable<SourceCredential, 'id'>
+  catalog_cache: EntityTable<CatalogCacheItem, 'key'>
 }
 
 // Version 1: initial tables
@@ -176,6 +211,13 @@ db.version(2).stores({
   files: 'hash',
   covers: 'id',
   kv: 'key',
+})
+
+// Version 3: client-only tables (downloads, catalog_cache, source_credentials)
+db.version(3).stores({
+  downloads: 'id, source, status, created_at',
+  catalog_cache: 'key, expires_at',
+  source_credentials: 'id',
 })
 
 export const SYNC_TABLES = Object.keys(SHARED_SYNC_TABLES) as SyncTableName[]
