@@ -1,4 +1,4 @@
-import { net } from '../lib/net';
+import { net, proxyImageUrl } from '../lib/net';
 import { cachedJson } from '../lib/apiCache';
 import type {
   CatalogEntry,
@@ -11,43 +11,36 @@ import type {
 
 function parseMangaPillCards(html: string): CatalogEntry[] {
   const items: CatalogEntry[] = [];
-  const cardRegex = /<a\s+href="\/manga\/(\d+)\/([^"]+)"[^>]*>[\s\S]*?<img\s+(?:data-src|src)="([^"]+)"[^>]*>[\s\S]*?<div[^>]*>([^<]+)<\/div>/g;
+  const seen = new Set<string>();
+
+  // Matches <a ... href="/manga/(\d+)/([^"/]+)" ...>
+  const linkRegex = /<a\b[^>]*\bhref="\/manga\/(\d+)\/([^"/]+)"[^>]*>([\s\S]*?)<\/a>/gi;
   let match: RegExpExecArray | null;
 
-  while ((match = cardRegex.exec(html)) !== null) {
+  while ((match = linkRegex.exec(html)) !== null) {
     const id = match[1];
     const slug = match[2];
-    const cover = match[3];
-    const title = match[4].replace(/&amp;/g, '&').replace(/&#039;/g, "'").trim();
+    if (seen.has(id)) continue;
 
+    const inner = match[3];
+    const imgMatch = /(?:data-src|src)="([^"]+)"/i.exec(inner);
+    const titleMatch = /<div[^>]*>([^<]+)<\/div>/i.exec(inner);
+
+    const title = (titleMatch?.[1] || '')
+      .replace(/&amp;/g, '&')
+      .replace(/&#039;/g, "'")
+      .trim() || slug.replace(/-/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+
+    const rawCover = imgMatch?.[1] || `https://cdn.readdetectiveconan.com/file/mangapill/i/${id}.jpeg`;
+
+    seen.add(id);
     items.push({
       id: `mangapill:${id}:${slug}`,
       title,
       authors: ['Manga Artist'],
-      cover,
+      cover: proxyImageUrl(rawCover),
       kind: 'manga',
     });
-  }
-
-  // Fallback pattern if card layout differs slightly
-  if (items.length === 0) {
-    const fallbackRegex = /<a\s+href="\/manga\/(\d+)\/([^"]+)"/g;
-    const seen = new Set<string>();
-    while ((match = fallbackRegex.exec(html)) !== null) {
-      const id = match[1];
-      const slug = match[2];
-      const key = `${id}:${slug}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-
-      const title = slug.replace(/-/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
-      items.push({
-        id: `mangapill:${key}`,
-        title,
-        authors: ['Manga Artist'],
-        kind: 'manga',
-      });
-    }
   }
 
   return items;
@@ -69,14 +62,12 @@ export class MangaPillSource implements MangaSource {
 
   async browse(sectionId: string, cursor?: string): Promise<CatalogPage> {
     const page = cursor ? parseInt(cursor, 10) : 1;
-    let url = 'https://mangapill.com/search?q=&type=&status=&sort=popularity';
+    let url = `https://mangapill.com/search?type=manga&sort=popularity&page=${page}`;
 
     if (sectionId === 'new') {
       url = `https://mangapill.com/mangas/new?page=${page}`;
     } else if (sectionId === 'recent') {
       url = `https://mangapill.com/chapters?page=${page}`;
-    } else {
-      url = `https://mangapill.com/search?q=&type=&status=&sort=popularity&page=${page}`;
     }
 
     const html = await cachedJson<string>(
@@ -84,7 +75,7 @@ export class MangaPillSource implements MangaSource {
       async () => {
         const res = await net.fetch(url, {
           headers: {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
           },
         });
         if (!res.ok) throw new Error(`MangaPill browse error: ${res.statusText}`);
@@ -102,14 +93,17 @@ export class MangaPillSource implements MangaSource {
 
   async search(query: string, cursor?: string): Promise<CatalogPage> {
     const page = cursor ? parseInt(cursor, 10) : 1;
-    const url = `https://mangapill.com/search?q=${encodeURIComponent(query.trim())}&page=${page}`;
+    const trimmed = query.trim();
+    const url = page === 1 && trimmed.length < 20
+      ? `https://mangapill.com/quick-search?q=${encodeURIComponent(trimmed)}`
+      : `https://mangapill.com/search?q=${encodeURIComponent(trimmed)}&page=${page}`;
 
     const html = await cachedJson<string>(
       url,
       async () => {
         const res = await net.fetch(url, {
           headers: {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
           },
         });
         if (!res.ok) throw new Error(`MangaPill search error: ${res.statusText}`);
@@ -136,7 +130,7 @@ export class MangaPillSource implements MangaSource {
       async () => {
         const res = await net.fetch(url, {
           headers: {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
           },
         });
         if (!res.ok) throw new Error(`MangaPill details error: ${res.statusText}`);
@@ -146,12 +140,13 @@ export class MangaPillSource implements MangaSource {
     );
 
     // Title
-    const titleMatch = /<h1[^>]*>([^<]+)<\/h1>/i.exec(html);
-    const title = titleMatch ? titleMatch[1].trim() : slug.replace(/-/g, ' ');
+    const titleMatch = /<h1[^>]*>([\s\S]*?)<\/h1>/i.exec(html);
+    const title = titleMatch ? titleMatch[1].replace(/<[^>]+>/g, '').trim() : slug.replace(/-/g, ' ');
 
     // Cover
-    const coverMatch = /<div class="[^"]*flex[^"]*">[\s\S]*?<img\s+(?:data-src|src)="([^"]+)"/i.exec(html);
-    const cover = coverMatch ? coverMatch[1] : undefined;
+    const coverMatch = /<img\b[^>]*\b(?:data-src|src)="([^"]+)"[^>]*\balt="[^"]*"/i.exec(html) ||
+                       /(?:data-src|src)="([^"]*\/mangapill\/i\/[^"]+)"/i.exec(html);
+    const rawCover = coverMatch ? coverMatch[1] : `https://cdn.readdetectiveconan.com/file/mangapill/i/${mangaId}.jpeg`;
 
     // Synopsis
     const descMatch = /<p[^>]*class="[^"]*text-sm[^"]*text-secondary[^"]*"[^>]*>([\s\S]*?)<\/p>/i.exec(html) ||
@@ -160,10 +155,10 @@ export class MangaPillSource implements MangaSource {
 
     // Tags/Genres
     const tags: string[] = [];
-    const genreRegex = /<a\s+href="\/search\?genre=[^"]*"[^>]*>([^<]+)<\/a>/g;
+    const genreRegex = /<a\b[^>]*\bhref="\/search\?genre=[^"]*"[^>]*>([\s\S]*?)<\/a>/gi;
     let gm: RegExpExecArray | null;
     while ((gm = genreRegex.exec(html)) !== null) {
-      tags.push(gm[1].trim());
+      tags.push(gm[1].replace(/<[^>]+>/g, '').trim());
     }
 
     // Status
@@ -174,9 +169,9 @@ export class MangaPillSource implements MangaSource {
       id,
       title,
       authors: ['Manga Creator'],
-      cover,
+      cover: proxyImageUrl(rawCover),
       summary,
-      tags: tags.slice(0, 6),
+      tags: tags.slice(0, 8),
       kind: 'manga',
       status,
     };
@@ -193,7 +188,7 @@ export class MangaPillSource implements MangaSource {
       async () => {
         const res = await net.fetch(url, {
           headers: {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
           },
         });
         if (!res.ok) throw new Error(`MangaPill chapters error: ${res.statusText}`);
@@ -203,7 +198,7 @@ export class MangaPillSource implements MangaSource {
     );
 
     const chapters: ChapterInfo[] = [];
-    const chapterRegex = /<a\s+href="\/chapters\/(\d+-\d+\/[^"]+)"[^>]*>([\s\S]*?)<\/a>/g;
+    const chapterRegex = /<a\b[^>]*\bhref="\/chapters\/(\d+-\d+\/[^"]+)"[^>]*>([\s\S]*?)<\/a>/gi;
     let match: RegExpExecArray | null;
 
     while ((match = chapterRegex.exec(html)) !== null) {
@@ -227,7 +222,7 @@ export class MangaPillSource implements MangaSource {
     const url = `https://mangapill.com/chapters/${chapterId}`;
     const res = await net.fetch(url, {
       headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
       },
     });
 
@@ -237,16 +232,22 @@ export class MangaPillSource implements MangaSource {
 
     const html = await res.text();
     const pages: PageRef[] = [];
-    const imgRegex = /data-src="([^"]+)"/g;
+    const imgRegex = /(?:data-src|src)="([^"]+)"/gi;
     let match: RegExpExecArray | null;
     let idx = 1;
+    const seen = new Set<string>();
 
     while ((match = imgRegex.exec(html)) !== null) {
       const imgUrl = match[1];
-      if (imgUrl.includes('.jpeg') || imgUrl.includes('.jpg') || imgUrl.includes('.png') || imgUrl.includes('.webp')) {
+      if (
+        (imgUrl.includes('.jpeg') || imgUrl.includes('.jpg') || imgUrl.includes('.png') || imgUrl.includes('.webp')) &&
+        !imgUrl.includes('logo') && !imgUrl.includes('icon') && !imgUrl.includes('avatar') &&
+        !seen.has(imgUrl)
+      ) {
+        seen.add(imgUrl);
         pages.push({
           index: idx++,
-          url: imgUrl,
+          url: proxyImageUrl(imgUrl) || imgUrl,
         });
       }
     }

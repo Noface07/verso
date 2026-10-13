@@ -12,6 +12,7 @@ import {
   Layers,
   ShoppingBag,
   AlertCircle,
+  ExternalLink,
 } from 'lucide-react';
 import { db, type Book, type DownloadItem } from '../db';
 import {
@@ -904,6 +905,36 @@ export default function Store() {
                         <BookOpen className="w-4 h-4 mr-2" />
                         View Series & Chapters
                       </Button>
+                    );
+                  }
+
+                  const hasEpub = (selectedBook.formats ?? []).some((f) => f.mime === 'application/epub+zip');
+
+                  if (!hasEpub) {
+                    const isOl = selectedBook.id.startsWith('openlibrary:');
+                    return (
+                      <div className="flex flex-col gap-2 w-full">
+                        <div className="p-3 bg-[var(--layer-2)] border border-[var(--stroke)] rounded-[var(--r-md)] text-xs text-[var(--text-2)] flex flex-col gap-1.5">
+                          <span className="font-semibold text-[var(--text-1)]">
+                            {isOl ? 'Digital Lending Library Title' : 'No Downloadable Edition'}
+                          </span>
+                          <p>
+                            {isOl
+                              ? 'This title is protected by copyright and is available for loan-based borrowing directly on Open Library. Public domain DRM-free EPUB downloads are not available.'
+                              : 'This title does not have a direct EPUB download available from this source.'}
+                          </p>
+                          {isOl && (
+                            <a
+                              href={`https://openlibrary.org/works/${selectedBook.id.replace(/^openlibrary:/, '')}`}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="inline-flex items-center gap-1 text-[var(--accent)] hover:underline mt-0.5"
+                            >
+                              Borrow or View on Open Library <ExternalLink className="w-3.5 h-3.5" />
+                            </a>
+                          )}
+                        </div>
+                      </div>
                     );
                   }
 

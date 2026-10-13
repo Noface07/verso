@@ -1,4 +1,4 @@
-import { getServerUrl, getAccessToken } from '../features/auth/storage';
+import { getServerUrl, getAccessToken, DEFAULT_SERVER_URL } from '../features/auth/storage';
 import { executeTokenRefresh } from '../features/sync/api';
 
 export interface RateLimiterConfig {
@@ -322,9 +322,31 @@ export async function remoteSize(url: string, signal?: AbortSignal): Promise<num
   }
 }
 
+/** Rewrite image URLs that reject third-party referers (like MangaPill CDN) to the local proxy */
+export function proxyImageUrl(url?: string): string | undefined {
+  if (!url) return undefined;
+  if (url.startsWith('blob:') || url.startsWith('data:')) return url;
+  const isTauri =
+    typeof window !== 'undefined' &&
+    ('__TAURI__' in window || '__TAURI_INTERNALS__' in window);
+  if (isTauri) return url;
+  try {
+    const parsed = new URL(url);
+    const host = parsed.hostname.toLowerCase();
+    if (host === 'cdn.readdetectiveconan.com' || host.endsWith('mangapill.com')) {
+      return `${DEFAULT_SERVER_URL}/proxy?url=${encodeURIComponent(url)}`;
+    }
+  } catch {
+    // Return original if invalid URL
+  }
+  return url;
+}
+
 export const net = {
   fetch: netFetch,
   download: netDownload,
   size: remoteSize,
   limiter: rateLimiter,
+  proxyImageUrl,
 };
+

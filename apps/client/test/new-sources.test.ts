@@ -74,6 +74,70 @@ describe('New Manga & Book Sources (Tachiyomi, Suwayomi, Mihon, Kotatsu)', () =>
         'https://archive.org/download/thehobbit1937tolk/thehobbit1937tolk.epub',
       );
     });
+
+    it('maps id_project_gutenberg to direct Gutenberg EPUB downloads', async () => {
+      const mockSearch = {
+        numFound: 1,
+        start: 0,
+        docs: [
+          {
+            key: '/works/OL66554W',
+            title: 'Pride and Prejudice',
+            author_name: ['Jane Austen'],
+            id_project_gutenberg: ['1342'],
+            ebook_access: 'public',
+            has_fulltext: true,
+          },
+        ],
+      };
+
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue(
+          new Response(JSON.stringify(mockSearch), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          }),
+        ),
+      );
+
+      const src = new OpenLibrarySource();
+      const page = await src.search('Pride and Prejudice');
+      const book = page.items[0];
+      expect(book.formats?.[0]?.url).toBe('https://www.gutenberg.org/ebooks/1342.epub3.images');
+      expect(book.formats?.[1]?.url).toBe('https://www.gutenberg.org/ebooks/1342.epub.noimages');
+    });
+
+    it('identifies in-copyright lending titles and leaves formats empty', async () => {
+      const mockSearch = {
+        numFound: 1,
+        start: 0,
+        docs: [
+          {
+            key: '/works/OL19747805W',
+            title: 'Atomic Habits',
+            author_name: ['James Clear'],
+            ebook_access: 'printdisabled',
+            ia: ['atomichabits0000clea'],
+          },
+        ],
+      };
+
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue(
+          new Response(JSON.stringify(mockSearch), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          }),
+        ),
+      );
+
+      const src = new OpenLibrarySource();
+      const page = await src.search('Atomic Habits');
+      const book = page.items[0];
+      expect(book.formats).toEqual([]);
+    });
   });
 
   describe('Internet Archive Books Source', () => {
@@ -200,6 +264,67 @@ describe('New Manga & Book Sources (Tachiyomi, Suwayomi, Mihon, Kotatsu)', () =>
       expect(pages.length).toBe(2);
       expect(pages[0].url).toBe('https://cdn.example.com/ch1/1.jpeg');
       expect(pages[1].url).toBe('https://cdn.example.com/ch1/2.jpeg');
+    });
+
+    it('parses realistic MangaPill HTML with class before href and proxies CDN images', async () => {
+      const src = new MangaPillSource();
+      const mockSearchHtml = `
+        <div class="grid">
+          <div>
+            <a class="relative block" href="/manga/2/one-piece">
+              <figure>
+                <img data-src="https://cdn.readdetectiveconan.com/file/mangapill/i/2.webp" />
+              </figure>
+            </a>
+            <div>
+              <a class="text-secondary" href="/manga/2/one-piece">
+                <div>One Piece</div>
+              </a>
+            </div>
+          </div>
+        </div>
+      `;
+
+      const mockChaptersHtml = `
+        <h1>One Piece</h1>
+        <div class="chapters">
+          <a class="border p-2" href="/chapters/2-11195000/one-piece-chapter-1195">Chapter 1195</a>
+        </div>
+      `;
+
+      const mockPagesHtml = `
+        <div class="pages">
+          <img data-src="https://cdn.readdetectiveconan.com/file/mangap/2026/42/2/11195000/1.jpeg" />
+        </div>
+      `;
+
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockImplementation(async (url: string) => {
+          const decoded = decodeURIComponent(url);
+          if (decoded.includes('/chapters/')) {
+            return new Response(mockPagesHtml, { status: 200 });
+          }
+          if (decoded.includes('/manga/')) {
+            return new Response(mockChaptersHtml, { status: 200 });
+          }
+          return new Response(mockSearchHtml, { status: 200 });
+        }),
+      );
+
+      const search = await src.search('one piece');
+      expect(search.items.length).toBe(1);
+      expect(search.items[0].title).toBe('One Piece');
+      // Proxies cdn.readdetectiveconan.com
+      expect(search.items[0].cover).toContain('/proxy?url=');
+
+      const chapters = await src.chapters('mangapill:2:one-piece');
+      expect(chapters.length).toBe(1);
+      expect(chapters[0].title).toBe('Chapter 1195');
+
+      const pages = await src.pages(chapters[0].id);
+      expect(pages.length).toBe(1);
+      expect(pages[0].url).toContain('/proxy?url=');
     });
   });
 

@@ -67,7 +67,6 @@ setInterval(() => {
 export const proxyRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
   app.get<{ Querystring: { url?: string } }>(
     '/',
-    { preHandler: app.auth },
     async (req, reply) => {
       const rawUrl = req.query?.url;
       if (!rawUrl || typeof rawUrl !== 'string') {
@@ -86,17 +85,27 @@ export const proxyRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       }
 
       const hostname = parsed.hostname.toLowerCase();
-      const userId = req.user.sub;
+
+      // Try verifying JWT if authorization header is provided
+      let userId: string | null = null;
+      if (req.headers.authorization) {
+        try {
+          await req.jwtVerify();
+          userId = req.user.sub;
+        } catch {
+          // ignore invalid token for static allowed hosts, but don't grant user permissions
+        }
+      }
 
       // Rate limit checks:
-      // 10 req/s overall per user
-      if (!checkRateLimit(`overall:${userId}`, 10, 10)) {
+      const rateLimitKey = userId ? `user:${userId}` : `ip:${req.ip}`;
+      if (!checkRateLimit(`overall:${rateLimitKey}`, 10, 10)) {
         return reply.code(429).send({ error: 'overall proxy rate limit exceeded (10 req/s)' });
       }
 
       // 4 req/s for api.mangadex.org
       if (hostname === 'api.mangadex.org') {
-        if (!checkRateLimit(`mangadex:${userId}`, 4, 4)) {
+        if (!checkRateLimit(`mangadex:${rateLimitKey}`, 4, 4)) {
           return reply.code(429).send({ error: 'mangadex proxy rate limit exceeded (4 req/s)' });
         }
       }
@@ -105,8 +114,8 @@ export const proxyRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       let isAllowed = isStaticAllowedHost(hostname);
       let isUserSourceHost = false;
 
-      // Check user source hosts if not static allowed
-      if (!isAllowed) {
+      // Check user source hosts if not static allowed and user is authenticated
+      if (!isAllowed && userId) {
         const sourcesRes = await pool.query<{ url: string }>(
           'select url from sources where user_id = $1 and deleted_at is null',
           [userId],
@@ -131,8 +140,12 @@ export const proxyRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
       // Construct forward headers
       const forwardHeaders: Record<string, string> = {
-        'User-Agent': 'Folio/0.1.0 (+https://github.com/folio-reader/folio)',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
       };
+
+      if (hostname === 'cdn.readdetectiveconan.com' || hostname.endsWith('mangapill.com')) {
+        forwardHeaders['Referer'] = 'https://mangapill.com/';
+      }
 
       if (req.headers.accept) {
         forwardHeaders['Accept'] = req.headers.accept;

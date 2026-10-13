@@ -17,6 +17,9 @@ interface OpenLibraryDoc {
   subject?: string[];
   language?: string[];
   ia?: string[];
+  id_project_gutenberg?: string[];
+  ebook_access?: string;
+  has_fulltext?: boolean;
   edition_count?: number;
 }
 
@@ -62,9 +65,23 @@ function parseOpenLibraryDoc(doc: OpenLibraryDoc): CatalogEntry {
     : undefined;
 
   const formats: CatalogFormat[] = [];
-  const primaryIa = doc.ia && doc.ia.length > 0 ? doc.ia[0] : undefined;
 
-  if (primaryIa) {
+  // 1. Direct Project Gutenberg formats if mapped
+  if (doc.id_project_gutenberg && doc.id_project_gutenberg.length > 0) {
+    const gid = doc.id_project_gutenberg[0];
+    formats.push({
+      mime: 'application/epub+zip',
+      url: `https://www.gutenberg.org/ebooks/${gid}.epub3.images`,
+      label: 'Free EPUB (Project Gutenberg)',
+    });
+    formats.push({
+      mime: 'application/epub+zip',
+      url: `https://www.gutenberg.org/ebooks/${gid}.epub.noimages`,
+      label: 'Free EPUB (Text only)',
+    });
+  } else if (doc.ebook_access !== 'borrowable' && doc.ebook_access !== 'printdisabled' && doc.ia && doc.ia.length > 0) {
+    // 2. Unrestricted public domain Internet Archive item
+    const primaryIa = doc.ia[0];
     formats.push({
       mime: 'application/epub+zip',
       url: `https://archive.org/download/${primaryIa}/${primaryIa}.epub`,
@@ -187,7 +204,7 @@ export class OpenLibrarySource implements CatalogSource {
   async search(query: string, cursor?: string): Promise<CatalogPage> {
     const limit = 24;
     const page = cursor ? parseInt(cursor, 10) : 1;
-    const url = `https://openlibrary.org/search.json?q=${encodeURIComponent(query.trim())}&page=${page}&limit=${limit}`;
+    const url = `https://openlibrary.org/search.json?q=${encodeURIComponent(query.trim())}&page=${page}&limit=${limit}&fields=key,title,author_name,cover_i,ebook_access,has_fulltext,id_project_gutenberg,ia,first_publish_year,subject,language`;
 
     const data = await cachedJson<OpenLibrarySearchResponse>(
       url,
@@ -208,36 +225,75 @@ export class OpenLibrarySource implements CatalogSource {
 
   async details(id: string): Promise<CatalogEntry> {
     const rawId = id.replace(/^openlibrary:/, '');
-    const url = `https://openlibrary.org/works/${rawId}.json`;
+    const workUrl = `https://openlibrary.org/works/${rawId}.json`;
+    const searchUrl = `https://openlibrary.org/search.json?q=%2Fworks%2F${rawId}&fields=key,title,author_name,cover_i,ebook_access,has_fulltext,id_project_gutenberg,ia,first_publish_year,subject,language`;
 
-    const data = await cachedJson<OpenLibraryWorkDetail>(
-      url,
-      async () => {
-        const res = await net.fetch(url);
-        if (!res.ok) throw new Error(`Open Library details error: ${res.statusText}`);
-        return (await res.json()) as OpenLibraryWorkDetail;
-      },
-      { freshMs: 6 * 60 * 60_000 },
-    );
+    const [workData, searchData] = await Promise.all([
+      cachedJson<OpenLibraryWorkDetail>(
+        workUrl,
+        async () => {
+          const res = await net.fetch(workUrl);
+          if (!res.ok) throw new Error(`Open Library details error: ${res.statusText}`);
+          return (await res.json()) as OpenLibraryWorkDetail;
+        },
+        { freshMs: 6 * 60 * 60_000 },
+      ).catch(() => null),
+      cachedJson<OpenLibrarySearchResponse>(
+        searchUrl,
+        async () => {
+          const res = await net.fetch(searchUrl);
+          if (!res.ok) return { numFound: 0, start: 0, docs: [] };
+          return (await res.json()) as OpenLibrarySearchResponse;
+        },
+        { freshMs: 6 * 60 * 60_000 },
+      ).catch(() => null),
+    ]);
+
+    const doc = searchData?.docs?.[0];
+    const title = workData?.title || doc?.title || 'Unknown Title';
 
     let summary = '';
-    if (typeof data.description === 'string') {
-      summary = data.description;
-    } else if (data.description && typeof data.description === 'object' && 'value' in data.description) {
-      summary = data.description.value;
+    if (typeof workData?.description === 'string') {
+      summary = workData.description;
+    } else if (workData?.description && typeof workData.description === 'object' && 'value' in workData.description) {
+      summary = workData.description.value;
     }
 
-    const coverId = data.covers && data.covers.length > 0 ? data.covers[0] : undefined;
+    const coverId = (workData?.covers && workData.covers.length > 0) ? workData.covers[0] : doc?.cover_i;
     const coverUrl = coverId ? `https://covers.openlibrary.org/b/id/${coverId}-L.jpg` : undefined;
+
+    const formats: CatalogFormat[] = [];
+    if (doc?.id_project_gutenberg && doc.id_project_gutenberg.length > 0) {
+      const gid = doc.id_project_gutenberg[0];
+      formats.push({
+        mime: 'application/epub+zip',
+        url: `https://www.gutenberg.org/ebooks/${gid}.epub3.images`,
+        label: 'Free EPUB (Project Gutenberg)',
+      });
+      formats.push({
+        mime: 'application/epub+zip',
+        url: `https://www.gutenberg.org/ebooks/${gid}.epub.noimages`,
+        label: 'Free EPUB (Text only)',
+      });
+    } else if (doc?.ebook_access !== 'borrowable' && doc?.ebook_access !== 'printdisabled' && doc?.ia && doc.ia.length > 0) {
+      const primaryIa = doc.ia[0];
+      formats.push({
+        mime: 'application/epub+zip',
+        url: `https://archive.org/download/${primaryIa}/${primaryIa}.epub`,
+        label: 'Free EPUB (Internet Archive)',
+      });
+    }
 
     return {
       id: `openlibrary:${rawId}`,
-      title: data.title,
-      authors: [],
+      title,
+      authors: doc?.author_name || ['Unknown Author'],
       cover: coverUrl,
       summary,
-      tags: data.subjects?.slice(0, 6),
+      tags: workData?.subjects?.slice(0, 8) || doc?.subject?.slice(0, 8),
+      formats,
       kind: 'book',
+      year: doc?.first_publish_year,
     };
   }
 
@@ -247,22 +303,86 @@ export class OpenLibrarySource implements CatalogSource {
     onProgress?: (p: number) => void,
   ): Promise<File> {
     const epubs = (entry.formats ?? []).filter((f) => f.mime === 'application/epub+zip');
-    const chosen = epubs.find((f) => f.url === formatUrl) || epubs[0];
+    let chosenUrl = formatUrl || epubs[0]?.url;
 
-    if (!chosen) {
-      throw new Error('This title is in Open Library for borrowing or archive viewing, but has no direct public domain EPUB download.');
+    // 1. Direct Gutenberg download
+    if (chosenUrl && chosenUrl.includes('gutenberg.org')) {
+      onProgress?.(0.05);
+      const blob = await net.download(chosenUrl, {
+        onProgress: (p) => onProgress?.(0.05 + p * 0.9),
+      });
+      onProgress?.(1.0);
+      const safeTitle = entry.title.replace(/[<>:"/\\|?*]/g, '_').slice(0, 80);
+      return new File([blob], `${safeTitle}.epub`, {
+        type: 'application/epub+zip',
+      });
     }
 
-    onProgress?.(0.05);
-    const blob = await net.download(chosen.url, {
-      onProgress: (p) => onProgress?.(0.05 + p * 0.9),
-    });
-    onProgress?.(1.0);
+    // 2. Internet Archive item with file discovery
+    if (chosenUrl && chosenUrl.includes('archive.org/download/')) {
+      const match = /archive\.org\/download\/([^/]+)/.exec(chosenUrl);
+      const iaId = match ? match[1] : undefined;
 
-    const safeTitle = entry.title.replace(/[<>:"/\\|?*]/g, '_').slice(0, 80);
-    return new File([blob], `${safeTitle}.epub`, {
-      type: 'application/epub+zip',
-    });
+      if (iaId) {
+        try {
+          // Resolve exact clean EPUB from metadata
+          const metaRes = await net.fetch(`https://archive.org/metadata/${iaId}/files`);
+          if (metaRes.ok) {
+            const metaData = (await metaRes.json()) as { result?: Array<{ name: string; format?: string }> };
+            const cleanEpub = (metaData.result || []).find(
+              (f) => f.name.endsWith('.epub') && !f.name.endsWith('_lcp.epub') && !f.name.endsWith('_daisy.zip'),
+            );
+            if (cleanEpub) {
+              chosenUrl = `https://archive.org/download/${iaId}/${cleanEpub.name}`;
+            }
+          }
+        } catch {
+          // Proceed with chosenUrl
+        }
+      }
+
+      try {
+        onProgress?.(0.05);
+        const blob = await net.download(chosenUrl, {
+          onProgress: (p) => onProgress?.(0.05 + p * 0.9),
+        });
+        onProgress?.(1.0);
+        const safeTitle = entry.title.replace(/[<>:"/\\|?*]/g, '_').slice(0, 80);
+        return new File([blob], `${safeTitle}.epub`, {
+          type: 'application/epub+zip',
+        });
+      } catch (iaErr) {
+        console.warn('Archive.org download failed, attempting Gutenberg fallback:', iaErr);
+      }
+    }
+
+    // 3. Fallback: Search Project Gutenberg (Gutendex) for public domain title
+    try {
+      const gutendexUrl = `https://gutendex.com/books/?search=${encodeURIComponent(entry.title)}`;
+      const gRes = await net.fetch(gutendexUrl);
+      if (gRes.ok) {
+        const gData = (await gRes.json()) as { results?: Array<{ formats?: Record<string, string> }> };
+        const gMatch = gData.results?.[0];
+        const gEpub = gMatch?.formats?.['application/epub+zip'];
+        if (gEpub) {
+          onProgress?.(0.1);
+          const blob = await net.download(gEpub, {
+            onProgress: (p) => onProgress?.(0.1 + p * 0.85),
+          });
+          onProgress?.(1.0);
+          const safeTitle = entry.title.replace(/[<>:"/\\|?*]/g, '_').slice(0, 80);
+          return new File([blob], `${safeTitle}.epub`, {
+            type: 'application/epub+zip',
+          });
+        }
+      }
+    } catch {
+      // ignore fallback error
+    }
+
+    throw new Error(
+      `"${entry.title}" is in copyright or restricted for digital library borrowing on openlibrary.org. No public domain DRM-free EPUB is available.`,
+    );
   }
 }
 
