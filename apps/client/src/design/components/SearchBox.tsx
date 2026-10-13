@@ -52,7 +52,7 @@ export const SearchBox = forwardRef<HTMLInputElement, SearchBoxProps>(
           value={value}
           onChange={(e) => onChange(e.target.value)}
           placeholder={placeholder}
-          className="w-full bg-transparent outline-none placeholder:text-[var(--text-3)] text-sm"
+          className="w-full min-w-0 bg-transparent outline-none placeholder:text-[var(--text-3)] text-sm text-ellipsis"
           {...props}
         />
         {value ? (

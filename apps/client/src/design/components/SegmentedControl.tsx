@@ -55,7 +55,7 @@ export function SegmentedControl<T extends string = string>({
       {...containerProps}
       className={twMerge(
         clsx(
-          'relative inline-flex items-center p-1 bg-[var(--layer-2)] border border-[var(--stroke)] rounded-[var(--r-pill)] select-none',
+          'relative inline-flex items-center max-w-full overflow-x-auto no-scrollbar p-1 bg-[var(--layer-2)] border border-[var(--stroke)] rounded-[var(--r-pill)] select-none',
           size === 'sm' ? 'h-[28px]' : 'h-[36px]',
           className,
         ),
@@ -83,7 +83,7 @@ export function SegmentedControl<T extends string = string>({
             data-active={isActive}
             onClick={() => onChange(opt.value)}
             className={clsx(
-              'relative z-10 inline-flex items-center justify-center gap-1.5 px-3 h-full rounded-[var(--r-pill)] font-medium transition-colors cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]',
+              'relative z-10 inline-flex shrink-0 items-center justify-center whitespace-nowrap gap-1.5 px-3 h-full rounded-[var(--r-pill)] font-medium transition-colors cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]',
               size === 'sm' ? 'text-xs' : 'text-sm',
               isActive
                 ? 'text-[var(--text-1)] font-semibold'

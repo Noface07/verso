@@ -1026,7 +1026,7 @@ export default function Reader() {
 
       {/* Top chrome header */}
       <header
-        className={`fixed top-0 inset-x-0 h-12 z-30 transition-all duration-200 ease-[var(--ease-out)] bg-[color-mix(in_srgb,var(--rbg)_90%,transparent)] backdrop-blur-[var(--blur)] border-b border-[var(--rline)] flex items-center justify-between px-3 ${
+        className={`fixed top-0 inset-x-0 h-12 z-30 transition-all duration-200 ease-[var(--ease-out)] bg-[color-mix(in_srgb,var(--rbg)_96%,transparent)] border-b border-[var(--rline)] flex items-center justify-between px-3 ${
           chrome ? 'translate-y-0 opacity-100' : '-translate-y-full opacity-0 pointer-events-none'
         }`}
       >
@@ -1265,7 +1265,7 @@ export default function Reader() {
 
       {/* Scrub bar */}
       <div
-        className={`fixed bottom-7 inset-x-0 h-11 z-30 transition-all duration-200 ease-[var(--ease-out)] bg-[color-mix(in_srgb,var(--rbg)_92%,transparent)] backdrop-blur-[var(--blur)] border-t border-[var(--rline)] flex items-center gap-3 px-4 text-xs text-[var(--rmuted)] select-none ${
+        className={`fixed bottom-7 inset-x-0 h-11 z-30 transition-all duration-200 ease-[var(--ease-out)] bg-[color-mix(in_srgb,var(--rbg)_96%,transparent)] border-t border-[var(--rline)] flex items-center gap-3 px-4 text-xs text-[var(--rmuted)] select-none ${
           chrome ? 'translate-y-0 opacity-100' : 'translate-y-full opacity-0 pointer-events-none'
         }`}
       >

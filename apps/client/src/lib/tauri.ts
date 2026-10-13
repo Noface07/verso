@@ -52,6 +52,21 @@ export async function isWindowMaximized(): Promise<boolean> {
 /**
  * Closes the current desktop application window.
  */
+/**
+ * Calls `cb` whenever the window is resized (maximise/restore/snap included).
+ * Event-driven replacement for polling `isMaximized()`. Returns an unsubscribe.
+ */
+export async function onWindowResized(cb: () => void): Promise<() => void> {
+  if (!isTauri()) return () => {};
+  try {
+    const { getCurrentWindow } = await import('@tauri-apps/api/window');
+    return await getCurrentWindow().onResized(cb);
+  } catch (err) {
+    console.error('Failed to listen for window resize:', err);
+    return () => {};
+  }
+}
+
 export async function closeWindow(): Promise<void> {
   if (!isTauri()) return;
   try {

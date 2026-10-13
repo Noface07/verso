@@ -15,7 +15,7 @@ export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
   ({ variant = 'standard', size = 'md', icon, children, className, disabled, ...props }, ref) => {
     const baseClasses =
-      'inline-flex items-center justify-center font-medium transition-colors select-none cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] disabled:pointer-events-none disabled:opacity-40';
+      'inline-flex items-center justify-center whitespace-nowrap max-w-full font-medium transition-colors select-none cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] disabled:pointer-events-none disabled:opacity-40';
 
     const sizeClasses: Record<ButtonSize, string> = {
       sm: 'h-[28px] px-2.5 text-xs rounded-[var(--r-sm)] gap-1.5',
@@ -42,7 +42,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
         {...props}
       >
         {icon && <span className="inline-flex shrink-0">{icon}</span>}
-        {children && <span>{children}</span>}
+        {children && <span className="min-w-0 truncate">{children}</span>}
       </button>
     );
   },

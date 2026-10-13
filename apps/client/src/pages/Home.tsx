@@ -250,9 +250,9 @@ export default function Home() {
           </div>
 
           {hero ? (
-            <div className="flex flex-col sm:flex-row gap-6 p-5 rounded-[var(--r-xl)] bg-[var(--layer-2)] border border-[var(--stroke)] shadow-sm backdrop-blur-md">
+            <div className="flex flex-row gap-4 sm:gap-6 p-4 sm:p-5 rounded-[var(--r-xl)] bg-[var(--layer-2)] border border-[var(--stroke)] shadow-sm">
               {/* Hero Cover (300px wide on desktop) */}
-              <div className="w-full sm:w-[220px] md:w-[260px] lg:w-[280px] shrink-0">
+              <div className="w-28 sm:w-[200px] md:w-[240px] xl:w-[280px] shrink-0">
                 <ContextMenu sections={getContextSections(hero)}>
                   <div>
                     <BookCover
@@ -270,15 +270,15 @@ export default function Home() {
               </div>
 
               {/* Hero Metadata & Resume */}
-              <div className="flex flex-col justify-between grow py-1 gap-4">
+              <div className="flex flex-col justify-between flex-1 min-w-0 py-1 gap-4">
                 <div className="space-y-2">
                   <span className="text-[11px] font-bold uppercase tracking-wider text-[var(--accent)]">
                     Continue reading
                   </span>
-                  <h3 className="font-display text-2xl font-bold text-[var(--text-1)] leading-tight line-clamp-2">
+                  <h3 className="font-display text-lg sm:text-2xl font-bold text-[var(--text-1)] leading-tight line-clamp-3 sm:line-clamp-2 [overflow-wrap:anywhere]">
                     {hero.title}
                   </h3>
-                  <p className="text-sm text-[var(--text-2)] font-medium line-clamp-1">
+                  <p className="text-sm text-[var(--text-2)] font-medium line-clamp-1 [overflow-wrap:anywhere]">
                     {hero.author}
                   </p>
                   {progress.get(hero.id)?.chapter && (
@@ -313,8 +313,8 @@ export default function Home() {
 
                 {/* Additional Recent Mini-Covers */}
                 {recent.length > 1 && (
-                  <div className="flex items-center gap-3 pt-3 border-t border-[var(--stroke)]">
-                    <span className="text-xs text-[var(--text-3)]">More recent:</span>
+                  <div className="hidden sm:flex items-center gap-3 pt-3 border-t border-[var(--stroke)] min-w-0">
+                    <span className="text-xs text-[var(--text-3)] shrink-0">More recent:</span>
                     <div className="flex items-center gap-2 overflow-x-auto no-scrollbar py-1">
                       {recent.slice(1, 4).map((b) => (
                         <div key={b.id} className="w-11 shrink-0">

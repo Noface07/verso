@@ -821,14 +821,14 @@ export default function Library() {
       {/* 48px CommandBar */}
       <CommandBar
         title={
-          <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-1.5 min-w-0">
             <Dropdown
               trigger={
                 <button
                   type="button"
-                  className="flex items-center gap-1.5 text-base font-semibold text-[var(--text-1)] hover:text-[var(--accent)] transition-colors cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] px-1.5 py-1 rounded-[var(--r-sm)]"
+                  className="flex items-center gap-1.5 min-w-0 max-w-full text-base font-semibold text-[var(--text-1)] hover:text-[var(--accent)] transition-colors cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] px-1.5 py-1 rounded-[var(--r-sm)]"
                 >
-                  <span>
+                  <span className="truncate">
                     {selectedCollection === 'all'
                       ? 'All Books'
                       : selectedCollection === 'favorites'
@@ -868,8 +868,8 @@ export default function Library() {
         }
         subtitle={`${shown.length} ${shown.length === 1 ? 'item' : 'items'}`}
         rightActions={
-          <div className="flex items-center gap-1.5">
-            <div className="w-48 sm:w-64 hidden sm:block">
+          <div className="flex items-center gap-1 sm:gap-1.5">
+            <div className="w-48 lg:w-64 hidden md:block">
               <SearchBox
                 value={query}
                 onChange={setQuery}
@@ -935,10 +935,11 @@ export default function Library() {
                   setSelectionMode(true);
                 }
               }}
-              className="gap-1.5 text-xs h-8 px-2.5"
+              aria-label={selectionMode ? 'Done selecting' : 'Select books'}
+              className="gap-1.5 text-xs h-8 px-2"
             >
               <CheckSquare className="w-3.5 h-3.5" />
-              <span>{selectionMode ? 'Done' : 'Select'}</span>
+              <span className="hidden sm:inline">{selectionMode ? 'Done' : 'Select'}</span>
             </Button>
 
             {/* Add Books Dropdown */}
@@ -960,7 +961,7 @@ export default function Library() {
       />
 
       {/* Sub-bar: Format Segmented Control */}
-      <div className="flex items-center justify-between px-6 py-2.5 border-b border-[var(--stroke)] bg-[var(--layer-1)]">
+      <div className="flex items-center justify-between gap-3 px-4 sm:px-6 py-2.5 border-b border-[var(--stroke)] bg-[var(--layer-1)]">
         <SegmentedControl
           size="sm"
           options={[
@@ -974,13 +975,13 @@ export default function Library() {
         />
 
         {/* Mobile Search input */}
-        <div className="sm:hidden w-40">
+        <div className="md:hidden flex-1 min-w-[96px] max-w-[220px]">
           <SearchBox value={query} onChange={setQuery} placeholder="Search…" />
         </div>
       </div>
 
       {/* Main Content Area */}
-      <div className="flex-1 overflow-y-auto px-6 py-4">
+      <div className="flex-1 overflow-y-auto px-4 sm:px-6 py-4">
         {formatType === 'manga' ? (
           followedSeries && followedSeries.length === 0 ? (
             <EmptyState

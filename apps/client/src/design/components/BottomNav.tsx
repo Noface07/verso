@@ -22,7 +22,7 @@ export const BottomNav: FC<BottomNavProps> = ({ onOpenSettings }) => {
     <>
       <nav
         aria-label="Bottom navigation"
-        className="md:hidden fixed bottom-0 inset-x-0 z-40 h-[56px] pb-safe bg-[var(--layer-1)] backdrop-blur-[var(--blur)] border-t border-[var(--stroke)] flex items-center justify-around px-2 select-none"
+        className="md:hidden fixed bottom-0 inset-x-0 z-40 h-[56px] pb-safe chrome-surface border-t border-[var(--stroke)] flex items-center justify-around px-2 select-none"
       >
         {mainItems.map((item) => (
           <NavLink

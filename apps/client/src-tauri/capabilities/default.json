@@ -7,12 +7,28 @@
   ],
   "permissions": [
     "core:default",
+    "core:window:allow-minimize",
+    "core:window:allow-toggle-maximize",
+    "core:window:allow-close",
+    "core:window:allow-start-dragging",
+    "core:window:allow-set-fullscreen",
     "opener:default",
     "fs:default",
+    "fs:allow-appdata-read-recursive",
+    "fs:allow-appdata-write-recursive",
+    "fs:allow-exists",
+    "fs:allow-mkdir",
+    "fs:allow-read-file",
+    "fs:allow-write-file",
+    "fs:allow-remove",
     "dialog:default",
-    "http:default",
+    {
+      "identifier": "http:default",
+      "allow": [{ "url": "https://*" }, { "url": "http://*" }]
+    },
     "os:default",
     "notification:default",
+    "window-state:default",
     "deep-link:default"
   ]
 }

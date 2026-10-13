@@ -27,3 +27,16 @@ tauri-plugin-notification = "2"
 tauri-plugin-single-instance = "2"
 tauri-plugin-window-state = "2"
 tauri-plugin-deep-link = "2"
+
+# Dependencies (rustls, reqwest, image decoding) are very slow when unoptimised,
+# and every native HTTP request in `tauri dev` goes through them. Optimise deps in
+# dev while keeping the app crate itself fast to rebuild.
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = 3
+panic = "abort"
+strip = true

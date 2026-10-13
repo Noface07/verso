@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Heart, Check } from 'lucide-react';
 import { clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -22,30 +22,89 @@ export interface BookCoverProps {
   onToggleSelect?: () => void;
 }
 
-export function useCoverBlobUrl(id: string, coverHash?: string | null) {
-  const [url, setUrl] = useState<string | null>(null);
+// Shared, ref-counted object URLs for cover blobs. Previously every mounted cover
+// read IndexedDB and minted its own object URL, so switching pages re-read and
+// re-decoded every cover. URLs are revoked a little after their last user goes
+// away, so quick back-and-forth navigation reuses them.
+interface CoverEntry {
+  url: Promise<string | null>;
+  refs: number;
+  revokeTimer?: ReturnType<typeof setTimeout>;
+}
+const coverUrls = new Map<string, CoverEntry>();
+const COVER_URL_GRACE_MS = 30_000;
+
+function acquireCoverUrl(id: string, coverHash: string): Promise<string | null> {
+  const key = `${id}:${coverHash}`;
+  let entry = coverUrls.get(key);
+  if (!entry) {
+    entry = {
+      refs: 0,
+      url: db.covers
+        .get(id)
+        .then((cover) => (cover ? URL.createObjectURL(cover.blob) : null))
+        .catch(() => null),
+    };
+    coverUrls.set(key, entry);
+  }
+  if (entry.revokeTimer) {
+    clearTimeout(entry.revokeTimer);
+    entry.revokeTimer = undefined;
+  }
+  entry.refs++;
+  return entry.url;
+}
+
+function releaseCoverUrl(id: string, coverHash: string): void {
+  const key = `${id}:${coverHash}`;
+  const entry = coverUrls.get(key);
+  if (!entry) return;
+  entry.refs--;
+  if (entry.refs > 0) return;
+  entry.revokeTimer = setTimeout(() => {
+    coverUrls.delete(key);
+    void entry.url.then((u) => u && URL.revokeObjectURL(u));
+  }, COVER_URL_GRACE_MS);
+}
+
+/** Object URL for a stored cover. Pass `enabled: false` to defer loading (e.g. off-screen). */
+export function useCoverBlobUrl(id: string, coverHash?: string | null, enabled = true) {
+  const [loaded, setLoaded] = useState<{ key: string; url: string | null } | null>(null);
+  const key = coverHash ? `${id}:${coverHash}` : null;
 
   useEffect(() => {
+    if (!coverHash || !enabled) return;
     let alive = true;
-    let objectUrl: string | null = null;
-    if (coverHash) {
-      void db.covers.get(id).then((cover) => {
-        if (cover && alive) {
-          objectUrl = URL.createObjectURL(cover.blob);
-          setUrl(objectUrl);
-        }
-      });
-    } else {
-      setUrl(null);
-    }
-
+    void acquireCoverUrl(id, coverHash).then((url) => {
+      if (alive) setLoaded({ key: `${id}:${coverHash}`, url });
+    });
     return () => {
       alive = false;
-      if (objectUrl) URL.revokeObjectURL(objectUrl);
+      releaseCoverUrl(id, coverHash);
     };
-  }, [id, coverHash]);
+  }, [id, coverHash, enabled]);
 
-  return url;
+  return key && loaded?.key === key ? loaded.url : null;
+}
+
+/** True once the element has come within `margin` of the viewport (stays true). */
+function useNearViewport<T extends Element>(ref: React.RefObject<T | null>, margin = '600px') {
+  const [seen, setSeen] = useState(() => typeof IntersectionObserver === 'undefined');
+  useEffect(() => {
+    if (seen || !ref.current) return;
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) {
+          setSeen(true);
+          io.disconnect();
+        }
+      },
+      { rootMargin: margin },
+    );
+    io.observe(ref.current);
+    return () => io.disconnect();
+  }, [ref, margin, seen]);
+  return seen;
 }
 
 export const BookCover: React.FC<BookCoverProps> = ({
@@ -65,7 +124,9 @@ export const BookCover: React.FC<BookCoverProps> = ({
   isSelectable = false,
   onToggleSelect,
 }) => {
-  const blobCoverUrl = useCoverBlobUrl(id, coverHash);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const nearViewport = useNearViewport(rootRef);
+  const blobCoverUrl = useCoverBlobUrl(id, coverHash, nearViewport && !coverUrlProp);
   const coverUrl = coverUrlProp || blobCoverUrl;
   const hue = parseInt(id.slice(0, 6), 16) % 360;
   const fallbackBg = `hsl(${hue} 35% 32%)`;
@@ -80,6 +141,7 @@ export const BookCover: React.FC<BookCoverProps> = ({
 
   return (
     <div
+      ref={rootRef}
       role={onClick || isSelectable ? 'button' : undefined}
       tabIndex={onClick || isSelectable ? 0 : undefined}
       onClick={handleClick}
@@ -104,18 +166,28 @@ export const BookCover: React.FC<BookCoverProps> = ({
           src={coverUrl}
           alt={title}
           loading="lazy"
+          decoding="async"
           draggable={false}
           className="w-full h-full object-cover transition-transform duration-[var(--d-slow)] group-hover:scale-102"
         />
       ) : (
+        // Sized off the cover's own width (container query units) so the same
+        // component reads well as a 44px thumbnail and as a 300px hero.
         <div
-          className="w-full h-full flex flex-col justify-end p-3 text-white transition-colors"
+          className="@container w-full h-full text-white transition-colors"
           style={{ background: fallbackBg }}
         >
-          <span className="font-display font-semibold text-sm leading-tight line-clamp-3 mb-1 drop-shadow-sm">
-            {title}
-          </span>
-          <span className="text-[11px] text-white/80 line-clamp-1">{author}</span>
+          <div className="w-full h-full hidden @min-[72px]:flex flex-col justify-end p-[8cqw] min-w-0">
+            <span className="font-display font-semibold text-[clamp(10px,9.5cqw,22px)] leading-tight line-clamp-3 mb-[0.25em] drop-shadow-sm [overflow-wrap:anywhere]">
+              {title}
+            </span>
+            <span className="text-[clamp(9px,7.5cqw,15px)] text-white/80 line-clamp-1 [overflow-wrap:anywhere]">
+              {author}
+            </span>
+          </div>
+          <div className="w-full h-full flex @min-[72px]:hidden items-center justify-center font-display font-semibold text-[40cqw] leading-none drop-shadow-sm">
+            {title.trim().charAt(0).toUpperCase()}
+          </div>
         </div>
       )}
 

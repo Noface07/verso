@@ -87,7 +87,7 @@ export const NavRail: React.FC<NavRailProps> = ({
     <aside
       className={twMerge(
         clsx(
-          'hidden md:flex flex-col h-full bg-[var(--layer-1)] backdrop-blur-[var(--blur)] border-r border-[var(--stroke)] select-none shrink-0 transition-all duration-[var(--d-slow)] ease-[var(--ease-out)] z-40',
+          'hidden md:flex flex-col h-full bg-[var(--layer-1)] border-r border-[var(--stroke)] select-none shrink-0 transition-all duration-[var(--d-slow)] ease-[var(--ease-out)] z-40',
           expanded ? 'w-[260px]' : 'w-[56px]',
           className,
         ),

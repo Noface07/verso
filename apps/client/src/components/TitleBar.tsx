@@ -7,6 +7,7 @@ import {
   isWindowMaximized,
   closeWindow,
   toggleTauriFullscreen,
+  onWindowResized,
 } from '../lib/tauri';
 
 export function TitleBar() {
@@ -23,7 +24,13 @@ export function TitleBar() {
     };
 
     void checkState();
-    const interval = setInterval(checkState, 500);
+    // Event-driven: polling isMaximized() every 500ms meant a constant stream of
+    // IPC round-trips and re-renders for the lifetime of the app.
+    let unlistenResize: (() => void) | null = null;
+    void onWindowResized(() => void checkState()).then((un) => {
+      if (active) unlistenResize = un;
+      else un();
+    });
 
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'F11') {
@@ -35,7 +42,7 @@ export function TitleBar() {
 
     return () => {
       active = false;
-      clearInterval(interval);
+      unlistenResize?.();
       window.removeEventListener('keydown', onKey);
     };
   }, [runningInTauri]);
@@ -45,7 +52,7 @@ export function TitleBar() {
   return (
     <div
       data-tauri-drag-region
-      className="h-8 w-full flex items-center justify-between select-none bg-[var(--layer-solid)]/90 backdrop-blur-md border-b border-[var(--stroke)] text-[var(--text-1)] text-xs z-50 shrink-0"
+      className="h-8 w-full flex items-center justify-between select-none bg-[var(--layer-solid)] border-b border-[var(--stroke)] text-[var(--text-1)] text-xs z-50 shrink-0"
       style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
     >
       {/* Left: App Logo & Title */}

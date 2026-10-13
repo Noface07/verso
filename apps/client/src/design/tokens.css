@@ -46,6 +46,24 @@
   --accent-pressed: color-mix(in oklab, var(--accent) 80%, black);
   --on-accent: #001a2b;
   --accent-soft: color-mix(in oklab, var(--accent) 18%, transparent);
+
+  /* Legacy aliases: older screens were written against these names. Keep them
+     pointing at the canonical tokens so they follow the active theme. */
+  --surface-base: var(--bg-base);
+  --surface-subtle: var(--layer-2);
+  --surface-overlay: var(--layer-solid);
+  --border-subtle: var(--stroke);
+  --text-primary: var(--text-1);
+  --text-secondary: var(--text-2);
+  --text-muted: var(--text-3);
+  --accent-subtle: var(--accent-soft);
+  --accent-muted: color-mix(in oklab, var(--accent) 35%, transparent);
+  --danger-soft: color-mix(in oklab, var(--danger) 16%, transparent);
+  --success-soft: color-mix(in oklab, var(--success) 16%, transparent);
+
+  /* Opaque-enough fill for sticky/fixed chrome (title bar, nav, command bars).
+     Content scrolls underneath, so it must stay legible without backdrop blur. */
+  --chrome: color-mix(in oklab, var(--bg-base) 88%, transparent);
 }
 
 /* ---------- Dark (default) ---------- */
@@ -128,13 +146,34 @@ html, body, #root {
   height: 100%;
 }
 
+@layer base {
+  /* Tailwind v4 defaults border-color to currentColor; v3 (which the design was
+     built against) used a subtle grey. Bare `border` utilities should be hairlines. */
+  *,
+  ::before,
+  ::after,
+  ::backdrop {
+    border-color: var(--stroke);
+  }
+}
+
 body {
   margin: 0;
   background-color: var(--bg-base);
   color: var(--text-1);
   font: var(--t-body);
   -webkit-font-smoothing: antialiased;
+  /* Long unbroken titles/URLs wrap inside their box instead of spilling out. */
+  overflow-wrap: break-word;
 }
+
+/* Persistent chrome (nav rail, command bars, bottom nav). Blurring what scrolls
+   underneath is re-rasterised every frame, which is what made scrolling janky in
+   the desktop WebView, so chrome uses a near-opaque fill instead. */
+@utility chrome-surface {
+  background-color: var(--chrome);
+}
+
 
 foliate-view {
   display: block;
@@ -177,5 +216,13 @@ foliate-view {
   .animate-tab-slide-left {
     animation: none !important;
     transform: none !important;
+  }
+}
+
+/* Horizontal chip rows / tab strips: scrollable, without a visible scrollbar. */
+@utility no-scrollbar {
+  scrollbar-width: none;
+  &::-webkit-scrollbar {
+    display: none;
   }
 }

@@ -145,14 +145,19 @@ export default function Notebook() {
         subtitle={`${total} ${total === 1 ? 'highlight' : 'highlights'}`}
         rightActions={
           <div className="flex items-center gap-2">
-            <div className="w-52 sm:w-64">
-              <SearchBox value={query} onChange={setQuery} placeholder="Search highlights & notes…" />
+            <div className="w-36 sm:w-52 md:w-64">
+              <SearchBox value={query} onChange={setQuery} placeholder="Search notes…" />
             </div>
 
             <Dropdown
               trigger={
-                <Button variant="standard" size="sm" icon={<Download className="w-4 h-4" />}>
-                  Export
+                <Button
+                  variant="standard"
+                  size="sm"
+                  aria-label="Export"
+                  icon={<Download className="w-4 h-4" />}
+                >
+                  <span className="hidden sm:inline">Export</span>
                 </Button>
               }
               sections={exportDropdownSections}
@@ -162,8 +167,8 @@ export default function Notebook() {
       />
 
       {/* Filter Toolbar */}
-      <div className="flex items-center justify-between px-6 py-2.5 border-b border-[var(--stroke)] bg-[var(--layer-1)]">
-        <div className="flex items-center gap-4">
+      <div className="flex items-center justify-between gap-3 px-4 sm:px-6 py-2.5 border-b border-[var(--stroke)] bg-[var(--layer-1)] overflow-x-auto no-scrollbar">
+        <div className="flex items-center gap-4 shrink-0">
           {/* Color Dots */}
           <div className="flex items-center gap-1.5">
             <button

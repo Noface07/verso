@@ -91,7 +91,7 @@ export default function Shell() {
 
   return (
     <div
-      className="relative flex h-screen w-screen overflow-hidden bg-[var(--bg-base)] text-[var(--text-1)] select-none"
+      className="relative flex h-full w-full overflow-hidden bg-[var(--bg-base)] text-[var(--text-1)] select-none"
       onDragOver={onDragOver}
       onDragLeave={(e) => {
         if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragging(false);
