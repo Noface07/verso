@@ -119,7 +119,8 @@ export class SuwayomiSource implements MangaSource {
   async getExtensionList(): Promise<SuwayomiExtension[]> {
     const url = `${this.baseUrl}/api/graphql`;
     try {
-      const res = await net.fetch(url, {
+      const fetchImpl = typeof window !== 'undefined' && typeof window.fetch === 'function' ? window.fetch.bind(window) : net.fetch;
+      const res = await fetchImpl(url, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -186,8 +187,8 @@ export class SuwayomiSource implements MangaSource {
           });
         }
       }
-    } catch {
-      // Fallback below
+    } catch (err) {
+      console.warn('[Suwayomi] GraphQL GetExtensions failed, trying fallback:', err);
     }
 
     // Fallback: If GraphQL returned no extensions or errored, list installed sources from Suwayomi REST API
@@ -218,7 +219,8 @@ export class SuwayomiSource implements MangaSource {
   async installExtension(pkgName: string): Promise<boolean> {
     const url = `${this.baseUrl}/api/graphql`;
     try {
-      const res = await net.fetch(url, {
+      const fetchImpl = typeof window !== 'undefined' && typeof window.fetch === 'function' ? window.fetch.bind(window) : net.fetch;
+      const res = await fetchImpl(url, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -252,7 +254,8 @@ export class SuwayomiSource implements MangaSource {
   async uninstallExtension(pkgName: string): Promise<boolean> {
     const url = `${this.baseUrl}/api/graphql`;
     try {
-      const res = await net.fetch(url, {
+      const fetchImpl = typeof window !== 'undefined' && typeof window.fetch === 'function' ? window.fetch.bind(window) : net.fetch;
+      const res = await fetchImpl(url, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

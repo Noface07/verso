@@ -59,6 +59,7 @@ export async function getAllBookSources(): Promise<CatalogSource[]> {
     archiveOrgSource,
     mangaDexSource,
     mangaPillSource,
+    defaultSuwayomiSource,
     ...customInstances,
   ];
 }

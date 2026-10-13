@@ -192,34 +192,46 @@ export default function Store() {
     );
   }, [extTab, installedExts, availableExts, extSearch]);
 
+  const suwayomiSource = useMemo(() => {
+    if (!activeSource) return null;
+    if (activeSource instanceof SuwayomiSource) return activeSource;
+    if (isSuwayomi) {
+      const url =
+        (activeSource as unknown as { baseUrl?: string; url?: string }).baseUrl ||
+        (activeSource as unknown as { baseUrl?: string; url?: string }).url ||
+        'http://localhost:4567';
+      const key = (activeSource as unknown as { apiKey?: string }).apiKey;
+      return new SuwayomiSource(activeSource.id, activeSource.name, url, key);
+    }
+    return null;
+  }, [activeSource, isSuwayomi]);
+
   // Load extension list when Suwayomi extension dialog opens or source switches to Suwayomi
   useEffect(() => {
-    if (!isSuwayomi) return;
-    if (activeSource instanceof SuwayomiSource) {
-      void activeSource.getExtensionList().then((list) => {
-        if (list.length > 0) setExtensions(list);
-      });
-    }
-  }, [isSuwayomi, activeSource]);
+    if (!isSuwayomi || !suwayomiSource) return;
+    void suwayomiSource.getExtensionList().then((list) => {
+      if (list.length > 0) setExtensions(list);
+    });
+  }, [isSuwayomi, suwayomiSource]);
 
   useEffect(() => {
-    if (!extStoreOpen || !(activeSource instanceof SuwayomiSource)) return;
+    if (!extStoreOpen || !suwayomiSource) return;
     setLoadingExts(true);
-    void activeSource
+    void suwayomiSource
       .getExtensionList()
       .then((list) => setExtensions(list))
       .finally(() => setLoadingExts(false));
-  }, [extStoreOpen, activeSource]);
+  }, [extStoreOpen, suwayomiSource]);
 
   const handleInstallExtension = async (pkgName: string) => {
-    if (!(activeSource instanceof SuwayomiSource)) return;
+    if (!suwayomiSource) return;
     setInstallingPkg(pkgName);
     try {
-      const ok = await activeSource.installExtension(pkgName);
+      const ok = await suwayomiSource.installExtension(pkgName);
       if (ok) {
-        const updated = await activeSource.getExtensionList();
+        const updated = await suwayomiSource.getExtensionList();
         setExtensions(updated);
-        const sec = await activeSource.sections(true);
+        const sec = await suwayomiSource.sections(true);
         setSections(sec);
       }
     } finally {
@@ -228,14 +240,14 @@ export default function Store() {
   };
 
   const handleUninstallExtension = async (pkgName: string) => {
-    if (!(activeSource instanceof SuwayomiSource)) return;
+    if (!suwayomiSource) return;
     setInstallingPkg(pkgName);
     try {
-      const ok = await activeSource.uninstallExtension(pkgName);
+      const ok = await suwayomiSource.uninstallExtension(pkgName);
       if (ok) {
-        const updated = await activeSource.getExtensionList();
+        const updated = await suwayomiSource.getExtensionList();
         setExtensions(updated);
-        const sec = await activeSource.sections(true);
+        const sec = await suwayomiSource.sections(true);
         setSections(sec);
       }
     } finally {
