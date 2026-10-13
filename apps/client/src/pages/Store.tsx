@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
 import {
@@ -13,7 +13,7 @@ import {
   ShoppingBag,
   AlertCircle,
 } from 'lucide-react';
-import { db, type DownloadItem } from '../db';
+import { db, type Book, type DownloadItem } from '../db';
 import {
   getAllBookSources,
   addCustomOpdsSource,
@@ -51,7 +51,7 @@ export default function Store() {
   const [debouncedQuery, setDebouncedQuery] = useState('');
   const [items, setItems] = useState<CatalogEntry[]>([]);
   const [nextCursor, setNextCursor] = useState<string | undefined>(undefined);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -87,13 +87,41 @@ export default function Store() {
   }, [sources, activeSourceId]);
 
   // Load available sources
+  // Which source the current `sections`/`activeSectionId` belong to. Items are only
+  // fetched once this matches the active source, so we never browse source B with
+  // a section id left over from source A.
+  const [sectionsFor, setSectionsFor] = useState<string | null>(null);
+
+  // Every fetch takes a ticket; only the latest ticket may write results. Without
+  // this, a slow response from a previous source (Gutendex can take seconds)
+  // landed after the new source's results and replaced them.
+  const requestSeq = useRef(0);
+
+  // Switch source: drop the previous source's results right away so they can't
+  // linger on screen, and invalidate any request still in flight for it.
+  const switchSource = useCallback((id: string) => {
+    requestSeq.current++;
+    setActiveSourceId(id);
+    setSectionsFor(null);
+    setSections([]);
+    setItems([]);
+    setNextCursor(undefined);
+    setError(null);
+    setLoading(true);
+  }, []);
+
+  const activeSourceIdRef = useRef(activeSourceId);
+  useEffect(() => {
+    activeSourceIdRef.current = activeSourceId;
+  }, [activeSourceId]);
+
   const refreshSources = useCallback(async () => {
     const list = await getAllBookSources();
     setSources(list);
-    if (!list.some((s) => s.id === activeSourceId) && list.length > 0) {
-      setActiveSourceId(list[0].id);
+    if (list.length > 0 && !list.some((s) => s.id === activeSourceIdRef.current)) {
+      switchSource(list[0].id);
     }
-  }, [activeSourceId]);
+  }, [switchSource]);
 
   useEffect(() => {
     void refreshSources();
@@ -101,28 +129,26 @@ export default function Store() {
 
   // Load sections when source changes
   useEffect(() => {
+    if (!activeSource) return;
     let alive = true;
-    async function loadSections() {
-      if (!activeSource) return;
+    void (async () => {
+      let sec: CatalogSection[] = [];
       try {
-        const sec = await activeSource.sections();
-        if (alive) {
-          setSections(sec);
-          if (sec.length > 0 && !sec.some((s) => s.id === activeSectionId)) {
-            setActiveSectionId(sec[0].id);
-          }
-        }
+        sec = await activeSource.sections();
       } catch {
-        if (alive) {
-          setSections([]);
-        }
+        sec = [];
       }
-    }
-    void loadSections();
+      if (!alive) return;
+      setSections(sec);
+      setActiveSectionId((current) =>
+        sec.length > 0 && !sec.some((s) => s.id === current) ? sec[0].id : current,
+      );
+      setSectionsFor(activeSource.id);
+    })();
     return () => {
       alive = false;
     };
-  }, [activeSource, activeSectionId]);
+  }, [activeSource]);
 
   // Debounce search query
   useEffect(() => {
@@ -135,68 +161,89 @@ export default function Store() {
   // Fetch catalog items (browse or search)
   const fetchItems = useCallback(
     async (source: CatalogSource, sectionId: string, query: string) => {
+      const ticket = ++requestSeq.current;
+      const isCurrent = () => ticket === requestSeq.current;
       setLoading(true);
+      setLoadingMore(false);
       setError(null);
       try {
-        if (query) {
-          const page = await source.search(query);
-          setItems(page.items);
-          setNextCursor(page.next);
-        } else {
-          const page = await source.browse(sectionId);
-          setItems(page.items);
-          setNextCursor(page.next);
-        }
+        const page = query ? await source.search(query) : await source.browse(sectionId);
+        if (!isCurrent()) return;
+        setItems(page.items);
+        setNextCursor(page.next);
       } catch (err) {
+        if (!isCurrent()) return;
         const msg = err instanceof Error ? err.message : String(err);
         setError(msg);
         setItems([]);
         setNextCursor(undefined);
       } finally {
-        setLoading(false);
+        if (isCurrent()) setLoading(false);
       }
     },
     [],
   );
 
   useEffect(() => {
-    if (activeSource && (activeSectionId || debouncedQuery)) {
+    if (!activeSource || sectionsFor !== activeSource.id) return;
+    if (activeSectionId || debouncedQuery) {
       void fetchItems(activeSource, activeSectionId, debouncedQuery);
+    } else {
+      setLoading(false);
     }
-  }, [activeSource, activeSectionId, debouncedQuery, fetchItems]);
+  }, [activeSource, sectionsFor, activeSectionId, debouncedQuery, fetchItems]);
 
   // Load more pages
   const handleLoadMore = async () => {
     if (!activeSource || !nextCursor || loadingMore) return;
+    const ticket = requestSeq.current;
     setLoadingMore(true);
     try {
       const page = debouncedQuery
         ? await activeSource.search(debouncedQuery, nextCursor)
         : await activeSource.browse(activeSectionId, nextCursor);
-      setItems((prev) => [...prev, ...page.items]);
+      if (ticket !== requestSeq.current) return;
+      setItems((prev) => {
+        // Sources sometimes overlap pages; duplicate keys break React reconciliation.
+        const seen = new Set(prev.map((i) => i.id));
+        return [...prev, ...page.items.filter((i) => !seen.has(i.id))];
+      });
       setNextCursor(page.next);
     } catch (err) {
+      if (ticket !== requestSeq.current) return;
       const msg = err instanceof Error ? err.message : String(err);
       setError(msg);
     } finally {
-      setLoadingMore(false);
+      if (ticket === requestSeq.current) setLoadingMore(false);
     }
   };
 
   // Check if a catalog entry already exists in the local library
+  // Indexed once per library change instead of scanning every book for every card.
+  const libraryIndex = useMemo(() => {
+    const bySourceId = new Map<string, Book>();
+    const byTitle = new Map<string, Book[]>();
+    for (const b of libraryBooks ?? []) {
+      const sourceId = b.meta?.source?.id;
+      if (sourceId) bySourceId.set(sourceId, b);
+      const key = b.title.toLowerCase().trim();
+      const list = byTitle.get(key);
+      if (list) list.push(b);
+      else byTitle.set(key, [b]);
+    }
+    return { bySourceId, byTitle };
+  }, [libraryBooks]);
+
   const getLibraryBook = useCallback(
     (entry: CatalogEntry) => {
-      if (!libraryBooks) return undefined;
-      return libraryBooks.find((b) => {
-        if (b.meta?.source?.id === entry.id) return true;
-        const entryAuthor = (entry.authors[0] || '').toLowerCase().trim();
-        const bookAuthor = b.author.toLowerCase().trim();
-        const entryTitle = entry.title.toLowerCase().trim();
-        const bookTitle = b.title.toLowerCase().trim();
-        return entryTitle === bookTitle && (entryAuthor === bookAuthor || !entryAuthor);
-      });
+      const bySource = libraryIndex.bySourceId.get(entry.id);
+      if (bySource) return bySource;
+      const entryAuthor = (entry.authors[0] || '').toLowerCase().trim();
+      return libraryIndex.byTitle
+        .get(entry.title.toLowerCase().trim())
+        ?.find((b) => !entryAuthor || b.author.toLowerCase().trim() === entryAuthor);
     },
-    [libraryBooks],
+    [libraryIndex],
   );
 
   // Check if a book is currently downloading
@@ -230,7 +277,7 @@ export default function Store() {
         apiKey: newSourceApiKey.trim() || undefined,
       });
       await refreshSources();
-      setActiveSourceId(src.id);
+      switchSource(src.id);
       setAddSourceOpen(false);
       setNewSourceName('');
       setNewSourceUrl('');
@@ -253,7 +300,7 @@ export default function Store() {
   return (
     <div className="flex-1 flex flex-col h-full overflow-hidden bg-[var(--bg-base)]">
       {/* Top Header & Search Bar */}
-      <header className="px-6 py-4 border-b border-[var(--stroke)] bg-[var(--layer-1)] flex flex-wrap items-center justify-between gap-4 shrink-0">
+      <header className="px-4 sm:px-6 py-3 sm:py-4 border-b border-[var(--stroke)] bg-[var(--layer-1)] flex flex-wrap items-center justify-between gap-3 sm:gap-4 shrink-0">
         <div className="flex items-center gap-3">
           <ShoppingBag className="w-6 h-6 text-[var(--accent)]" />
           <h1 className="text-xl font-bold tracking-tight text-[var(--text-1)]">
@@ -281,7 +328,7 @@ export default function Store() {
               aria-label="Select book source"
               value={activeSourceId}
               onChange={(e) => {
-                setActiveSourceId(e.target.value);
+                switchSource(e.target.value);
                 setSearchQuery('');
               }}
               className="bg-transparent text-sm text-[var(--text-1)] outline-none cursor-pointer pr-1"
@@ -445,7 +492,7 @@ export default function Store() {
 
       {/* Sections Bar (only shown when not actively searching) */}
       {!debouncedQuery && sections.length > 0 && (
-        <div className="px-6 py-2.5 border-b border-[var(--stroke)] bg-[var(--layer-1)] flex items-center gap-2 overflow-x-auto no-scrollbar shrink-0">
+        <div className="px-4 sm:px-6 py-2.5 border-b border-[var(--stroke)] bg-[var(--layer-1)] flex items-center gap-2 overflow-x-auto no-scrollbar shrink-0">
           {sections.map((sec) => (
             <button
               key={sec.id}
@@ -470,7 +517,7 @@ export default function Store() {
             await fetchItems(activeSource, activeSectionId, debouncedQuery);
           }
         }}
-        className="flex-1 px-6 py-4"
+        className="flex-1 px-4 sm:px-6 py-4"
       >
         {loading ? (
           <div className="flex flex-col items-center justify-center py-20 gap-3">

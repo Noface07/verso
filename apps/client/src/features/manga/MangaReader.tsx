@@ -82,8 +82,13 @@ export default function MangaReader() {
   }, []);
 
   // Load Chapter and Pages
+  // Only the latest chapter load may write state: flipping chapters quickly used to
+  // let the previous chapter's pages land on top of the new one.
+  const loadSeq = useRef(0);
   const loadChapterData = useCallback(async () => {
     if (!seriesId || !chapterId) return;
+    const ticket = ++loadSeq.current;
+    const isCurrent = () => ticket === loadSeq.current;
     setLoading(true);
     setError(null);
     setIsTransitionScreen(false);
@@ -93,6 +98,7 @@ export default function MangaReader() {
       if (!source) throw new Error(`Unsupported source: ${sourceKind}`);
 
       const chList = await source.chapters(seriesId);
+      if (!isCurrent()) return;
       setChapters(chList);
 
       const ch = chList.find((c) => c.id === chapterId) || {
@@ -106,6 +112,7 @@ export default function MangaReader() {
         .where('[series_id+chapter_id]')
         .equals([seriesId, chapterId])
         .toArray();
+      if (!isCurrent()) return;
 
       const objectUrlMap = new Map<number, string>();
       if (cachedPages.length > 0) {
@@ -119,6 +126,7 @@ export default function MangaReader() {
         setPages(pageRefs);
       } else {
         const remotePages = await source.pages(chapterId);
+        if (!isCurrent()) return;
         setPages(remotePages);
       }
       setPageObjectUrls(objectUrlMap);
@@ -127,6 +135,7 @@ export default function MangaReader() {
       const savedProgress = await db.chapter_progress
         .filter((p) => p.series_id === seriesId && p.chapter_id === chapterId && !p.deleted_at)
         .first();
+      if (!isCurrent()) return;
 
       if (savedProgress && savedProgress.page && savedProgress.page > 0) {
         setCurrentPage(savedProgress.page);
@@ -134,10 +143,12 @@ export default function MangaReader() {
         setCurrentPage(1);
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      if (isCurrent()) setError(err instanceof Error ? err.message : String(err));
     } finally {
-      setLoading(false);
-      resetHudTimer();
+      if (isCurrent()) {
+        setLoading(false);
+        resetHudTimer();
+      }
     }
   }, [seriesId, chapterId, sourceKind, resetHudTimer]);
 

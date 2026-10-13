@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
 import {
@@ -77,9 +77,13 @@ export default function SeriesDetail() {
     return set;
   }, [downloadedPages]);
 
-  // Load series details and chapter feed
+  // Load series details and chapter feed. Only the latest request may write state,
+  // so a slow response for a previously opened series can't replace this one.
+  const loadSeq = useRef(0);
   const loadData = useCallback(async () => {
     if (!seriesId) return;
+    const ticket = ++loadSeq.current;
+    const isCurrent = () => ticket === loadSeq.current;
     setLoading(true);
     setError(null);
     try {
@@ -93,13 +97,14 @@ export default function SeriesDetail() {
         mangaSource.details(seriesId),
         mangaSource.chapters(seriesId),
       ]);
+      if (!isCurrent()) return;
 
       setEntry(detailsData);
       setChapters(chaptersData);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      if (isCurrent()) setError(err instanceof Error ? err.message : String(err));
     } finally {
-      setLoading(false);
+      if (isCurrent()) setLoading(false);
     }
   }, [seriesId, sourceKind]);
 
@@ -283,7 +288,7 @@ export default function SeriesDetail() {
   return (
     <div className="flex-1 flex flex-col h-full overflow-y-auto bg-[var(--bg-base)] select-none">
       {/* Top back navigation bar */}
-      <div className="sticky top-0 z-30 px-6 py-3 bg-[var(--layer-1)] backdrop-blur-[var(--blur)] border-b border-[var(--stroke)] flex items-center justify-between">
+      <div className="sticky top-0 z-30 px-6 py-3 chrome-surface border-b border-[var(--stroke)] flex items-center justify-between">
         <button
           type="button"
           onClick={() => navigate(-1)}
