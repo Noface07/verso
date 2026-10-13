@@ -33,6 +33,7 @@ import {
   type CollectionBook,
 } from '../db';
 import { fmtBytes, fmtDate, fmtMinutes } from '../lib/format';
+import { formatDuration } from '../lib/stats-engine';
 import { toggleFavorite, useFavoriteIds, setFavorite } from '../lib/favourites';
 import { exportBooks } from '../lib/exportZip';
 import { importFiles, ACCEPT } from '../lib/importBook';
@@ -1494,6 +1495,36 @@ function DetailsDialog({
   const countable = book.format !== 'PDF' && book.format !== 'CBZ';
   const isFinished = (progress?.percent ?? 0) >= 0.99 || !!m.finished_at;
 
+  // Reading insights
+  const sessions = useLiveQuery(
+    () => db.reading_sessions.where('book_id').equals(book.id).filter((s) => !s.deleted_at).toArray(),
+    [book.id],
+    [],
+  );
+  const annotations = useLiveQuery(
+    () => db.annotations.where('book_id').equals(book.id).filter((a) => !a.deleted_at).toArray(),
+    [book.id],
+    [],
+  );
+
+  const totalTimeSpentSec = useMemo(
+    () => sessions.reduce((acc, s) => acc + s.duration_sec, 0),
+    [sessions],
+  );
+  const sessionCount = sessions.length;
+  const firstSessionAt = useMemo(
+    () => (sessions.length > 0 ? Math.min(...sessions.map((s) => s.started_at)) : null),
+    [sessions],
+  );
+
+  const totalWords = useMemo(
+    () => sessions.reduce((acc, s) => acc + (s.words_read || 0), 0),
+    [sessions],
+  );
+  const userWpm = totalTimeSpentSec > 60 && totalWords > 0 ? Math.round((totalWords / totalTimeSpentSec) * 60) : 250;
+  const remainingFraction = Math.max(0, 1 - (progress?.percent ?? 0));
+  const estimatedTimeLeftMin = m.word_count ? Math.round((remainingFraction * m.word_count) / userWpm) : null;
+
   const facts: [string, string][] = [
     ['Format', book.format],
     ['File size', fmtBytes(book.file_size)],
@@ -1513,7 +1544,16 @@ function DetailsDialog({
           ? m.paragraph_count.toLocaleString()
           : 'Counting…',
     ],
-    ['Reading time', m.word_count ? `about ${fmtMinutes(m.word_count / 250)}` : '—'],
+    ['Time spent', totalTimeSpentSec > 0 ? formatDuration(totalTimeSpentSec) : '0m'],
+    ['Sessions', `${sessionCount} ${sessionCount === 1 ? 'session' : 'sessions'}`],
+    [
+      'Estimated time left',
+      isFinished
+        ? 'Finished'
+        : estimatedTimeLeftMin != null
+          ? fmtMinutes(estimatedTimeLeftMin)
+          : '—',
+    ],
     [
       'Progress',
       isFinished
@@ -1521,6 +1561,22 @@ function DetailsDialog({
         : progress
           ? `${Math.round(progress.percent * 100)}%`
           : 'Not started',
+    ],
+    [
+      'Started',
+      firstSessionAt
+        ? fmtDate(firstSessionAt)
+        : book.last_opened_at
+          ? fmtDate(book.last_opened_at)
+          : 'Not started',
+    ],
+    [
+      'Finished',
+      m.finished_at ? fmtDate(m.finished_at) : isFinished ? 'Finished' : 'In progress',
+    ],
+    [
+      'Highlights',
+      `${annotations.length} ${annotations.length === 1 ? 'highlight' : 'highlights'}`,
     ],
     ['Rating', m.rating ? `${m.rating} / 5 stars` : '—'],
     ['Language', m.language || '—'],

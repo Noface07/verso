@@ -249,7 +249,7 @@ export default function Reader() {
     setShowFinishedPrompt(false)
   }
 
-  useReadingSession(id, status === 'ready', fractionRef, book?.meta.word_count)
+  const { recordActivity } = useReadingSession(id, status === 'ready', fractionRef, book?.meta.word_count)
 
   // Open the book and wire up foliate-js events
   useEffect(() => {
@@ -272,6 +272,7 @@ export default function Reader() {
     }
 
     const onRelocate = (e: Event) => {
+      recordActivity()
       const d = (e as CustomEvent).detail
       const chapter: string = d.tocItem?.label?.trim() ?? ''
       fractionRef.current = d.fraction ?? 0

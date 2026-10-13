@@ -22,6 +22,8 @@ import { Shelf } from '../design/components/Shelf';
 import { Button } from '../design/components/Button';
 import { ContextMenu } from '../design/components/ContextMenu';
 import { EmptyState } from '../design/components/EmptyState';
+import { CircularProgress } from '../design/components/Progress';
+import { useReadingGoals } from '../lib/goals';
 import { useTheme } from '../design/theme';
 import type { ShellContext } from '../components/Shell';
 
@@ -94,6 +96,15 @@ export default function Home() {
   const favorites = useMemo(() => books.filter((b) => favIds.has(b.id)).slice(0, 10), [books, favIds]);
   const added = useMemo(() => [...books].sort((a, b) => b.added_at - a.added_at).slice(0, 12), [books]);
   const stats = useMemo(() => readingStats(sessions), [sessions]);
+  const { goals } = useReadingGoals();
+  const finishedBooksCount = useMemo(
+    () => books.filter((b) => !!b.meta?.finished_at).length,
+    [books],
+  );
+  const dailyGoalPercent = Math.min(
+    100,
+    Math.round((stats.today / Math.max(1, goals.dailyMinutes)) * 100),
+  );
 
   const hero = recent[0];
   const heroCoverUrl = useCoverBlobUrl(hero?.id ?? '', hero?.cover_hash ?? null);
@@ -331,6 +342,38 @@ export default function Home() {
 
         {/* Right / Stats & Mini Column */}
         <section className="lg:col-span-5 flex flex-col gap-6">
+          {/* Reading Goals Progress Card */}
+          <Link
+            to="/stats"
+            className="flex items-center justify-between p-4 rounded-[var(--r-xl)] bg-[var(--layer-2)] border border-[var(--stroke)] shadow-xs hover:border-[var(--stroke-strong)] transition-all cursor-pointer group"
+          >
+            <div className="flex items-center gap-3.5">
+              <CircularProgress
+                value={dailyGoalPercent}
+                size={48}
+                strokeWidth={5}
+                indicatorColor="var(--accent)"
+              >
+                <span className="text-[11px] font-bold text-[var(--text-1)]">{dailyGoalPercent}%</span>
+              </CircularProgress>
+              <div>
+                <span className="text-[11px] font-bold uppercase tracking-wider text-[var(--accent)]">
+                  Today's Reading Goal
+                </span>
+                <p className="text-sm font-semibold text-[var(--text-1)] mt-0.5">
+                  {stats.today} / {goals.dailyMinutes} min read
+                </p>
+                <p className="text-[11px] text-[var(--text-3)]">
+                  {finishedBooksCount} of {goals.yearlyBooks} books this year
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center text-xs text-[var(--text-3)] group-hover:text-[var(--text-1)] transition-colors">
+              <span>View stats</span>
+              <ChevronRight className="w-4 h-4 ml-0.5" />
+            </div>
+          </Link>
+
           {/* Stats Chips */}
           <div className="grid grid-cols-3 gap-3">
             <div className="flex flex-col items-center justify-center p-3.5 rounded-[var(--r-lg)] bg-[var(--layer-2)] border border-[var(--stroke)] shadow-xs">

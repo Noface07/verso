@@ -10,12 +10,13 @@ import {
   CheckCircle,
   AlertCircle,
 } from 'lucide-react';
-import { db, dirty, now, uid, type ChapterProgress, type ReadingSession } from '../../db';
+import { db, dirty, now, uid, type ChapterProgress } from '../../db';
 import { getSourceById } from '../../sources/registry';
 import type { MangaSource, ChapterInfo, PageRef } from '../../sources/types';
 import { Button } from '../../design/components/Button';
 import { IconButton } from '../../design/components/IconButton';
 import { ProgressRing } from '../../design/components/Progress';
+import { useReadingSession } from '../../lib/session';
 
 export type ReadingMode = 'paged-rtl' | 'paged-ltr' | 'webtoon';
 export type FitMode = 'width' | 'height' | 'screen' | 'original';
@@ -47,10 +48,27 @@ export default function MangaReader() {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [isTransitionScreen, setIsTransitionScreen] = useState(false);
 
-  // Session timer
-  const sessionStartRef = useRef<number>(0);
   const containerRef = useRef<HTMLDivElement>(null);
   const hudTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Session tracking with idle detection
+  const fractionRef = useRef<number>(0);
+  const pagesReadRef = useRef<number>(0);
+
+  useEffect(() => {
+    if (pages.length > 0) {
+      fractionRef.current = currentPage / pages.length;
+      pagesReadRef.current = Math.max(pagesReadRef.current, currentPage);
+    }
+  }, [currentPage, pages.length]);
+
+  const { recordActivity } = useReadingSession(
+    seriesId,
+    !loading && pages.length > 0 && !!seriesId,
+    fractionRef,
+    undefined,
+    { kind: 'manga', pagesReadRef },
+  );
 
   // Auto-hide HUD on idle
   const resetHudTimer = useCallback(() => {
@@ -123,29 +141,8 @@ export default function MangaReader() {
 
   useEffect(() => {
     void loadChapterData();
-    sessionStartRef.current = Date.now();
 
     return () => {
-      // Record reading session on unmount
-      const durationSec = Math.round((Date.now() - sessionStartRef.current) / 1000);
-      if (durationSec >= 10 && seriesId) {
-        const session: ReadingSession = {
-          id: uid(),
-          book_id: seriesId,
-          started_at: sessionStartRef.current,
-          ended_at: Date.now(),
-          duration_sec: durationSec,
-          start_percent: 0,
-          end_percent: 100,
-          words_read: 0,
-          device_id: 'local',
-          kind: 'manga',
-          deleted_at: null,
-          ...dirty(),
-        };
-        void db.reading_sessions.put(session);
-      }
-
       // Revoke created blob URLs
       pageObjectUrls.forEach((url) => URL.revokeObjectURL(url));
     };
@@ -229,6 +226,7 @@ export default function MangaReader() {
   }, [chapters, currentChapterIndex]);
 
   const goToNextPage = useCallback(() => {
+    recordActivity();
     if (currentPage < pages.length) {
       const next = currentPage + 1;
       setCurrentPage(next);
@@ -237,9 +235,10 @@ export default function MangaReader() {
       setIsTransitionScreen(true);
       void saveProgress(pages.length, true);
     }
-  }, [currentPage, pages.length, saveProgress]);
+  }, [currentPage, pages.length, saveProgress, recordActivity]);
 
   const goToPrevPage = useCallback(() => {
+    recordActivity();
     if (isTransitionScreen) {
       setIsTransitionScreen(false);
       return;
@@ -249,7 +248,7 @@ export default function MangaReader() {
       setCurrentPage(prev);
       void saveProgress(prev, false);
     }
-  }, [isTransitionScreen, currentPage, saveProgress]);
+  }, [isTransitionScreen, currentPage, saveProgress, recordActivity]);
 
   const goToChapter = (targetChapterId: string) => {
     navigate(

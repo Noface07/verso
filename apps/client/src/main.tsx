@@ -10,6 +10,7 @@ import Store from './pages/Store'
 import SeriesDetail from './pages/SeriesDetail'
 import MangaReader from './features/manga/MangaReader'
 import Reader from './pages/Reader'
+import Stats from './pages/Stats'
 import DevComponents from './pages/DevComponents'
 import { syncEngine } from './features/sync/engine'
 import './design/tokens.css'
@@ -26,6 +27,7 @@ createRoot(document.getElementById('root')!).render(
             <Route path="/library" element={<Library />} />
             <Route path="/notebook" element={<Notebook />} />
             <Route path="/store" element={<Store />} />
+            <Route path="/stats" element={<Stats />} />
             <Route path="/series/:id" element={<SeriesDetail />} />
             <Route path="/dev/components" element={<DevComponents />} />
           </Route>

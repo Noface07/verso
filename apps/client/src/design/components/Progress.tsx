@@ -74,6 +74,71 @@ export const ProgressRing: React.FC<ProgressRingProps> = ({
   );
 };
 
+export interface CircularProgressProps {
+  value: number; // 0 to 100+
+  size?: number;
+  strokeWidth?: number;
+  className?: string;
+  trackColor?: string;
+  indicatorColor?: string;
+  children?: React.ReactNode;
+}
+
+export const CircularProgress: React.FC<CircularProgressProps> = ({
+  value,
+  size = 64,
+  strokeWidth = 6,
+  className,
+  trackColor = 'var(--layer-3)',
+  indicatorColor = 'var(--accent)',
+  children,
+}) => {
+  const clamped = Math.min(100, Math.max(0, value));
+  const radius = (size - strokeWidth) / 2;
+  const circumference = 2 * Math.PI * radius;
+  const offset = circumference - (clamped / 100) * circumference;
+
+  return (
+    <div
+      className={twMerge('relative inline-flex items-center justify-center select-none shrink-0', className)}
+      style={{ width: size, height: size }}
+      role="progressbar"
+      aria-valuenow={clamped}
+      aria-valuemin={0}
+      aria-valuemax={100}
+    >
+      <svg
+        width={size}
+        height={size}
+        viewBox={`0 0 ${size} ${size}`}
+        className="transform -rotate-90"
+      >
+        <circle
+          cx={size / 2}
+          cy={size / 2}
+          r={radius}
+          fill="none"
+          stroke={trackColor}
+          strokeWidth={strokeWidth}
+        />
+        <circle
+          cx={size / 2}
+          cy={size / 2}
+          r={radius}
+          fill="none"
+          stroke={indicatorColor}
+          strokeWidth={strokeWidth}
+          strokeDasharray={circumference}
+          strokeDashoffset={offset}
+          strokeLinecap="round"
+          className="transition-all duration-500 ease-out"
+        />
+      </svg>
+      {children && <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">{children}</div>}
+    </div>
+  );
+};
+
 export interface SkeletonProps {
   className?: string;
 }
