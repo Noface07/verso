@@ -234,6 +234,34 @@ export default function Reader() {
         t = window.setTimeout(() => readSelection(doc, index), 250)
       })
       doc.addEventListener('keydown', (ev) => onKeyRef.current(ev))
+      doc.addEventListener('contextmenu', (ev) => {
+        const s = doc.getSelection()
+        if (s && !s.isCollapsed) {
+          ev.preventDefault()
+          readSelection(doc, index)
+          return
+        }
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const contents = (viewRef.current?.renderer as any)?.getContents?.() ?? []
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const c = contents.find((item: any) => item.doc === doc) ?? contents[0]
+        const [value, range] = c?.overlayer?.hitTest?.(ev) ?? []
+        if (value) {
+          ev.preventDefault()
+          const a = annotationsRef.current.find((x) => x.cfi === value)
+          if (a && range) {
+            lastAnnotationTap.current = Date.now()
+            setLookup(null)
+            setPop({
+              anchor: toScreen(doc, range.getBoundingClientRect()),
+              cfi: a.cfi,
+              text: a.text,
+              range,
+              annotation: a,
+            })
+          }
+        }
+      })
       doc.addEventListener('click', (ev) => {
         if (Date.now() - lastAnnotationTap.current < 300) return
         if ((ev.target as Element | null)?.closest?.('a')) return

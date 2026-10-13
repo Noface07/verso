@@ -451,51 +451,101 @@ export default function Library() {
           <div className="flex flex-col gap-1 py-2">
             {shown.map((b) => {
               const fav = favIds.has(b.id);
+              const contextSections = [
+                {
+                  items: [
+                    {
+                      key: 'open',
+                      label: 'Open reader',
+                      icon: <BookOpen className="w-4 h-4" />,
+                      onSelect: () => openBook(b),
+                    },
+                    {
+                      key: 'details',
+                      label: 'Book details',
+                      icon: <FileText className="w-4 h-4" />,
+                      onSelect: () => setDetailsBook(b),
+                    },
+                    {
+                      key: 'fav',
+                      label: fav ? 'Remove favourite' : 'Add favourite',
+                      icon: <Heart className="w-4 h-4" />,
+                      onSelect: () => void toggleFavorite(b.id),
+                    },
+                    {
+                      key: 'finish',
+                      label: pct(b) >= 0.99 ? 'Mark unread' : 'Mark finished',
+                      icon: <CheckCircle className="w-4 h-4" />,
+                      onSelect: async () => {
+                        const newPercent = pct(b) >= 0.99 ? 0 : 1;
+                        await db.progress.put({
+                          id: b.id,
+                          cfi: '',
+                          percent: newPercent,
+                          chapter: null,
+                          device_id: 'local',
+                          deleted_at: null,
+                          ...dirty(),
+                        });
+                      },
+                    },
+                    {
+                      key: 'remove',
+                      label: 'Remove book',
+                      icon: <Trash2 className="w-4 h-4" />,
+                      danger: true,
+                      onSelect: () => void removeBook(b),
+                    },
+                  ],
+                },
+              ];
+
               return (
-                <div
-                  key={b.id}
-                  role="button"
-                  tabIndex={0}
-                  onClick={() => openBook(b)}
-                  onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && openBook(b)}
-                  className="flex items-center justify-between p-2.5 rounded-[var(--r-md)] hover:bg-[var(--layer-2)] active:bg-[var(--layer-3)] transition-colors cursor-pointer select-none border border-transparent hover:border-[var(--stroke)]"
-                >
-                  <div className="flex items-center gap-3.5 min-w-0">
-                    <div className="w-10 shrink-0">
-                      <BookCard
-                        id={b.id}
-                        title={b.title}
-                        author={b.author}
-                        coverHash={b.cover_hash}
-                        showMetadata={false}
+                <ContextMenu key={b.id} sections={contextSections}>
+                  <div
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => openBook(b)}
+                    onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && openBook(b)}
+                    className="flex items-center justify-between p-2.5 rounded-[var(--r-md)] hover:bg-[var(--layer-2)] active:bg-[var(--layer-3)] transition-colors cursor-pointer select-none border border-transparent hover:border-[var(--stroke)]"
+                  >
+                    <div className="flex items-center gap-3.5 min-w-0">
+                      <div className="w-10 shrink-0">
+                        <BookCard
+                          id={b.id}
+                          title={b.title}
+                          author={b.author}
+                          coverHash={b.cover_hash}
+                          showMetadata={false}
+                        />
+                      </div>
+                      <div className="min-w-0">
+                        <h4 className="text-sm font-semibold text-[var(--text-1)] truncate flex items-center gap-1.5">
+                          {fav && <Heart className="w-3.5 h-3.5 fill-[var(--accent)] text-[var(--accent)] shrink-0" />}
+                          <span className="truncate">{b.title}</span>
+                        </h4>
+                        <p className="text-xs text-[var(--text-3)] truncate mt-0.5">{b.author}</p>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-4 shrink-0 text-xs text-[var(--text-3)]">
+                      <span className="hidden md:inline font-mono">{b.format}</span>
+                      <span className="hidden sm:inline">{fmtBytes(b.file_size)}</span>
+                      <span className="w-16 text-right font-medium text-[var(--text-2)]">
+                        {pct(b) > 0 ? `${Math.round(pct(b) * 100)}%` : 'New'}
+                      </span>
+                      <IconButton
+                        label="Details"
+                        icon={<MoreVertical className="w-4 h-4" />}
+                        size="sm"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setDetailsBook(b);
+                        }}
                       />
                     </div>
-                    <div className="min-w-0">
-                      <h4 className="text-sm font-semibold text-[var(--text-1)] truncate flex items-center gap-1.5">
-                        {fav && <Heart className="w-3.5 h-3.5 fill-[var(--accent)] text-[var(--accent)] shrink-0" />}
-                        <span className="truncate">{b.title}</span>
-                      </h4>
-                      <p className="text-xs text-[var(--text-3)] truncate mt-0.5">{b.author}</p>
-                    </div>
                   </div>
-
-                  <div className="flex items-center gap-4 shrink-0 text-xs text-[var(--text-3)]">
-                    <span className="hidden md:inline font-mono">{b.format}</span>
-                    <span className="hidden sm:inline">{fmtBytes(b.file_size)}</span>
-                    <span className="w-16 text-right font-medium text-[var(--text-2)]">
-                      {pct(b) > 0 ? `${Math.round(pct(b) * 100)}%` : 'New'}
-                    </span>
-                    <IconButton
-                      label="Details"
-                      icon={<MoreVertical className="w-4 h-4" />}
-                      size="sm"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setDetailsBook(b);
-                      }}
-                    />
-                  </div>
-                </div>
+                </ContextMenu>
               );
             })}
           </div>

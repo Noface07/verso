@@ -8,8 +8,11 @@ import {
   ChevronDown,
   ChevronRight,
   ExternalLink,
+  Copy,
+  Trash2,
+  BookOpen,
 } from 'lucide-react';
-import { db, type Annotation, type Book } from '../db';
+import { db, dirty, type Annotation, type Book } from '../db';
 import { compareCFI } from '../lib/foliate';
 import { HIGHLIGHT_COLORS, colorHex } from '../lib/readerSettings';
 import { fmtDate } from '../lib/format';
@@ -17,6 +20,7 @@ import { CommandBar } from '../design/components/CommandBar';
 import { SearchBox } from '../design/components/SearchBox';
 import { Button } from '../design/components/Button';
 import { Dropdown } from '../design/components/Dropdown';
+import { ContextMenu } from '../design/components/ContextMenu';
 import { BookCard } from '../design/components/BookCard';
 import { EmptyState } from '../design/components/EmptyState';
 
@@ -272,51 +276,83 @@ export default function Notebook() {
                   <div className="divide-y divide-[var(--stroke)] p-2 space-y-2">
                     {items.map((a) => {
                       const hex = colorHex(a.color);
+                      const contextSections = [
+                        {
+                          items: [
+                            {
+                              key: 'goto',
+                              label: 'Go to in book',
+                              icon: <BookOpen className="w-4 h-4" />,
+                              onSelect: () =>
+                                navigate(`/read/${a.book_id}?cfi=${encodeURIComponent(a.cfi)}`),
+                            },
+                            {
+                              key: 'copy',
+                              label: 'Copy quote',
+                              icon: <Copy className="w-4 h-4" />,
+                              onSelect: () => void navigator.clipboard.writeText(a.text),
+                            },
+                            {
+                              key: 'delete',
+                              label: 'Delete highlight',
+                              icon: <Trash2 className="w-4 h-4" />,
+                              danger: true,
+                              onSelect: () =>
+                                void db.annotations.update(a.id, {
+                                  deleted_at: Date.now(),
+                                  ...dirty(),
+                                }),
+                            },
+                          ],
+                        },
+                      ];
+
                       return (
-                        <div
-                          key={a.id}
-                          role="button"
-                          tabIndex={0}
-                          onClick={() =>
-                            navigate(`/read/${a.book_id}?cfi=${encodeURIComponent(a.cfi)}`)
-                          }
-                          onKeyDown={(e) =>
-                            (e.key === 'Enter' || e.key === ' ') &&
-                            navigate(`/read/${a.book_id}?cfi=${encodeURIComponent(a.cfi)}`)
-                          }
-                          className="group relative flex flex-col gap-2 p-3.5 rounded-[var(--r-md)] hover:bg-[var(--layer-3)] transition-colors cursor-pointer select-none text-left"
-                        >
-                          {/* Color bar indicator on left */}
+                        <ContextMenu key={a.id} sections={contextSections}>
                           <div
-                            className="absolute left-1 top-3.5 bottom-3.5 w-1 rounded-full"
-                            style={{ backgroundColor: hex }}
-                          />
+                            role="button"
+                            tabIndex={0}
+                            onClick={() =>
+                              navigate(`/read/${a.book_id}?cfi=${encodeURIComponent(a.cfi)}`)
+                            }
+                            onKeyDown={(e) =>
+                              (e.key === 'Enter' || e.key === ' ') &&
+                              navigate(`/read/${a.book_id}?cfi=${encodeURIComponent(a.cfi)}`)
+                            }
+                            className="group relative flex flex-col gap-2 p-3.5 rounded-[var(--r-md)] hover:bg-[var(--layer-3)] transition-colors cursor-pointer select-none text-left"
+                          >
+                            {/* Color bar indicator on left */}
+                            <div
+                              className="absolute left-1 top-3.5 bottom-3.5 w-1 rounded-full"
+                              style={{ backgroundColor: hex }}
+                            />
 
-                          <div className="pl-3.5 space-y-2">
-                            <blockquote className="text-sm text-[var(--text-1)] leading-relaxed italic border-l-2 border-transparent pl-0">
-                              “<Marked text={a.text} q={query} />”
-                            </blockquote>
+                            <div className="pl-3.5 space-y-2">
+                              <blockquote className="text-sm text-[var(--text-1)] leading-relaxed italic border-l-2 border-transparent pl-0">
+                                “<Marked text={a.text} q={query} />”
+                              </blockquote>
 
-                            {a.note && (
-                              <div className="flex items-start gap-2 p-2 rounded-[var(--r-sm)] bg-[var(--layer-1)] text-xs text-[var(--text-2)] border border-[var(--stroke)]">
-                                <StickyNote className="w-3.5 h-3.5 text-[var(--accent)] shrink-0 mt-0.5" />
-                                <div>
-                                  <Marked text={a.note} q={query} />
+                              {a.note && (
+                                <div className="flex items-start gap-2 p-2 rounded-[var(--r-sm)] bg-[var(--layer-1)] text-xs text-[var(--text-2)] border border-[var(--stroke)]">
+                                  <StickyNote className="w-3.5 h-3.5 text-[var(--accent)] shrink-0 mt-0.5" />
+                                  <div>
+                                    <Marked text={a.note} q={query} />
+                                  </div>
                                 </div>
-                              </div>
-                            )}
+                              )}
 
-                            <div className="flex items-center justify-between text-[11px] text-[var(--text-3)] pt-1">
-                              <span>
-                                {a.chapter && <span className="font-medium">{a.chapter} · </span>}
-                                {fmtDate(a.created_at)}
-                              </span>
-                              <span className="opacity-0 group-hover:opacity-100 transition-opacity text-[var(--accent)] font-medium inline-flex items-center gap-1">
-                                Go to page <ExternalLink className="w-3 h-3" />
-                              </span>
+                              <div className="flex items-center justify-between text-[11px] text-[var(--text-3)] pt-1">
+                                <span>
+                                  {a.chapter && <span className="font-medium">{a.chapter} · </span>}
+                                  {fmtDate(a.created_at)}
+                                </span>
+                                <span className="opacity-0 group-hover:opacity-100 transition-opacity text-[var(--accent)] font-medium inline-flex items-center gap-1">
+                                  Go to page <ExternalLink className="w-3 h-3" />
+                                </span>
+                              </div>
                             </div>
                           </div>
-                        </div>
+                        </ContextMenu>
                       );
                     })}
                   </div>

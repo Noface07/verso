@@ -9,13 +9,16 @@ import {
   Flame,
   Plus,
   Play,
+  Heart,
+  CheckCircle,
 } from 'lucide-react';
-import { db, type Book, type Progress, type ReadingSession } from '../db';
+import { db, dirty, type Book, type Progress, type ReadingSession } from '../db';
 import { useFavoriteIds, toggleFavorite } from '../lib/favourites';
 import { BookCover, useCoverBlobUrl } from '../design/components/BookCover';
 import { BookCard } from '../design/components/BookCard';
 import { Shelf } from '../design/components/Shelf';
 import { Button } from '../design/components/Button';
+import { ContextMenu } from '../design/components/ContextMenu';
 import { EmptyState } from '../design/components/EmptyState';
 import { useTheme } from '../design/theme';
 import type { ShellContext } from '../components/Shell';
@@ -100,6 +103,45 @@ export default function Home() {
     );
   }
 
+  const getContextSections = (b: Book) => {
+    const fav = favIds.has(b.id);
+    return [
+      {
+        items: [
+          {
+            key: 'open',
+            label: 'Open reader',
+            icon: <BookOpen className="w-4 h-4" />,
+            onSelect: () => open(b),
+          },
+          {
+            key: 'fav',
+            label: fav ? 'Remove favourite' : 'Add favourite',
+            icon: <Heart className="w-4 h-4" />,
+            onSelect: () => void toggleFavorite(b.id),
+          },
+          {
+            key: 'finish',
+            label: pct(b) >= 99 ? 'Mark unread' : 'Mark finished',
+            icon: <CheckCircle className="w-4 h-4" />,
+            onSelect: async () => {
+              const newPercent = pct(b) >= 99 ? 0 : 1;
+              await db.progress.put({
+                id: b.id,
+                cfi: '',
+                percent: newPercent,
+                chapter: null,
+                device_id: 'local',
+                deleted_at: null,
+                ...dirty(),
+              });
+            },
+          },
+        ],
+      },
+    ];
+  };
+
   return (
     <div className="flex-1 overflow-y-auto px-4 md:px-8 py-6 space-y-8 max-w-7xl mx-auto w-full">
       {/* Top Split: Recent Reads & Hero + Stats Chips */}
@@ -120,16 +162,20 @@ export default function Home() {
             <div className="flex flex-col sm:flex-row gap-6 p-5 rounded-[var(--r-xl)] bg-[var(--layer-2)] border border-[var(--stroke)] shadow-sm backdrop-blur-md">
               {/* Hero Cover (300px wide on desktop) */}
               <div className="w-full sm:w-[220px] md:w-[260px] lg:w-[280px] shrink-0">
-                <BookCover
-                  id={hero.id}
-                  title={hero.title}
-                  author={hero.author}
-                  coverHash={hero.cover_hash}
-                  progressPercent={pct(hero)}
-                  isFavourite={favIds.has(hero.id)}
-                  onToggleFavourite={() => void toggleFavorite(hero.id)}
-                  onClick={() => open(hero)}
-                />
+                <ContextMenu sections={getContextSections(hero)}>
+                  <div>
+                    <BookCover
+                      id={hero.id}
+                      title={hero.title}
+                      author={hero.author}
+                      coverHash={hero.cover_hash}
+                      progressPercent={pct(hero)}
+                      isFavourite={favIds.has(hero.id)}
+                      onToggleFavourite={() => void toggleFavorite(hero.id)}
+                      onClick={() => open(hero)}
+                    />
+                  </div>
+                </ContextMenu>
               </div>
 
               {/* Hero Metadata & Resume */}
@@ -241,18 +287,20 @@ export default function Home() {
             >
               {favorites.length ? (
                 favorites.map((b) => (
-                  <div key={b.id} className="w-[120px] shrink-0">
-                    <BookCard
-                      id={b.id}
-                      title={b.title}
-                      author={b.author}
-                      coverHash={b.cover_hash}
-                      progressPercent={pct(b)}
-                      isFavourite={true}
-                      onToggleFavourite={() => void toggleFavorite(b.id)}
-                      onClick={() => open(b)}
-                    />
-                  </div>
+                  <ContextMenu key={b.id} sections={getContextSections(b)}>
+                    <div className="w-[120px] shrink-0">
+                      <BookCard
+                        id={b.id}
+                        title={b.title}
+                        author={b.author}
+                        coverHash={b.cover_hash}
+                        progressPercent={pct(b)}
+                        isFavourite={true}
+                        onToggleFavourite={() => void toggleFavorite(b.id)}
+                        onClick={() => open(b)}
+                      />
+                    </div>
+                  </ContextMenu>
                 ))
               ) : (
                 <div className="text-xs text-[var(--text-3)] p-4">
@@ -278,18 +326,20 @@ export default function Home() {
           }
         >
           {added.map((b) => (
-            <div key={b.id} className="w-[130px] shrink-0">
-              <BookCard
-                id={b.id}
-                title={b.title}
-                author={b.author}
-                coverHash={b.cover_hash}
-                progressPercent={pct(b)}
-                isFavourite={favIds.has(b.id)}
-                onToggleFavourite={() => void toggleFavorite(b.id)}
-                onClick={() => open(b)}
-              />
-            </div>
+            <ContextMenu key={b.id} sections={getContextSections(b)}>
+              <div className="w-[130px] shrink-0">
+                <BookCard
+                  id={b.id}
+                  title={b.title}
+                  author={b.author}
+                  coverHash={b.cover_hash}
+                  progressPercent={pct(b)}
+                  isFavourite={favIds.has(b.id)}
+                  onToggleFavourite={() => void toggleFavorite(b.id)}
+                  onClick={() => open(b)}
+                />
+              </div>
+            </ContextMenu>
           ))}
         </Shelf>
       </section>
