@@ -938,7 +938,9 @@ export default function Store() {
                     );
                   }
 
-                  const illustrated = selectedBook.formats?.find((f) => f.label === 'With illustrations');
+                  const primaryFormat = selectedBook.formats?.[0];
+                  const otherFormats = (selectedBook.formats ?? []).slice(1);
+
                   return (
                     <>
                       <Button
@@ -958,21 +960,29 @@ export default function Store() {
                         }}
                       >
                         <Download className="w-4 h-4 mr-2" />
-                        Download
+                        {primaryFormat?.label ? `Download (${primaryFormat.label.split('(')[0].trim()})` : 'Download'}
                       </Button>
                       {readingNow?.id === selectedBook.id && readingNow.error && (
                         <p className="basis-full text-xs text-[var(--danger)]">{readingNow.error}</p>
                       )}
-                      {illustrated && (
-                        <Button
-                          variant="standard"
-                          title="Includes the book's illustrations; can be many times larger"
-                          onClick={() => {
-                            if (activeSource) void downloadManager.enqueue(selectedBook, activeSource, illustrated.url);
-                          }}
-                        >
-                          With illustrations
-                        </Button>
+                      {otherFormats.length > 0 && (
+                        <div className="flex flex-wrap items-center gap-2 basis-full mt-1 pt-2 border-t border-[var(--stroke)]/50">
+                          <span className="text-[11px] text-[var(--text-3)] font-medium">Other formats:</span>
+                          {otherFormats.map((fmt) => (
+                            <Button
+                              key={fmt.url}
+                              variant="standard"
+                              size="sm"
+                              title={`Download ${fmt.label || fmt.mime}`}
+                              onClick={() => {
+                                if (activeSource) void downloadManager.enqueue(selectedBook, activeSource, fmt.url);
+                              }}
+                            >
+                              <Download className="w-3.5 h-3.5 mr-1" />
+                              {fmt.label || (fmt.mime.includes('pdf') ? 'PDF' : fmt.mime.includes('comic') ? 'CBZ' : 'EPUB')}
+                            </Button>
+                          ))}
+                        </div>
                       )}
                     </>
                   );

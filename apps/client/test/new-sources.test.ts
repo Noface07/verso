@@ -141,10 +141,12 @@ describe('New Manga & Book Sources (Tachiyomi, Suwayomi, Mihon, Kotatsu)', () =>
   });
 
   describe('Internet Archive Books Source', () => {
-    it('provides standard sections and queries mediatype:texts AND format:EPUB', async () => {
+    it('provides standard sections including magazines and comics', async () => {
       const src = new ArchiveOrgSource();
       const sections = await src.sections();
       expect(sections.map((s) => s.id)).toContain('popular');
+      expect(sections.map((s) => s.id)).toContain('magazines');
+      expect(sections.map((s) => s.id)).toContain('comics');
       expect(sections.map((s) => s.id)).toContain('gutenberg');
       expect(sections.map((s) => s.id)).toContain('folkscanomy');
     });
@@ -191,6 +193,79 @@ describe('New Manga & Book Sources (Tachiyomi, Suwayomi, Mihon, Kotatsu)', () =>
       expect(book.formats?.[0]?.url).toBe(
         'https://archive.org/download/prideandprejudice00aust/prideandprejudice00aust.epub',
       );
+    });
+
+    it('prioritizes visual scan PDF over OCR EPUB for periodicals and magazines', async () => {
+      const mockMeta = {
+        metadata: {
+          identifier: 'pc-gamer-issue-100',
+          title: 'PC Gamer Issue 100',
+          creator: 'Future Publishing',
+          description: 'Gaming magazine with high-resolution visual scans.',
+          subject: ['Magazine', 'PC Gaming', 'Retro Gaming'],
+          year: '2001',
+        },
+        files: [
+          { name: 'pc-gamer-issue-100.pdf', format: 'Text PDF', size: '52428800' },
+          { name: 'pc-gamer-issue-100_text.pdf', format: 'OCR PDF', size: '2000000' },
+          { name: 'pc-gamer-issue-100.epub', format: 'EPUB', size: '1200000' },
+        ],
+      };
+
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue(
+          new Response(JSON.stringify(mockMeta), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          }),
+        ),
+      );
+
+      const src = new ArchiveOrgSource();
+      const item = await src.details('archiveorg:pc-gamer-issue-100');
+      expect(item).not.toBeNull();
+      expect(item?.kind).toBe('comic');
+      expect(item?.formats?.length).toBe(2);
+      // First format should be the visual PDF scan with images
+      expect(item?.formats?.[0]?.mime).toBe('application/pdf');
+      expect(item?.formats?.[0]?.url).toBe(
+        'https://archive.org/download/pc-gamer-issue-100/pc-gamer-issue-100.pdf',
+      );
+      expect(item?.formats?.[0]?.label).toContain('PDF with images');
+      // Second format should be the OCR EPUB text-only
+      expect(item?.formats?.[1]?.mime).toBe('application/epub+zip');
+      expect(item?.formats?.[1]?.label).toContain('OCR EPUB');
+    });
+
+    it('downloads PDF scans with correct application/pdf MIME type and .pdf filename', async () => {
+      const mockBlob = new Blob(['%PDF-1.4 fake pdf data'], { type: 'application/pdf' });
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue(
+          new Response(mockBlob, {
+            status: 200,
+            headers: { 'Content-Type': 'application/pdf' },
+          }),
+        ),
+      );
+
+      const src = new ArchiveOrgSource();
+      const entry = {
+        id: 'archiveorg:retro-mag-01',
+        title: 'Retro Gamer Magazine 01',
+        formats: [
+          {
+            mime: 'application/pdf',
+            url: 'https://archive.org/download/retro-mag-01/retro-mag-01.pdf',
+            label: 'Full Magazine Scan (PDF with images)',
+          },
+        ],
+      };
+
+      const file = await src.download(entry);
+      expect(file.name).toBe('Retro Gamer Magazine 01.pdf');
+      expect(file.type).toBe('application/pdf');
     });
   });
 

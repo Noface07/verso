@@ -59,14 +59,36 @@ function parseArchiveOrgDoc(doc: ArchiveOrgDoc): CatalogEntry {
     summary = doc.description;
   }
 
+  const isPeriodical =
+    (doc.title && /magazine|periodical|issue|journal|comic/i.test(doc.title)) ||
+    (doc.identifier && /magazine|comic/i.test(doc.identifier));
+
   const coverUrl = `https://archive.org/services/img/${doc.identifier}`;
-  const formats: CatalogFormat[] = [
-    {
+  const formats: CatalogFormat[] = [];
+
+  if (isPeriodical) {
+    formats.push({
+      mime: 'application/pdf',
+      url: `https://archive.org/download/${doc.identifier}/${doc.identifier}.pdf`,
+      label: 'Scanned Magazine (PDF with images)',
+    });
+    formats.push({
+      mime: 'application/epub+zip',
+      url: `https://archive.org/download/${doc.identifier}/${doc.identifier}.epub`,
+      label: 'Text Only (OCR EPUB)',
+    });
+  } else {
+    formats.push({
       mime: 'application/epub+zip',
       url: `https://archive.org/download/${doc.identifier}/${doc.identifier}.epub`,
       label: 'Free EPUB',
-    },
-  ];
+    });
+    formats.push({
+      mime: 'application/pdf',
+      url: `https://archive.org/download/${doc.identifier}/${doc.identifier}.pdf`,
+      label: 'Scanned Book (PDF with images)',
+    });
+  }
 
   return {
     id: `archiveorg:${doc.identifier}`,
@@ -75,7 +97,7 @@ function parseArchiveOrgDoc(doc: ArchiveOrgDoc): CatalogEntry {
     cover: coverUrl,
     summary,
     formats,
-    kind: 'book',
+    kind: isPeriodical ? 'comic' : 'book',
     year: typeof doc.year === 'number' ? doc.year : doc.year ? parseInt(String(doc.year), 10) : undefined,
   };
 }
@@ -89,6 +111,8 @@ export class ArchiveOrgSource implements CatalogSource {
   async sections(): Promise<CatalogSection[]> {
     return [
       { id: 'popular', title: 'Most Popular' },
+      { id: 'magazines', title: 'Magazines & Periodicals' },
+      { id: 'comics', title: 'Comics & Graphic Novels' },
       { id: 'gutenberg', title: 'Gutenberg Archive' },
       { id: 'folkscanomy', title: 'Community Library' },
       { id: 'fiction', title: 'Fiction' },
@@ -100,8 +124,12 @@ export class ArchiveOrgSource implements CatalogSource {
     const limit = 24;
     const page = cursor ? parseInt(cursor, 10) : 1;
 
-    let filter = 'mediatype:texts AND format:EPUB';
-    if (sectionId === 'gutenberg') {
+    let filter = 'mediatype:texts AND -mediatype:collection AND (format:EPUB OR format:PDF OR format:CBZ)';
+    if (sectionId === 'magazines') {
+      filter = 'mediatype:texts AND -mediatype:collection AND (collection:magazine_rack OR collection:computermagazines OR subject:magazine OR subject:periodicals)';
+    } else if (sectionId === 'comics') {
+      filter = 'mediatype:texts AND -mediatype:collection AND (collection:comics OR collection:comicbooks OR subject:comics)';
+    } else if (sectionId === 'gutenberg') {
       filter += ' AND collection:gutenberg';
     } else if (sectionId === 'folkscanomy') {
       filter += ' AND collection:folkscanomy';
@@ -147,7 +175,7 @@ export class ArchiveOrgSource implements CatalogSource {
     const page = cursor ? parseInt(cursor, 10) : 1;
 
     const safeQuery = query.replace(/[^\w\s-]/g, ' ').trim();
-    const filter = `mediatype:texts AND format:EPUB AND (title:(${safeQuery}) OR creator:(${safeQuery}) OR description:(${safeQuery}))`;
+    const filter = `mediatype:texts AND -mediatype:collection AND (format:EPUB OR format:PDF OR format:CBZ) AND (title:(${safeQuery}) OR creator:(${safeQuery}) OR description:(${safeQuery}))`;
 
     const params = new URLSearchParams();
     params.set('q', filter);
@@ -196,21 +224,107 @@ export class ArchiveOrgSource implements CatalogSource {
 
     const meta = data.metadata || {};
     const files = data.files || data.result || [];
-    const epubFile = files.find((f) => f.name.toLowerCase().endsWith('.epub'));
+
+    // 1. PDF files (scanned magazines/books with images)
+    const pdfFiles = files.filter(
+      (f) =>
+        f.name.toLowerCase().endsWith('.pdf') &&
+        !f.name.toLowerCase().endsWith('_lcp.pdf') &&
+        !f.name.toLowerCase().endsWith('_chocr.pdf'),
+    );
+    // Find best visual PDF (prefer clean non-_text and non-_bw PDF)
+    const visualPdf =
+      pdfFiles.find(
+        (f) =>
+          !f.name.toLowerCase().endsWith('_text.pdf') &&
+          !f.name.toLowerCase().endsWith('_bw.pdf') &&
+          !f.name.toLowerCase().endsWith('_daisy.pdf'),
+      ) || pdfFiles[0];
+
+    // 2. CBZ / Comic files
+    const cbzFile = files.find(
+      (f) =>
+        f.name.toLowerCase().endsWith('.cbz') ||
+        f.name.toLowerCase().endsWith('.cbr'),
+    );
+
+    // 3. Clean EPUB files (excluding DRM-locked _lcp.epub)
+    const epubFile = files.find(
+      (f) =>
+        f.name.toLowerCase().endsWith('.epub') &&
+        !f.name.toLowerCase().endsWith('_lcp.epub') &&
+        !f.name.toLowerCase().endsWith('_daisy.zip'),
+    );
+
+    const isPeriodical =
+      meta.subject?.toString().toLowerCase().includes('magazine') ||
+      meta.subject?.toString().toLowerCase().includes('comic') ||
+      meta.subject?.toString().toLowerCase().includes('periodical') ||
+      meta.title?.toString().toLowerCase().includes('magazine') ||
+      meta.description?.toString().toLowerCase().includes('magazine') ||
+      Boolean(cbzFile);
 
     const formats: CatalogFormat[] = [];
-    if (epubFile) {
-      formats.push({
-        mime: 'application/epub+zip',
-        url: `https://archive.org/download/${identifier}/${epubFile.name}`,
-        label: 'Free EPUB',
-        size: epubFile.size ? parseInt(epubFile.size, 10) : undefined,
-      });
+
+    // For magazines & comics: prioritize visual scans with images (PDF / CBZ)
+    if (isPeriodical || !epubFile) {
+      if (visualPdf) {
+        formats.push({
+          mime: 'application/pdf',
+          url: `https://archive.org/download/${identifier}/${visualPdf.name}`,
+          label: 'Full Magazine Scan (PDF with images)',
+          size: visualPdf.size ? parseInt(visualPdf.size, 10) : undefined,
+        });
+      }
+      if (cbzFile) {
+        formats.push({
+          mime: 'application/vnd.comicbook+zip',
+          url: `https://archive.org/download/${identifier}/${cbzFile.name}`,
+          label: 'Comic / Scanned Pages (CBZ)',
+          size: cbzFile.size ? parseInt(cbzFile.size, 10) : undefined,
+        });
+      }
+      if (epubFile) {
+        formats.push({
+          mime: 'application/epub+zip',
+          url: `https://archive.org/download/${identifier}/${epubFile.name}`,
+          label: 'Text Only (OCR EPUB)',
+          size: epubFile.size ? parseInt(epubFile.size, 10) : undefined,
+        });
+      }
     } else {
+      // For general books: offer reflowable EPUB first, then original page scan PDF
+      if (epubFile) {
+        formats.push({
+          mime: 'application/epub+zip',
+          url: `https://archive.org/download/${identifier}/${epubFile.name}`,
+          label: 'Free EPUB (Reflowable text)',
+          size: epubFile.size ? parseInt(epubFile.size, 10) : undefined,
+        });
+      }
+      if (visualPdf) {
+        formats.push({
+          mime: 'application/pdf',
+          url: `https://archive.org/download/${identifier}/${visualPdf.name}`,
+          label: 'Original Book Scan (PDF with images)',
+          size: visualPdf.size ? parseInt(visualPdf.size, 10) : undefined,
+        });
+      }
+      if (cbzFile) {
+        formats.push({
+          mime: 'application/vnd.comicbook+zip',
+          url: `https://archive.org/download/${identifier}/${cbzFile.name}`,
+          label: 'Comic / Scanned Pages (CBZ)',
+          size: cbzFile.size ? parseInt(cbzFile.size, 10) : undefined,
+        });
+      }
+    }
+
+    if (formats.length === 0) {
       formats.push({
-        mime: 'application/epub+zip',
-        url: `https://archive.org/download/${identifier}/${identifier}.epub`,
-        label: 'Free EPUB',
+        mime: 'application/pdf',
+        url: `https://archive.org/download/${identifier}/${identifier}.pdf`,
+        label: 'Scanned PDF with images',
       });
     }
 
@@ -229,7 +343,7 @@ export class ArchiveOrgSource implements CatalogSource {
       summary: meta.description,
       tags,
       formats,
-      kind: 'book',
+      kind: isPeriodical ? 'comic' : 'book',
     };
   }
 
@@ -240,26 +354,72 @@ export class ArchiveOrgSource implements CatalogSource {
   ): Promise<File> {
     const identifier = entry.id.replace(/^archiveorg:/, '');
     let chosenUrl = formatUrl;
+    let chosenMime = 'application/epub+zip';
+    let chosenExt = 'epub';
 
-    if (!chosenUrl || !chosenUrl.endsWith('.epub')) {
-      // Find actual epub filename via metadata
+    const matchedFormat = entry.formats?.find((f) => f.url === formatUrl);
+    if (matchedFormat) {
+      chosenUrl = matchedFormat.url;
+      chosenMime = matchedFormat.mime;
+      if (chosenMime === 'application/pdf' || chosenUrl.toLowerCase().endsWith('.pdf')) {
+        chosenExt = 'pdf';
+        chosenMime = 'application/pdf';
+      } else if (
+        chosenMime.includes('comic') ||
+        chosenUrl.toLowerCase().endsWith('.cbz')
+      ) {
+        chosenExt = 'cbz';
+        chosenMime = 'application/vnd.comicbook+zip';
+      }
+    } else if (!chosenUrl) {
+      const first = entry.formats?.[0];
+      if (first) {
+        chosenUrl = first.url;
+        chosenMime = first.mime;
+        if (chosenMime === 'application/pdf' || chosenUrl.toLowerCase().endsWith('.pdf')) {
+          chosenExt = 'pdf';
+          chosenMime = 'application/pdf';
+        } else if (chosenMime.includes('comic') || chosenUrl.toLowerCase().endsWith('.cbz')) {
+          chosenExt = 'cbz';
+          chosenMime = 'application/vnd.comicbook+zip';
+        }
+      }
+    }
+
+    // If chosenUrl has no extension or is generic, resolve actual filename via metadata
+    if (
+      !chosenUrl ||
+      (!chosenUrl.endsWith('.pdf') && !chosenUrl.endsWith('.epub') && !chosenUrl.endsWith('.cbz'))
+    ) {
       try {
         const metaUrl = `https://archive.org/metadata/${identifier}`;
         const res = await net.fetch(metaUrl);
         if (res.ok) {
           const json = (await res.json()) as ArchiveOrgMetadataResponse;
           const files = json.files || json.result || [];
+          const pdf = files.find(
+            (f) =>
+              f.name.toLowerCase().endsWith('.pdf') &&
+              !f.name.toLowerCase().endsWith('_text.pdf'),
+          );
           const epub = files.find((f) => f.name.toLowerCase().endsWith('.epub'));
-          if (epub) {
+
+          if (pdf && (!epub || chosenExt === 'pdf' || entry.title.toLowerCase().includes('magazine'))) {
+            chosenUrl = `https://archive.org/download/${identifier}/${pdf.name}`;
+            chosenExt = 'pdf';
+            chosenMime = 'application/pdf';
+          } else if (epub) {
             chosenUrl = `https://archive.org/download/${identifier}/${epub.name}`;
+            chosenExt = 'epub';
+            chosenMime = 'application/epub+zip';
           }
         }
       } catch {
-        // Fallback to default constructed formatUrl
+        // Fallback
       }
     }
 
-    chosenUrl = chosenUrl || `https://archive.org/download/${identifier}/${identifier}.epub`;
+    chosenUrl = chosenUrl || `https://archive.org/download/${identifier}/${identifier}.${chosenExt}`;
 
     onProgress?.(0.05);
     const blob = await net.download(chosenUrl, {
@@ -268,8 +428,8 @@ export class ArchiveOrgSource implements CatalogSource {
     onProgress?.(1.0);
 
     const safeTitle = entry.title.replace(/[<>:"/\\|?*]/g, '_').slice(0, 80);
-    return new File([blob], `${safeTitle}.epub`, {
-      type: 'application/epub+zip',
+    return new File([blob], `${safeTitle}.${chosenExt}`, {
+      type: chosenMime,
     });
   }
 }
