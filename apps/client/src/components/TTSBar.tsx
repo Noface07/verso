@@ -1,6 +1,7 @@
 import { Pause, Play, SkipBack, SkipForward, X, Volume2 } from 'lucide-react';
 import { baseLang } from '../lib/lookup';
 import type { TTSState } from '../lib/tts';
+import type { TtsVoice } from '../lib/ttsEngine';
 import { IconButton } from '../design/components/IconButton';
 
 const RATES = [0.75, 1, 1.25, 1.5, 1.75, 2, 2.5];
@@ -23,7 +24,7 @@ export function TTSBar({
   state: TTSState;
   rate: number;
   voiceURI: string;
-  voices: SpeechSynthesisVoice[];
+  voices: (SpeechSynthesisVoice | TtsVoice)[];
   lang: string;
   onPlayPause: () => void;
   onPrev: () => void;
@@ -35,7 +36,7 @@ export function TTSBar({
   onSleepTimer?: (mins: number) => void;
 }) {
   const base = baseLang(lang);
-  const matches = (v: SpeechSynthesisVoice) => v.lang.toLowerCase().startsWith(base);
+  const matches = (v: SpeechSynthesisVoice | TtsVoice) => v.lang.toLowerCase().startsWith(base);
   const sorted = [...voices].sort(
     (a, b) => Number(matches(b)) - Number(matches(a)) || a.name.localeCompare(b.name),
   );

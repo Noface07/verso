@@ -35,6 +35,7 @@ import { Popover } from '../design/components/Popover';
 import { SearchBox } from '../design/components/SearchBox';
 import { ProgressBar, ProgressRing } from '../design/components/Progress';
 import { EmptyState } from '../design/components/EmptyState';
+import { PullToRefresh } from '../components/PullToRefresh';
 
 export default function Store() {
   const navigate = useNavigate();
@@ -463,7 +464,14 @@ export default function Store() {
       )}
 
       {/* Main Content Area */}
-      <div className="flex-1 overflow-y-auto px-6 py-4">
+      <PullToRefresh
+        onRefresh={async () => {
+          if (activeSource) {
+            await fetchItems(activeSource, activeSectionId, debouncedQuery);
+          }
+        }}
+        className="flex-1 px-6 py-4"
+      >
         {loading ? (
           <div className="flex flex-col items-center justify-center py-20 gap-3">
             <ProgressRing size={32} />
@@ -546,7 +554,7 @@ export default function Store() {
             )}
           </div>
         )}
-      </div>
+      </PullToRefresh>
 
       {/* Book Details Modal */}
       {selectedBook && (

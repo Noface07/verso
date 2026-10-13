@@ -27,6 +27,8 @@ import { getRefreshToken } from '../features/auth/storage'
 import { useWheelPaging } from '../lib/useWheelPaging'
 import { useReaderTouch } from '../lib/useReaderTouch'
 import { isInputTarget } from '../lib/useHotkeys'
+import { registerBackHandler } from '../lib/backStack'
+import { setKeepScreenOn, triggerHaptic, useVolumeKeys } from '../lib/mobileUx'
 
 type Panel = 'toc' | 'search' | 'notes' | 'bookmarks' | 'settings' | 'lookup' | null
 const PANEL_TITLE: Record<Exclude<Panel, null>, string> = {
@@ -219,6 +221,67 @@ export default function Reader() {
   useEffect(() => {
     attachTouchDocRef.current = attachTouchDoc
   }, [attachTouchDoc])
+
+  // Keep screen on while reading (P11.1 & P11.3)
+  useEffect(() => {
+    const shouldKeepOn = status === 'ready' && (settings.keepScreenOn ?? true)
+    void setKeepScreenOn(shouldKeepOn)
+    return () => {
+      void setKeepScreenOn(false)
+    }
+  }, [status, settings.keepScreenOn])
+
+  // Volume keys for page turns (P11.5)
+  useVolumeKeys(
+    () => {
+      viewInstance?.next?.()
+      if (settings.haptics ?? true) triggerHaptic('light')
+    },
+    () => {
+      viewInstance?.prev?.()
+      if (settings.haptics ?? true) triggerHaptic('light')
+    },
+    status === 'ready' && !!settings.volumeKeysTurn,
+  )
+
+  // Register Android back handler stack (P11.1 & P11.3)
+  useEffect(() => {
+    return registerBackHandler(() => {
+      if (zoomedImage) {
+        setZoomedImage(null)
+        return true
+      }
+      if (quoteShareText) {
+        setQuoteShareText(null)
+        return true
+      }
+      if (externalLinkPrompt) {
+        setExternalLinkPrompt(null)
+        return true
+      }
+      if (footnotePopup) {
+        setFootnotePopup(null)
+        return true
+      }
+      if (shortcutsOpen) {
+        setShortcutsOpen(false)
+        return true
+      }
+      if (noteFor) {
+        setNoteFor(null)
+        return true
+      }
+      if (panel) {
+        setPanel(null)
+        return true
+      }
+      if (pop) {
+        setPop(null)
+        return true
+      }
+      return false
+    }, 50)
+  }, [zoomedImage, quoteShareText, externalLinkPrompt, footnotePopup, shortcutsOpen, noteFor, panel, pop])
 
   const fractionRef = useRef(0)
   const rangeRef = useRef<Range | null>(null)

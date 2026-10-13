@@ -15,6 +15,7 @@ import Stats from './pages/Stats'
 import DevComponents from './pages/DevComponents'
 import { TitleBar } from './components/TitleBar'
 import { initTauriDesktopIntegration } from './lib/tauriIntegration'
+import { initAndroidIntegration } from './lib/androidIntegration'
 import { syncEngine } from './features/sync/engine'
 import './design/tokens.css'
 
@@ -23,7 +24,15 @@ syncEngine.init()
 function AppRoutes() {
   const navigate = useNavigate()
   useEffect(() => {
-    return initTauriDesktopIntegration((path) => navigate(path))
+    const cleanupDesktop = initTauriDesktopIntegration((path) => navigate(path))
+    const cleanupAndroid = initAndroidIntegration(
+      (path) => navigate(path),
+      () => navigate(-1),
+    )
+    return () => {
+      cleanupDesktop()
+      cleanupAndroid()
+    }
   }, [navigate])
 
   return (

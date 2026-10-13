@@ -17,6 +17,8 @@ import { Button } from '../../design/components/Button';
 import { IconButton } from '../../design/components/IconButton';
 import { ProgressRing } from '../../design/components/Progress';
 import { useReadingSession } from '../../lib/session';
+import { setKeepScreenOn, triggerHaptic, useVolumeKeys } from '../../lib/mobileUx';
+import { registerBackHandler } from '../../lib/backStack';
 
 export type ReadingMode = 'paged-rtl' | 'paged-ltr' | 'webtoon';
 export type FitMode = 'width' | 'height' | 'screen' | 'original';
@@ -249,6 +251,42 @@ export default function MangaReader() {
       void saveProgress(prev, false);
     }
   }, [isTransitionScreen, currentPage, saveProgress, recordActivity]);
+
+  // Keep screen on while reading manga (P11.1 & P11.3)
+  useEffect(() => {
+    void setKeepScreenOn(true);
+    return () => {
+      void setKeepScreenOn(false);
+    };
+  }, []);
+
+  // Volume keys for page turn (P11.5)
+  useVolumeKeys(
+    () => {
+      goToNextPage();
+      triggerHaptic('light');
+    },
+    () => {
+      goToPrevPage();
+      triggerHaptic('light');
+    },
+    !loading,
+  );
+
+  // Android back button closes transition screen or hud before navigating
+  useEffect(() => {
+    return registerBackHandler(() => {
+      if (isTransitionScreen) {
+        setIsTransitionScreen(false);
+        return true;
+      }
+      if (hudVisible) {
+        setHudVisible(false);
+        return true;
+      }
+      return false;
+    }, 40);
+  }, [isTransitionScreen, hudVisible]);
 
   const goToChapter = (targetChapterId: string) => {
     navigate(

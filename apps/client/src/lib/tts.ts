@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Overlayer, type FoliateTTS, type FoliateView } from './foliate'
+import { getTtsEngine, type TtsVoice } from './ttsEngine'
 
 export type TTSState = 'idle' | 'playing' | 'paused'
 interface Mark { name: string; offset: number }
@@ -46,7 +47,7 @@ export class ReadAloud {
   }
 
   static supported() {
-    return typeof window !== 'undefined' && 'speechSynthesis' in window
+    return getTtsEngine().isSupported()
   }
 
   setSection(index: number) {
@@ -72,7 +73,7 @@ export class ReadAloud {
 
   private halt(): number {
     this.token++
-    if (ReadAloud.supported()) speechSynthesis.cancel()
+    void getTtsEngine().stop()
     return this.token
   }
 
@@ -102,10 +103,14 @@ export class ReadAloud {
     if (this.state !== 'playing') return
     this.halt()
     this.set('paused')
+    void getTtsEngine().pause()
   }
 
   resume() {
-    if (this.state === 'paused') this.continueWith((t) => t.resume())
+    if (this.state === 'paused') {
+      void getTtsEngine().resume()
+      this.continueWith((t) => t.resume())
+    }
   }
 
   toggle(from?: Range | null) {
@@ -167,52 +172,55 @@ export class ReadAloud {
     const { text, marks, lang } = parseSSML(ssml)
     if (!text.trim()) return this.speak(tts.next(), token)
 
-    const u = new SpeechSynthesisUtterance(text)
-    u.rate = this.rate
-    const voice = speechSynthesis.getVoices().find((v) => v.voiceURI === this.voiceURI)
-    if (voice) u.voice = voice
-    else if (lang) u.lang = lang
-
     if (marks[0]) tts.setMark(marks[0].name)
-    u.onboundary = (e) => {
-      if (token !== this.token) return
-      let mark: Mark | undefined
-      for (const m of marks) {
-        if (m.offset <= e.charIndex) mark = m
-        else break
-      }
-      if (mark) tts.setMark(mark.name)
-    }
-    u.onend = () => {
-      if (token === this.token) void this.speak(tts.next(), token)
-    }
-    u.onerror = (e) => {
-      if (token !== this.token || e.error === 'interrupted' || e.error === 'canceled') return
-      this.stop()
-    }
-    speechSynthesis.speak(u)
+
+    const engine = getTtsEngine()
+    await engine.speak(text, `utt-${token}-${Date.now()}`, {
+      rate: this.rate,
+      voiceURI: this.voiceURI,
+      lang,
+      onRangeStart: (charIndex) => {
+        if (token !== this.token) return
+        let mark: Mark | undefined
+        for (const m of marks) {
+          if (m.offset <= charIndex) mark = m
+          else break
+        }
+        if (mark) tts.setMark(mark.name)
+      },
+      onDone: () => {
+        if (token === this.token) void this.speak(tts.next(), token)
+      },
+      onError: (e) => {
+        if (token !== this.token) return
+        const err = e as { error?: string }
+        if (err?.error === 'interrupted' || err?.error === 'canceled') return
+        this.stop()
+      },
+    })
   }
 }
 
 export function speakOnce(text: string, lang: string, voiceURI: string, rate: number) {
-  if (!ReadAloud.supported()) return
-  speechSynthesis.cancel()
-  const u = new SpeechSynthesisUtterance(text)
-  const v = speechSynthesis.getVoices().find((x) => x.voiceURI === voiceURI)
-  if (v) u.voice = v
-  else u.lang = lang
-  u.rate = rate
-  speechSynthesis.speak(u)
+  const engine = getTtsEngine()
+  if (!engine.isSupported()) return
+  void engine.stop()
+  void engine.speak(text, `once-${Date.now()}`, { lang, voiceURI, rate })
 }
 
-export function useVoices(): SpeechSynthesisVoice[] {
-  const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([])
+export function useVoices(): TtsVoice[] {
+  const [voices, setVoices] = useState<TtsVoice[]>([])
   useEffect(() => {
-    if (!ReadAloud.supported()) return
-    const load = () => setVoices(speechSynthesis.getVoices())
+    const engine = getTtsEngine()
+    if (!engine.isSupported()) return
+    const load = () => {
+      void engine.getVoices().then(setVoices)
+    }
     load()
-    speechSynthesis.addEventListener('voiceschanged', load)
-    return () => speechSynthesis.removeEventListener('voiceschanged', load)
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      window.speechSynthesis.addEventListener('voiceschanged', load)
+      return () => window.speechSynthesis.removeEventListener('voiceschanged', load)
+    }
   }, [])
   return voices
 }

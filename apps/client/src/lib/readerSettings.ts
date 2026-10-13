@@ -84,6 +84,9 @@ export interface ReaderSettings {
   wheelPaging: boolean
   wheelInvert: boolean
   tapZones: 'split' | 'allNext'
+  volumeKeysTurn?: boolean
+  haptics?: boolean
+  keepScreenOn?: boolean
 }
 
 export const DEFAULT_SETTINGS: ReaderSettings = {
@@ -129,6 +132,9 @@ export const DEFAULT_SETTINGS: ReaderSettings = {
   wheelPaging: true,
   wheelInvert: false,
   tapZones: 'split',
+  volumeKeysTurn: false,
+  haptics: true,
+  keepScreenOn: true,
 }
 
 export function getEffectiveTheme(s: ReaderSettings): { name: string; bg: string; fg: string; link: string; dark: boolean } {

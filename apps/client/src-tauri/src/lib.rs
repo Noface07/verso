@@ -2,7 +2,8 @@ use tauri::{Emitter, Manager};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-  tauri::Builder::default()
+  #[allow(unused_mut)]
+  let mut builder = tauri::Builder::default()
     .plugin(tauri_plugin_log::Builder::default().build())
     .plugin(tauri_plugin_opener::init())
     .plugin(tauri_plugin_fs::init())
@@ -11,8 +12,11 @@ pub fn run() {
     .plugin(tauri_plugin_os::init())
     .plugin(tauri_plugin_notification::init())
     .plugin(tauri_plugin_window_state::Builder::default().build())
-    .plugin(tauri_plugin_deep_link::init())
-    .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+    .plugin(tauri_plugin_deep_link::init());
+
+  #[cfg(desktop)]
+  {
+    builder = builder.plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
       if let Some(win) = app.get_webview_window("main") {
         let _ = win.set_focus();
         let _ = win.unminimize();
@@ -22,12 +26,18 @@ pub fn run() {
           let _ = app.emit("folio://file-open", arg);
         }
       }
-    }))
+    }));
+  }
+
+  builder
     .setup(|app| {
-      let args: Vec<String> = std::env::args().collect();
-      for arg in args.into_iter().skip(1) {
-        if !arg.starts_with('-') {
-          let _ = app.emit("folio://file-open", arg);
+      #[cfg(desktop)]
+      {
+        let args: Vec<String> = std::env::args().collect();
+        for arg in args.into_iter().skip(1) {
+          if !arg.starts_with('-') {
+            let _ = app.emit("folio://file-open", arg);
+          }
         }
       }
       Ok(())
