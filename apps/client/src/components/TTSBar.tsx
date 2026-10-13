@@ -17,6 +17,8 @@ export function TTSBar({
   onStop,
   onRate,
   onVoice,
+  sleepTimer,
+  onSleepTimer,
 }: {
   state: TTSState;
   rate: number;
@@ -29,6 +31,8 @@ export function TTSBar({
   onStop: () => void;
   onRate: (r: number) => void;
   onVoice: (uri: string) => void;
+  sleepTimer?: number;
+  onSleepTimer?: (mins: number) => void;
 }) {
   const base = baseLang(lang);
   const matches = (v: SpeechSynthesisVoice) => v.lang.toLowerCase().startsWith(base);
@@ -104,6 +108,22 @@ export function TTSBar({
           </option>
         ))}
       </select>
+
+      {/* Sleep Timer Select */}
+      {onSleepTimer && (
+        <select
+          value={sleepTimer ?? 0}
+          onChange={(e) => onSleepTimer(Number(e.target.value))}
+          aria-label="Sleep timer"
+          className="h-7 px-2 text-xs font-medium rounded-[var(--r-sm)] bg-[var(--layer-2)] border border-[var(--stroke)] text-[var(--text-1)] outline-none cursor-pointer hover:bg-[var(--layer-3)]"
+        >
+          <option value={0}>Timer off</option>
+          <option value={15}>15 min sleep</option>
+          <option value={30}>30 min sleep</option>
+          <option value={60}>60 min sleep</option>
+          <option value={-1}>End of chapter</option>
+        </select>
+      )}
 
       <div className="h-4 w-[1px] bg-[var(--stroke)] mx-1" />
 

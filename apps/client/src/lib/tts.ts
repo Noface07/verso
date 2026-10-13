@@ -4,7 +4,18 @@ import { Overlayer, type FoliateTTS, type FoliateView } from './foliate'
 export type TTSState = 'idle' | 'playing' | 'paused'
 interface Mark { name: string; offset: number }
 
-function parseSSML(ssml: string): { text: string; marks: Mark[]; lang?: string } {
+export function isSkippableTTSElement(el: Element): boolean {
+  const epubType = el.getAttribute('epub:type') || el.getAttributeNS('http://www.idpf.org/2007/ops', 'type') || ''
+  const role = el.getAttribute('role') || ''
+  const cls = el.getAttribute('class') || ''
+  if (epubType.includes('noteref') || epubType.includes('pagebreak')) return true
+  if (role === 'doc-noteref' || role === 'doc-pagebreak') return true
+  if (/(\bnoteref\b|\bfootnote-ref\b|\bpage-break\b|\bpage-number\b)/i.test(cls)) return true
+  if (el.localName === 'sup' && /^\s*\[?\d+\]?\s*$/.test(el.textContent || '')) return true
+  return false
+}
+
+export function parseSSML(ssml: string): { text: string; marks: Mark[]; lang?: string } {
   const doc = new DOMParser().parseFromString(ssml, 'application/xml')
   let text = ''
   const marks: Mark[] = []
@@ -12,6 +23,7 @@ function parseSSML(ssml: string): { text: string; marks: Mark[]; lang?: string }
     if (n.nodeType === Node.TEXT_NODE) { text += n.nodeValue ?? ''; return }
     if (n.nodeType !== Node.ELEMENT_NODE) return
     const el = n as Element
+    if (isSkippableTTSElement(el)) return
     if (el.localName === 'mark') { marks.push({ name: el.getAttribute('name') ?? '', offset: text.length }); return }
     if (el.localName === 'break') { text += ' '; return }
     n.childNodes.forEach(walk)

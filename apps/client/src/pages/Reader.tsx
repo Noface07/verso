@@ -2,18 +2,20 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useLiveQuery } from 'dexie-react-hooks'
 import {
-  ArrowLeft, BookMarked, Bookmark, Columns2, Headphones, Highlighter, List,
-  Maximize2, Minimize2, RectangleVertical, Search, Type, X,
+  ArrowLeft, BookMarked, Bookmark, Columns2, ExternalLink, Headphones, Highlighter, List,
+  Maximize2, Minimize2, RectangleVertical, Search, Type, Undo2, X,
 } from 'lucide-react'
 import { db, deviceId, dirty, uid, type Annotation, type HighlightStyle, type Progress } from '../db'
 import { CFI, Overlayer, type FoliateView, type TocItem } from '../lib/foliate'
-import { THEMES, applyLayout, colorHex, useReaderSettings } from '../lib/readerSettings'
+import { applyLayout, colorHex, getEffectiveTheme, useReaderSettings } from '../lib/readerSettings'
+import { loadCustomFontFaceCSS } from '../lib/customFonts'
 import { useReadingSession } from '../lib/session'
 import { ReadAloud, speakOnce, useVoices, type TTSState } from '../lib/tts'
 import { SelectionPopover, type MenuAnchor } from '../components/SelectionPopover'
 import { LookupCard, type LookupTab } from '../components/LookupCard'
 import { TTSBar } from '../components/TTSBar'
 import { AnnotationsPanel, NoteEditor, SearchPanel, SettingsPanel, TocPanel } from '../components/ReaderPanels'
+import { QuoteCardShare } from '../components/QuoteCardShare'
 import { IconButton } from '../design/components/IconButton'
 import { Button } from '../design/components/Button'
 import { ShortcutsDialog } from '../design/components/ShortcutsDialog'
@@ -102,6 +104,22 @@ function navKey(e: KeyboardEvent, view: FoliateView | null) {
 const toFoliate = (a: Annotation) => ({ value: a.cfi, color: a.color, style: a.style, note: !!a.note })
 const isSingleWord = (s: string) => s.length < 40 && /^[\p{L}\p{M}'’-]+$/u.test(s)
 
+export function isFootnoteRef(a?: Element | null, href?: string): boolean {
+  if (!a && !href) return false
+  if (a) {
+    const type = a.getAttribute('epub:type') || a.getAttributeNS('http://www.idpf.org/2007/ops', 'type') || ''
+    const role = a.getAttribute('role') || ''
+    const cls = a.getAttribute('class') || ''
+    if (type.includes('noteref') || role === 'doc-noteref' || /(\bnoteref\b|\bfootnote-ref\b)/i.test(cls)) return true
+    if (a.matches('sup a, a sup') || a.closest('sup')) return true
+  }
+  if (href) {
+    const lower = href.toLowerCase()
+    if (/#(fn|footnote|note|ref)[-_0-9]/i.test(lower) || lower.includes('#fn') || lower.includes('#note')) return true
+  }
+  return false
+}
+
 export default function Reader() {
   const { id = '' } = useParams()
   const [params] = useSearchParams()
@@ -173,6 +191,12 @@ export default function Reader() {
   const [fullscreen, setFullscreen] = useState(!!document.fullscreenElement)
   const [ttsState, setTtsState] = useState<TTSState>('idle')
   const [expandedLookupWord, setExpandedLookupWord] = useState('')
+  const [quoteShareText, setQuoteShareText] = useState<string | null>(null)
+  const [externalLinkPrompt, setExternalLinkPrompt] = useState<string | null>(null)
+  const [footnotePopup, setFootnotePopup] = useState<{ text: string; href: string; anchor: MenuAnchor } | null>(null)
+  const [navHistory, setNavHistory] = useState<string[]>([])
+  const [customFontCSS, setCustomFontCSS] = useState('')
+  const currentChapterRef = useRef('')
   const onKeyRef = useRef<(e: KeyboardEvent) => void>(() => {})
   const voices = useVoices()
 
@@ -278,6 +302,11 @@ export default function Reader() {
       fractionRef.current = d.fraction ?? 0
       rangeRef.current = d.range ?? null
       ttsRef.current?.setSection(d.section?.current ?? 0)
+      if (settingsRef.current.ttsSleepTimer === -1 && chapter && currentChapterRef.current && chapter !== currentChapterRef.current) {
+        ttsRef.current?.stop()
+        updateSettings({ ttsSleepTimer: 0 })
+      }
+      currentChapterRef.current = chapter
       setLoc({
         fraction: d.fraction ?? 0,
         cfi: d.cfi ?? '',
@@ -323,6 +352,12 @@ export default function Reader() {
         t = window.setTimeout(() => readSelection(doc, index), 250)
       })
       doc.addEventListener('keydown', (ev) => onKeyRef.current(ev))
+      doc.addEventListener('dblclick', (ev) => {
+        const img = (ev.target as HTMLElement | null)?.closest?.('img')
+        if (img instanceof HTMLImageElement && img.src) {
+          setZoomedImage({ src: img.src, alt: img.alt || '' })
+        }
+      })
       doc.addEventListener('contextmenu', (ev) => {
         const s = doc.getSelection()
         if (s && !s.isCollapsed) {
@@ -453,12 +488,54 @@ export default function Reader() {
         viewRef.current = view
         setViewInstance(view)
         setToc(view.book.toc ?? [])
-        applyLayout(view.renderer, settingsRef.current)
+        applyLayout(view.renderer, settingsRef.current, customFontCSS)
         view.addEventListener('relocate', onRelocate)
         view.addEventListener('load', onLoad)
         view.addEventListener('create-overlay', onCreateOverlay)
         view.addEventListener('draw-annotation', onDraw)
         view.addEventListener('show-annotation', onShowAnnotation)
+
+        const onExternalLink = (e: Event) => {
+          e.preventDefault()
+          const d = (e as CustomEvent).detail as { a?: HTMLAnchorElement; href_?: string; href?: string }
+          const url = d.href_ || d.href || ''
+          if (url) setExternalLinkPrompt(url)
+        }
+
+        const onInternalLink = (e: Event) => {
+          const d = (e as CustomEvent).detail as { a?: HTMLAnchorElement; href: string }
+          const a = d.a
+          const href = d.href
+          if (isFootnoteRef(a, href)) {
+            e.preventDefault()
+            let text = ''
+            const targetId = href.includes('#') ? href.split('#')[1] : ''
+            const doc = a?.ownerDocument
+            if (targetId && doc) {
+              const el = doc.getElementById(targetId) || doc.querySelector(`[id="${targetId}"]`)
+              if (el) text = el.textContent?.trim() || ''
+            }
+            if (!text && a) {
+              text = a.getAttribute('title') || a.getAttribute('aria-label') || ''
+            }
+            if (!text) {
+              text = 'Footnote reference: ' + href
+            }
+            const rect = a?.getBoundingClientRect()
+            const anchor: MenuAnchor = doc && rect
+              ? toScreen(doc, rect)
+              : { x: window.innerWidth / 2, top: window.innerHeight / 2, bottom: window.innerHeight / 2 }
+            setFootnotePopup({ text, href, anchor })
+            return
+          }
+
+          if (locRef.current?.cfi) {
+            setNavHistory((hist) => [...hist, locRef.current!.cfi])
+          }
+        }
+
+        view.addEventListener('external-link', onExternalLink)
+        view.addEventListener('link', onInternalLink)
 
         const tts = new ReadAloud(view)
         tts.onState = setTtsState
@@ -492,10 +569,49 @@ export default function Reader() {
     }
   }, [id])
 
-  // Re-apply layout and styles whenever settings change
+  const locRef = useRef<Loc | null>(null)
   useEffect(() => {
-    if (status === 'ready') applyLayout(viewRef.current?.renderer, settings)
-  }, [settings, status])
+    locRef.current = loc
+  }, [loc])
+
+  useEffect(() => {
+    void loadCustomFontFaceCSS().then(setCustomFontCSS)
+  }, [settings.font])
+
+  // Re-apply layout and styles whenever settings or custom font CSS changes
+  useEffect(() => {
+    if (status === 'ready') applyLayout(viewRef.current?.renderer, settings, customFontCSS)
+  }, [settings, status, customFontCSS])
+
+  // Restore preferred voice for book language
+  useEffect(() => {
+    if (lang && settings.ttsVoiceMap?.[lang] && settings.ttsVoiceMap[lang] !== settings.ttsVoice) {
+      updateSettings({ ttsVoice: settings.ttsVoiceMap[lang] })
+    }
+  }, [lang, settings.ttsVoiceMap, settings.ttsVoice, updateSettings])
+
+  // Sleep timer for read-aloud (in minutes)
+  useEffect(() => {
+    if (ttsState !== 'playing' || !settings.ttsSleepTimer || settings.ttsSleepTimer <= 0) return
+    const ms = settings.ttsSleepTimer * 60 * 1000
+    const timer = window.setTimeout(() => {
+      ttsRef.current?.stop()
+      updateSettings({ ttsSleepTimer: 0 })
+    }, ms)
+    return () => clearTimeout(timer)
+  }, [ttsState, settings.ttsSleepTimer, updateSettings])
+
+  // Auto-paging timer
+  useEffect(() => {
+    if (!settings.autoPaging || status !== 'ready') return
+    const intervalMs = Math.max(3, settings.autoPagingInterval || 15) * 1000
+    const timer = window.setInterval(() => {
+      if (!pop && !panel && !zoomedImage && !quoteShareText && !externalLinkPrompt && !footnotePopup) {
+        void viewRef.current?.next()
+      }
+    }, intervalMs)
+    return () => clearInterval(timer)
+  }, [settings.autoPaging, settings.autoPagingInterval, status, pop, panel, zoomedImage, quoteShareText, externalLinkPrompt, footnotePopup])
 
   // Keep voice and speed in sync with settings
   useEffect(() => {
@@ -538,12 +654,33 @@ export default function Reader() {
   useEffect(() => { popRef.current = pop }, [pop])
   const zoomedImageRef = useRef(zoomedImage)
   useEffect(() => { zoomedImageRef.current = zoomedImage }, [zoomedImage])
+  const quoteShareTextRef = useRef(quoteShareText)
+  useEffect(() => { quoteShareTextRef.current = quoteShareText }, [quoteShareText])
+  const externalLinkPromptRef = useRef(externalLinkPrompt)
+  useEffect(() => { externalLinkPromptRef.current = externalLinkPrompt }, [externalLinkPrompt])
+  const footnotePopupRef = useRef(footnotePopup)
+  useEffect(() => { footnotePopupRef.current = footnotePopup }, [footnotePopup])
 
   // Keyboard shortcuts and fullscreen tracking per §5.4
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      // Escape handling: Close topmost layer (image zoom -> shortcuts -> popover/lookup -> panel -> fullscreen)
+      // Escape handling: Close topmost layer
       if (e.key === 'Escape') {
+        if (quoteShareTextRef.current) {
+          setQuoteShareText(null)
+          e.preventDefault()
+          return
+        }
+        if (externalLinkPromptRef.current) {
+          setExternalLinkPrompt(null)
+          e.preventDefault()
+          return
+        }
+        if (footnotePopupRef.current) {
+          setFootnotePopup(null)
+          e.preventDefault()
+          return
+        }
         if (zoomedImageRef.current) {
           setZoomedImage(null)
           e.preventDefault()
@@ -757,7 +894,7 @@ export default function Reader() {
     else void document.documentElement.requestFullscreen?.()
   }
 
-  const theme = THEMES[settings.theme] ?? THEMES.light
+  const theme = getEffectiveTheme(settings)
   const fraction = scrub ?? loc?.fraction ?? 0
 
   const isLeftPanel = panel === 'toc' || panel === 'notes' || panel === 'bookmarks'
@@ -956,6 +1093,31 @@ export default function Reader() {
         <div className="flex-1 h-full relative overflow-hidden">
           <div className="w-full h-full relative" ref={stageRef} />
 
+          {/* Night light warm amber overlay */}
+          {settings.nightLight > 0 && (
+            <div
+              className="absolute inset-0 pointer-events-none z-10 transition-opacity"
+              style={{
+                backgroundColor: '#ff8c00',
+                opacity: settings.nightLight / 100,
+                mixBlendMode: 'multiply',
+              }}
+              aria-hidden="true"
+            />
+          )}
+
+          {/* Dim brightness overlay */}
+          {settings.dimOverlay > 0 && (
+            <div
+              className="absolute inset-0 pointer-events-none z-10 transition-opacity"
+              style={{
+                backgroundColor: '#000000',
+                opacity: settings.dimOverlay / 100,
+              }}
+              aria-hidden="true"
+            />
+          )}
+
           {/* Bookmark ribbon */}
           {pageBookmarks.length > 0 && (
             <div
@@ -1072,6 +1234,42 @@ export default function Reader() {
         <span>{(fraction * 100).toFixed(2)}%</span>
       </footer>
 
+      {/* Auto-paging status pill */}
+      {settings.autoPaging && (
+        <div className="fixed top-14 right-4 z-20 flex items-center gap-1.5 px-3 py-1 rounded-full bg-[var(--layer-solid)] border border-[var(--stroke)] text-[11px] font-medium text-[var(--text-1)] shadow-sm animate-in fade-in duration-150">
+          <span className="w-2 h-2 rounded-full bg-[var(--accent)] animate-pulse" />
+          <span>Auto-paging ({settings.autoPagingInterval || 15}s)</span>
+          <button
+            type="button"
+            className="ml-1 text-[var(--text-3)] hover:text-[var(--text-1)] cursor-pointer"
+            onClick={() => updateSettings({ autoPaging: false })}
+            title="Stop auto-paging"
+            aria-label="Stop auto-paging"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
+
+      {/* Internal link navigation history "Back to where you were" chip */}
+      {navHistory.length > 0 && (
+        <div className="fixed bottom-20 left-1/2 -translate-x-1/2 z-40 animate-in fade-in slide-in-from-bottom-2 duration-150">
+          <Button
+            variant="accent"
+            size="sm"
+            className="shadow-[var(--shadow-flyout)] flex items-center gap-1.5 text-xs h-8 px-3"
+            onClick={() => {
+              const last = navHistory[navHistory.length - 1]
+              setNavHistory((h) => h.slice(0, h.length - 1))
+              if (last) void viewRef.current?.goTo(last)
+            }}
+          >
+            <Undo2 className="w-3.5 h-3.5" />
+            <span>Back to where you were</span>
+          </Button>
+        </div>
+      )}
+
       {ttsState !== 'idle' && (
         <TTSBar
           state={ttsState}
@@ -1084,7 +1282,14 @@ export default function Reader() {
           onNext={() => ttsRef.current?.next()}
           onStop={() => ttsRef.current?.stop()}
           onRate={(r) => updateSettings({ ttsRate: r })}
-          onVoice={(v) => updateSettings({ ttsVoice: v })}
+          onVoice={(v) =>
+            updateSettings({
+              ttsVoice: v,
+              ttsVoiceMap: { ...(settings.ttsVoiceMap || {}), [lang]: v },
+            })
+          }
+          sleepTimer={settings.ttsSleepTimer}
+          onSleepTimer={(mins) => updateSettings({ ttsSleepTimer: mins })}
         />
       )}
 
@@ -1115,6 +1320,10 @@ export default function Reader() {
             setPanel('lookup')
             closePop()
           }}
+          onShareQuote={() => {
+            setQuoteShareText(pop.text)
+            closePop()
+          }}
         />
       )}
 
@@ -1126,6 +1335,104 @@ export default function Reader() {
             await patchAnnotation(noteFor, { note: note.trim(), type: note.trim() ? 'note' : 'highlight' })
             setNoteFor(null)
           }}
+        />
+      )}
+
+      {/* Footnote popup flyout */}
+      {footnotePopup && (
+        <div
+          role="dialog"
+          aria-label="Footnote"
+          className="fixed z-50 max-w-sm p-4 rounded-xl bg-[var(--layer-solid)] text-[var(--text-1)] border border-[var(--stroke)] shadow-[var(--shadow-flyout)] animate-in fade-in-0 zoom-in-95 duration-150"
+          style={{
+            left: Math.min(Math.max(footnotePopup.anchor.x - 160, 16), window.innerWidth - 336),
+            top: footnotePopup.anchor.bottom + 12 < window.innerHeight - 180
+              ? footnotePopup.anchor.bottom + 12
+              : Math.max(16, footnotePopup.anchor.top - 180),
+          }}
+        >
+          <div className="flex items-center justify-between pb-2 mb-2 border-b border-[var(--stroke)]">
+            <span className="text-xs font-semibold text-[var(--accent)] uppercase tracking-wider">Footnote</span>
+            <IconButton
+              label="Close footnote"
+              icon={<X className="w-4 h-4" />}
+              size="sm"
+              variant="subtle"
+              onClick={() => setFootnotePopup(null)}
+            />
+          </div>
+          <div className="text-xs leading-relaxed max-h-48 overflow-y-auto mb-3 select-text text-[var(--text-1)]">
+            {footnotePopup.text}
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button
+              variant="subtle"
+              size="sm"
+              className="text-xs h-7"
+              onClick={() => setFootnotePopup(null)}
+            >
+              Dismiss
+            </Button>
+            <Button
+              variant="accent"
+              size="sm"
+              className="text-xs h-7"
+              onClick={() => {
+                const targetHref = footnotePopup.href
+                setFootnotePopup(null)
+                void viewRef.current?.goTo(targetHref)
+              }}
+            >
+              Go to note
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {/* External Link Confirmation Modal */}
+      {externalLinkPrompt && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-150">
+          <FocusTrap
+            onClose={() => setExternalLinkPrompt(null)}
+            className="w-full max-w-md p-5 rounded-2xl bg-[var(--layer-solid)] border border-[var(--stroke)] shadow-[var(--shadow-flyout)] text-[var(--text-1)]"
+          >
+            <div className="flex items-center gap-2 mb-3 text-[var(--accent)]">
+              <ExternalLink className="w-5 h-5" />
+              <h3 className="font-display font-semibold text-base">Open External Link?</h3>
+            </div>
+            <p className="text-xs text-[var(--text-2)] mb-3">
+              You are about to open a website outside of Folio in your browser:
+            </p>
+            <div className="p-2.5 rounded-lg bg-[var(--layer-2)] border border-[var(--stroke)] text-xs font-mono break-all text-[var(--text-1)] mb-4">
+              {externalLinkPrompt}
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button variant="subtle" size="sm" onClick={() => setExternalLinkPrompt(null)}>
+                Cancel
+              </Button>
+              <Button
+                variant="accent"
+                size="sm"
+                onClick={() => {
+                  const url = externalLinkPrompt
+                  setExternalLinkPrompt(null)
+                  window.open(url, '_blank', 'noopener,noreferrer')
+                }}
+              >
+                Open Link
+              </Button>
+            </div>
+          </FocusTrap>
+        </div>
+      )}
+
+      {/* Quote Card Share Modal */}
+      {quoteShareText && (
+        <QuoteCardShare
+          quote={quoteShareText}
+          title={book?.title ?? 'Untitled'}
+          author={book?.author ?? 'Unknown Author'}
+          onClose={() => setQuoteShareText(null)}
         />
       )}
 

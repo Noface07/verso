@@ -13,6 +13,7 @@ import {
   Underline,
   Volume2,
   Waves,
+  Quote,
 } from 'lucide-react';
 import type { HighlightStyle } from '../db';
 import { HIGHLIGHT_COLORS } from '../lib/readerSettings';
@@ -54,6 +55,7 @@ export function SelectionPopover(props: {
   onCopy: () => void;
   onDelete?: () => void;
   onExpandLookup?: () => void;
+  onShareQuote?: () => void;
 }) {
   const { anchor, lookup } = props;
   const width = Math.min(390, window.innerWidth - 16);
@@ -176,6 +178,14 @@ export function SelectionPopover(props: {
           size="sm"
           onClick={props.onCopy}
         />
+        {props.onShareQuote && (
+          <IconButton
+            label="Share quote card"
+            icon={<Quote className="w-4 h-4" />}
+            size="sm"
+            onClick={props.onShareQuote}
+          />
+        )}
         {props.onDelete && (
           <IconButton
             label="Delete highlight"
