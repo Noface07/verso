@@ -1,6 +1,7 @@
+import { useEffect } from 'react'
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
-import { HashRouter, Route, Routes } from 'react-router-dom'
+import { HashRouter, Route, Routes, useNavigate } from 'react-router-dom'
 import { ThemeProvider } from './design/theme'
 import Shell from './components/Shell'
 import Home from './pages/Home'
@@ -12,15 +13,23 @@ import MangaReader from './features/manga/MangaReader'
 import Reader from './pages/Reader'
 import Stats from './pages/Stats'
 import DevComponents from './pages/DevComponents'
+import { TitleBar } from './components/TitleBar'
+import { initTauriDesktopIntegration } from './lib/tauriIntegration'
 import { syncEngine } from './features/sync/engine'
 import './design/tokens.css'
 
 syncEngine.init()
 
-createRoot(document.getElementById('root')!).render(
-  <StrictMode>
-    <ThemeProvider>
-      <HashRouter>
+function AppRoutes() {
+  const navigate = useNavigate()
+  useEffect(() => {
+    return initTauriDesktopIntegration((path) => navigate(path))
+  }, [navigate])
+
+  return (
+    <div className="w-full h-full flex flex-col overflow-hidden">
+      <TitleBar />
+      <div className="flex-1 w-full h-full overflow-hidden relative">
         <Routes>
           <Route element={<Shell />}>
             <Route path="/" element={<Home />} />
@@ -34,6 +43,16 @@ createRoot(document.getElementById('root')!).render(
           <Route path="/read/:id" element={<Reader />} />
           <Route path="/read/manga/:seriesId/:chapterId" element={<MangaReader />} />
         </Routes>
+      </div>
+    </div>
+  )
+}
+
+createRoot(document.getElementById('root')!).render(
+  <StrictMode>
+    <ThemeProvider>
+      <HashRouter>
+        <AppRoutes />
       </HashRouter>
     </ThemeProvider>
   </StrictMode>,
