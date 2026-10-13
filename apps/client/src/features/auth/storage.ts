@@ -1,7 +1,11 @@
 import { db } from '../../db';
 
 let memoryAccessToken: string | null = null;
-const DEFAULT_SERVER_URL = 'http://localhost:8080';
+
+export const DEFAULT_SERVER_URL =
+  import.meta.env.PROD
+    ? (import.meta.env.VITE_SERVER_URL || 'https://ffxasce.duckdns.org')
+    : (import.meta.env.VITE_SERVER_URL || 'http://localhost:8080');
 
 export interface StoredUser {
   id: string;

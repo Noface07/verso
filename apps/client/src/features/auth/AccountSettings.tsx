@@ -16,6 +16,7 @@ import {
   getServerUrl,
   setServerUrl,
   clearAuth,
+  DEFAULT_SERVER_URL,
   type StoredUser,
 } from './storage';
 import { db, dirty, SYNC_TABLES, type Device } from '../../db';
@@ -40,7 +41,7 @@ export interface AccountSettingsProps {
 
 export const AccountSettings: React.FC<AccountSettingsProps> = ({ onAuthChange }) => {
   const [currentUser, setCurrentUser] = useState<StoredUser | null>(null);
-  const [serverUrlVal, setServerUrlVal] = useState('http://localhost:8080');
+  const [serverUrlVal, setServerUrlVal] = useState(DEFAULT_SERVER_URL);
   const [isEditingServer, setIsEditingServer] = useState(false);
 
   // Auth form states
@@ -254,7 +255,7 @@ export const AccountSettings: React.FC<AccountSettingsProps> = ({ onAuthChange }
               value={serverUrlVal}
               onChange={(e) => setServerUrlVal(e.target.value)}
               className="flex-1 px-3 py-1.5 text-xs rounded-[var(--r-sm)] bg-[var(--bg-base)] border border-[var(--stroke)] text-[var(--text-1)] outline-none focus:border-[var(--accent)]"
-              placeholder="http://localhost:8080"
+              placeholder={DEFAULT_SERVER_URL}
             />
             <Button size="sm" variant="accent" onClick={handleSaveServerUrl}>
               Save
