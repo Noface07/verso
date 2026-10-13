@@ -1,35 +1,31 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="com.folio.reader">
-
-    <!-- Permissions -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+
+    <!-- AndroidTV support -->
+    <uses-feature android:name="android.software.leanback" android:required="false" />
 
     <application
-        android:allowBackup="true"
         android:icon="@mipmap/ic_launcher"
-        android:label="Folio"
-        android:roundIcon="@mipmap/ic_launcher_round"
-        android:supportsRtl="true"
-        android:theme="@android:style/Theme.DeviceDefault.NoActionBar"
-        android:hardwareAccelerated="true">
-
+        android:label="@string/app_name"
+        android:theme="@style/Theme.folio"
+        android:usesCleartextTraffic="${usesCleartextTraffic}">
         <activity
-            android:name=".MainActivity"
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode"
-            android:exported="true"
             android:launchMode="singleTask"
-            android:windowSoftInputMode="adjustResize">
-            
+            android:label="@string/main_activity_title"
+            android:name=".MainActivity"
+            android:windowSoftInputMode="adjustResize"
+            android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
+                <!-- AndroidTV support -->
+                <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
             </intent-filter>
 
             <!-- Deep link: folio:// -->
@@ -39,29 +35,14 @@
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="folio" />
             </intent-filter>
-
-            <!-- File Association: ACTION_VIEW for eBooks & Comics -->
+            <!-- tauri-file-associations. AUTO-GENERATED. DO NOT REMOVE. -->
             <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <action android:name="android.intent.action.SEND_MULTIPLE" />
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
-                <data android:mimeType="application/epub+zip" />
-                <data android:mimeType="application/x-mobipocket-ebook" />
                 <data android:mimeType="application/pdf" />
-                <data android:mimeType="application/vnd.comicbook+zip" />
-                <data android:mimeType="application/vnd.comicbook-rar" />
-                <data android:mimeType="application/x-cbz" />
-                <data android:mimeType="application/x-cbr" />
-                <data android:mimeType="application/octet-stream" />
-            </intent-filter>
-
-            <!-- File Association by extensions via pathPattern -->
-            <intent-filter>
-                <action android:name="android.intent.action.VIEW" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <data android:scheme="file" />
-                <data android:scheme="content" />
-                <data android:host="*" />
                 <data android:pathPattern=".*\\.epub" />
                 <data android:pathPattern=".*\\.mobi" />
                 <data android:pathPattern=".*\\.azw3" />
@@ -73,27 +54,18 @@
                 <data android:pathPattern=".*\\.cb7" />
                 <data android:pathPattern=".*\\.pdf" />
             </intent-filter>
-
-            <!-- Share to Folio: ACTION_SEND -->
-            <intent-filter>
-                <action android:name="android.intent.action.SEND" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <data android:mimeType="*/*" />
-            </intent-filter>
-
-            <intent-filter>
-                <action android:name="android.intent.action.SEND_MULTIPLE" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <data android:mimeType="*/*" />
-            </intent-filter>
+            
+            <!-- tauri-file-associations. AUTO-GENERATED. DO NOT REMOVE. -->
         </activity>
 
-        <!-- Foreground Service for Read-Aloud Media Playback with Screen Off -->
-        <service
-            android:name=".TtsMediaService"
-            android:enabled="true"
-            android:exported="false"
-            android:foregroundServiceType="mediaPlayback" />
-
+        <provider
+          android:name="androidx.core.content.FileProvider"
+          android:authorities="${applicationId}.fileprovider"
+          android:exported="false"
+          android:grantUriPermissions="true">
+          <meta-data
+            android:name="android.support.FILE_PROVIDER_PATHS"
+            android:resource="@xml/file_paths" />
+        </provider>
     </application>
 </manifest>

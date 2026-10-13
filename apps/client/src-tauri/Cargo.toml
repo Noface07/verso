@@ -24,9 +24,12 @@ tauri-plugin-dialog = "2"
 tauri-plugin-http = "2"
 tauri-plugin-os = "2"
 tauri-plugin-notification = "2"
+tauri-plugin-deep-link = "2"
+
+# Desktop-only plugins (they don't build for Android/iOS).
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-single-instance = "2"
 tauri-plugin-window-state = "2"
-tauri-plugin-deep-link = "2"
 
 # Dependencies (rustls, reqwest, image decoding) are very slow when unoptimised,
 # and every native HTTP request in `tauri dev` goes through them. Optimise deps in

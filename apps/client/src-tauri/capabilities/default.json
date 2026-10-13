@@ -7,11 +7,6 @@
   ],
   "permissions": [
     "core:default",
-    "core:window:allow-minimize",
-    "core:window:allow-toggle-maximize",
-    "core:window:allow-close",
-    "core:window:allow-start-dragging",
-    "core:window:allow-set-fullscreen",
     "opener:default",
     "fs:default",
     "fs:allow-appdata-read-recursive",
@@ -28,7 +23,6 @@
     },
     "os:default",
     "notification:default",
-    "window-state:default",
     "deep-link:default"
   ]
 }

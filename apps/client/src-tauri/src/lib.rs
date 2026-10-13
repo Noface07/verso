@@ -11,11 +11,11 @@ pub fn run() {
     .plugin(tauri_plugin_http::init())
     .plugin(tauri_plugin_os::init())
     .plugin(tauri_plugin_notification::init())
-    .plugin(tauri_plugin_window_state::Builder::default().build())
     .plugin(tauri_plugin_deep_link::init());
 
   #[cfg(desktop)]
   {
+    builder = builder.plugin(tauri_plugin_window_state::Builder::default().build());
     builder = builder.plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
       if let Some(win) = app.get_webview_window("main") {
         let _ = win.set_focus();
