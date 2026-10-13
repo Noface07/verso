@@ -80,7 +80,16 @@ export interface NetFetchOptions extends RequestInit {
 // Hosts verified to send Access-Control-Allow-Origin, so a browser may call them
 // directly. gutenberg.org and standardebooks.org do NOT (checked 2026-10-13): in a
 // browser their files are only reachable through the signed-in server proxy.
-const DIRECT_CORS_HOSTS = new Set(['gutendex.com', 'api.mangadex.org', 'uploads.mangadex.org']);
+const DIRECT_CORS_HOSTS = new Set([
+  'gutendex.com',
+  'api.mangadex.org',
+  'uploads.mangadex.org',
+  'openlibrary.org',
+  'covers.openlibrary.org',
+  'archive.org',
+  'localhost',
+  '127.0.0.1',
+]);
 
 function corsBlockedError(host: string): Error {
   return new Error(

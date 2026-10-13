@@ -148,7 +148,7 @@ export default function MangaReader() {
     setIsTransitionScreen(false);
 
     try {
-      const source = (await getSourceById(sourceKind)) as MangaSource;
+      const source = ((await getSourceById(seriesId)) || (await getSourceById(sourceKind))) as MangaSource;
       if (!source) throw new Error(`Unsupported source: ${sourceKind}`);
 
       const chList = await source.chapters(seriesId);

@@ -10,12 +10,18 @@ const STATIC_ALLOWED_HOSTS = new Set([
   'standardebooks.org',
   'api.mangadex.org',
   'uploads.mangadex.org',
+  'openlibrary.org',
+  'covers.openlibrary.org',
+  'archive.org',
+  'mangapill.com',
+  'cdn.readdetectiveconan.com',
 ]);
 
 function isStaticAllowedHost(hostname: string): boolean {
   const host = hostname.toLowerCase();
   if (STATIC_ALLOWED_HOSTS.has(host)) return true;
   if (host.endsWith('.mangadex.network')) return true;
+  if (host.endsWith('.archive.org')) return true;
   return false;
 }
 

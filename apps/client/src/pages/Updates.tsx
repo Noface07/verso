@@ -4,7 +4,8 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { BookOpen, Check, ExternalLink, RotateCw, Sparkles } from 'lucide-react';
 import { db, type Series } from '../db';
 import { mangaDexSource } from '../sources/mangadex';
-import type { ChapterInfo } from '../sources/types';
+import { getSourceById } from '../sources/registry';
+import type { ChapterInfo, MangaSource } from '../sources/types';
 import { openInAppWindow } from '../lib/tauri';
 import { isFollowedSeries } from '../lib/series';
 import { CommandBar } from '../design/components/CommandBar';
@@ -37,7 +38,7 @@ function dayLabel(iso: string | undefined): string {
 export default function Updates() {
   const navigate = useNavigate();
   const followed = useLiveQuery(
-    () => db.series.filter((s) => isFollowedSeries(s) && s.source === 'mangadex').toArray(),
+    () => db.series.filter((s) => isFollowedSeries(s)).toArray(),
     [],
   );
   const readIds = useLiveQuery(
@@ -76,10 +77,43 @@ export default function Updates() {
       setLoading(true);
       setError(null);
       try {
-        const result = await mangaDexSource.recentChapters(
-          seriesKey.split(','),
-          Date.now() - WINDOW_DAYS * DAY_MS,
+        const mdSeriesIds = (followed ?? [])
+          .filter((s) => s.source === 'mangadex' || s.id.startsWith('mangadex:'))
+          .map((s) => s.id);
+
+        const otherSeries = (followed ?? []).filter(
+          (s) => s.source !== 'mangadex' && !s.id.startsWith('mangadex:'),
         );
+
+        let result: Update[] = [];
+        if (mdSeriesIds.length > 0) {
+          result = await mangaDexSource.recentChapters(
+            mdSeriesIds,
+            Date.now() - WINDOW_DAYS * DAY_MS,
+          );
+        }
+
+        // Fetch latest chapters for other followed series
+        for (const ser of otherSeries) {
+          try {
+            const src = (await getSourceById(ser.id)) || (await getSourceById(ser.source));
+            if (src && 'chapters' in src) {
+              const chs = await (src as MangaSource).chapters(ser.id);
+              const cutoff = Date.now() - WINDOW_DAYS * DAY_MS;
+              for (const ch of chs.slice(0, 5)) {
+                const pubTime = ch.publishedAt ? new Date(ch.publishedAt).getTime() : Date.now();
+                if (pubTime >= cutoff) {
+                  result.push({ ...ch, seriesId: ser.id });
+                }
+              }
+            }
+          } catch {
+            // Ignore non-blocking failure for individual series
+          }
+        }
+
+        result.sort((a, b) => (b.publishedAt ?? '').localeCompare(a.publishedAt ?? ''));
+
         if (ticket !== seq.current) return;
         cache = { key: seriesKey, at: Date.now(), items: result };
         setItems(result);
@@ -90,7 +124,7 @@ export default function Updates() {
         if (ticket === seq.current) setLoading(false);
       }
     },
-    [seriesKey],
+    [seriesKey, followed],
   );
 
   useEffect(() => {

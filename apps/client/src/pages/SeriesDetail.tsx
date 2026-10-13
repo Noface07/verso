@@ -21,6 +21,7 @@ import {
 import { db, dirty, now, uid, type ChapterProgress } from '../db';
 import { getSourceById } from '../sources/registry';
 import { isAdultRating, type ChapterInfo, type MangaSource, type CatalogEntry, type PageRef } from '../sources/types';
+import { net } from '../lib/net';
 import { safeHtml } from '../lib/safeHtml';
 import { openInAppWindow } from '../lib/tauri';
 import { toggleFavorite, useFavoriteIds } from '../lib/favourites';
@@ -110,7 +111,7 @@ export default function SeriesDetail() {
     if (!seriesViewCache.has(seriesId)) setLoading(true);
     setError(null);
     try {
-      const source = await getSourceById(sourceKind);
+      const source = (await getSourceById(seriesId)) || (await getSourceById(sourceKind));
       if (!source) {
         throw new Error(`Unsupported source: ${sourceKind}`);
       }
@@ -203,13 +204,13 @@ export default function SeriesDetail() {
     setDownloadProgress(0.1);
 
     try {
-      const source = (await getSourceById(sourceKind)) as MangaSource;
+      const source = ((await getSourceById(seriesId)) || (await getSourceById(sourceKind))) as MangaSource;
       const pages = await source.pages(chapter.id);
       const total = pages.length;
 
       for (let i = 0; i < total; i++) {
         const p = pages[i];
-        const res = await fetch(p.url);
+        const res = await net.fetch(p.url);
         if (res.ok) {
           const blob = await res.blob();
           const pageId = `${seriesId}:${chapter.id}:${p.index}`;

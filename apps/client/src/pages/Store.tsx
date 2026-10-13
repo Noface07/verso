@@ -17,6 +17,8 @@ import { db, type Book, type DownloadItem } from '../db';
 import {
   getAllBookSources,
   addCustomOpdsSource,
+  addCustomSuwayomiSource,
+  addCustomKomgaSource,
   removeCustomSource,
 } from '../sources/registry';
 import {
@@ -53,18 +55,37 @@ interface StoreSnapshot {
 }
 let storeSnapshot: StoreSnapshot | null = null;
 
-// Free, legal OPDS catalogs verified to respond (2026-10). Standard Ebooks is built in.
-const OPDS_PRESETS = [
+// Free, legal catalog and server presets
+const SOURCE_PRESETS = [
   {
     name: 'unglue.it (free ebooks)',
-    // The EPUB acquisition feed: lists books directly (the root is a navigation feed).
+    kind: 'opds' as const,
     url: 'https://unglue.it/api/opds/epub/?order_by=popular',
     about: 'Books released for free by their rights holders (Creative Commons and similar). EPUB only.',
   },
+  {
+    name: 'Suwayomi Server (Localhost)',
+    kind: 'suwayomi' as const,
+    url: 'http://localhost:4567',
+    about: 'Local Suwayomi (Tachidesk) server. Unlocks all installed Tachiyomi & Mihon extensions.',
+  },
+  {
+    name: 'Komga Server (Localhost)',
+    kind: 'komga' as const,
+    url: 'http://localhost:25600',
+    about: 'Local Komga comics/manga server with OPDS & REST page streaming.',
+  },
 ];
 
-// Built-in sources can't be removed; only custom (OPDS) sources get a delete button.
-const BUILT_IN_SOURCE_IDS = new Set(['gutenberg', 'standardebooks', 'mangadex']);
+// Built-in sources can't be removed; only custom sources get a delete button.
+const BUILT_IN_SOURCE_IDS = new Set([
+  'gutenberg',
+  'standardebooks',
+  'openlibrary',
+  'archiveorg',
+  'mangadex',
+  'mangapill',
+]);
 
 export default function Store() {
   const snap = storeSnapshot;
@@ -93,6 +114,7 @@ export default function Store() {
   // Dialogs
   const [selectedBook, setSelectedBook] = useState<CatalogEntry | null>(null);
   const [addSourceOpen, setAddSourceOpen] = useState(false);
+  const [newSourceKind, setNewSourceKind] = useState<'opds' | 'suwayomi' | 'komga'>('opds');
   const [newSourceName, setNewSourceName] = useState('');
   const [newSourceUrl, setNewSourceUrl] = useState('');
   const [newSourceUser, setNewSourceUser] = useState('');
@@ -356,13 +378,30 @@ export default function Store() {
     setAddSourceLoading(true);
     setAddSourceError(null);
     try {
-      const src = await addCustomOpdsSource({
-        name: newSourceName.trim(),
-        url: newSourceUrl.trim(),
-        username: newSourceUser.trim() || undefined,
-        password: newSourcePass.trim() || undefined,
-        apiKey: newSourceApiKey.trim() || undefined,
-      });
+      let src: CatalogSource;
+      if (newSourceKind === 'suwayomi') {
+        src = await addCustomSuwayomiSource({
+          name: newSourceName.trim(),
+          url: newSourceUrl.trim(),
+          apiKey: newSourceApiKey.trim() || undefined,
+        });
+      } else if (newSourceKind === 'komga') {
+        src = await addCustomKomgaSource({
+          name: newSourceName.trim(),
+          url: newSourceUrl.trim(),
+          username: newSourceUser.trim() || undefined,
+          password: newSourcePass.trim() || undefined,
+          apiKey: newSourceApiKey.trim() || undefined,
+        });
+      } else {
+        src = await addCustomOpdsSource({
+          name: newSourceName.trim(),
+          url: newSourceUrl.trim(),
+          username: newSourceUser.trim() || undefined,
+          password: newSourcePass.trim() || undefined,
+          apiKey: newSourceApiKey.trim() || undefined,
+        });
+      }
       await refreshSources();
       switchSource(src.id);
       setAddSourceOpen(false);
@@ -459,7 +498,7 @@ export default function Store() {
                   value={s.id}
                   className="bg-[var(--layer-solid)] text-[var(--text-1)]"
                 >
-                  {s.name}
+                  {s.name} · {s.kind === 'manga' ? 'Manga' : 'Books'}
                 </option>
               ))}
             </select>
@@ -924,32 +963,91 @@ export default function Store() {
       <Dialog
         open={addSourceOpen}
         onOpenChange={setAddSourceOpen}
-        title="Add Custom Source (OPDS)"
+        title="Add Custom Source"
       >
         <form onSubmit={handleAddSource} className="flex flex-col gap-4 py-1">
-          {/* Curated, legal catalogs checked to serve working OPDS feeds. */}
+          {/* Source Type Selector */}
           <div>
-            <span className="block text-xs font-semibold text-[var(--text-2)] mb-1.5">Quick add</span>
+            <span className="block text-xs font-semibold text-[var(--text-2)] mb-1.5">Source Type</span>
+            <div className="grid grid-cols-3 gap-1.5 p-1 bg-[var(--layer-2)] border border-[var(--stroke)] rounded-[var(--r-md)]">
+              <button
+                type="button"
+                onClick={() => {
+                  setNewSourceKind('opds');
+                  if (!newSourceName || newSourceName.includes('Suwayomi') || newSourceName.includes('Komga')) {
+                    setNewSourceName('Custom OPDS');
+                    setNewSourceUrl('');
+                  }
+                }}
+                className={`py-1.5 px-2 text-xs font-medium rounded-[var(--r-sm)] transition-colors cursor-pointer ${
+                  newSourceKind === 'opds'
+                    ? 'bg-[var(--layer-1)] text-[var(--text-1)] shadow-sm'
+                    : 'text-[var(--text-2)] hover:text-[var(--text-1)]'
+                }`}
+              >
+                OPDS (Books)
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setNewSourceKind('suwayomi');
+                  if (!newSourceName || newSourceName === 'Custom OPDS' || newSourceName.includes('Komga')) {
+                    setNewSourceName('Suwayomi (Tachiyomi)');
+                    setNewSourceUrl('http://localhost:4567');
+                  }
+                }}
+                className={`py-1.5 px-2 text-xs font-medium rounded-[var(--r-sm)] transition-colors cursor-pointer ${
+                  newSourceKind === 'suwayomi'
+                    ? 'bg-[var(--layer-1)] text-[var(--text-1)] shadow-sm'
+                    : 'text-[var(--text-2)] hover:text-[var(--text-1)]'
+                }`}
+              >
+                Suwayomi / Mihon
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setNewSourceKind('komga');
+                  if (!newSourceName || newSourceName === 'Custom OPDS' || newSourceName.includes('Suwayomi')) {
+                    setNewSourceName('Komga Server');
+                    setNewSourceUrl('http://localhost:25600');
+                  }
+                }}
+                className={`py-1.5 px-2 text-xs font-medium rounded-[var(--r-sm)] transition-colors cursor-pointer ${
+                  newSourceKind === 'komga'
+                    ? 'bg-[var(--layer-1)] text-[var(--text-1)] shadow-sm'
+                    : 'text-[var(--text-2)] hover:text-[var(--text-1)]'
+                }`}
+              >
+                Komga Server
+              </button>
+            </div>
+          </div>
+
+          {/* Quick Presets */}
+          <div>
+            <span className="block text-xs font-semibold text-[var(--text-2)] mb-1.5">Quick Presets</span>
             <div className="flex flex-wrap gap-2">
-              {OPDS_PRESETS.map((preset) => (
+              {SOURCE_PRESETS.map((preset) => (
                 <button
-                  key={preset.url}
+                  key={preset.name}
                   type="button"
                   title={preset.about}
                   onClick={() => {
+                    setNewSourceKind(preset.kind);
                     setNewSourceName(preset.name);
                     setNewSourceUrl(preset.url);
                   }}
-                  className="px-2.5 py-1 rounded-[var(--r-md)] border border-[var(--stroke)] bg-[var(--layer-2)] text-xs text-[var(--text-1)] hover:border-[var(--accent)] cursor-pointer"
+                  className={`px-2.5 py-1 rounded-[var(--r-md)] border text-xs cursor-pointer transition-colors ${
+                    newSourceUrl === preset.url
+                      ? 'border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent)] font-medium'
+                      : 'border-[var(--stroke)] bg-[var(--layer-2)] text-[var(--text-1)] hover:border-[var(--accent)]'
+                  }`}
                 >
                   {preset.name}
                 </button>
               ))}
             </div>
-            <p className="text-[11px] text-[var(--text-3)] mt-1.5">
-              Your own server works too: Calibre <code>http://PC-IP:8080/opds</code>, Komga{' '}
-              <code>https://host/opds/v1.2/catalog</code>, Kavita <code>https://host/api/opds/API-KEY</code>.
-            </p>
           </div>
 
           {addSourceError && (
@@ -969,7 +1067,13 @@ export default function Store() {
               id="source-name-input"
               type="text"
               required
-              placeholder="e.g. Calibre OPDS, Standard Ebooks"
+              placeholder={
+                newSourceKind === 'suwayomi'
+                  ? 'e.g. My Suwayomi Server'
+                  : newSourceKind === 'komga'
+                    ? 'e.g. My Komga Server'
+                    : 'e.g. Calibre OPDS, Standard Ebooks'
+              }
               value={newSourceName}
               onChange={(e) => setNewSourceName(e.target.value)}
               className="w-full h-9 px-3 rounded-[var(--r-md)] bg-[var(--layer-2)] border border-[var(--stroke)] text-sm text-[var(--text-1)] outline-none focus:border-[var(--accent)]"
@@ -981,60 +1085,79 @@ export default function Store() {
               htmlFor="source-url-input"
               className="block text-xs font-semibold text-[var(--text-2)] mb-1"
             >
-              OPDS Catalog URL
+              {newSourceKind === 'suwayomi'
+                ? 'Suwayomi Server URL'
+                : newSourceKind === 'komga'
+                  ? 'Komga Server URL'
+                  : 'OPDS Catalog URL'}
             </label>
             <input
               id="source-url-input"
               type="url"
               required
-              placeholder="https://example.com/opds"
+              placeholder={
+                newSourceKind === 'suwayomi'
+                  ? 'http://localhost:4567'
+                  : newSourceKind === 'komga'
+                    ? 'http://localhost:25600'
+                    : 'https://example.com/opds'
+              }
               value={newSourceUrl}
               onChange={(e) => setNewSourceUrl(e.target.value)}
               className="w-full h-9 px-3 rounded-[var(--r-md)] bg-[var(--layer-2)] border border-[var(--stroke)] text-sm text-[var(--text-1)] outline-none focus:border-[var(--accent)]"
             />
+            <p className="text-[11px] text-[var(--text-3)] mt-1">
+              {newSourceKind === 'suwayomi'
+                ? 'Connects to Suwayomi-Server (Tachidesk). All installed Tachiyomi and Mihon extensions become available in Folio.'
+                : newSourceKind === 'komga'
+                  ? 'Connects to your self-hosted Komga comics and manga server.'
+                  : 'Connects to standard OPDS 1.2 or 2.0 feeds (Calibre, Kavita, Unglue.it, etc.).'}
+            </p>
           </div>
 
           <div className="border-t border-[var(--stroke)] pt-3">
             <span className="block text-xs font-medium text-[var(--text-3)] mb-2">
               Authentication (Optional)
             </span>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div>
-                <label
-                  htmlFor="source-user-input"
-                  className="block text-[11px] text-[var(--text-2)] mb-1"
-                >
-                  Username
-                </label>
-                <input
-                  id="source-user-input"
-                  type="text"
-                  placeholder="Optional username"
-                  value={newSourceUser}
-                  onChange={(e) => setNewSourceUser(e.target.value)}
-                  className="w-full h-8 px-2.5 rounded-[var(--r-md)] bg-[var(--layer-2)] border border-[var(--stroke)] text-xs text-[var(--text-1)] outline-none focus:border-[var(--accent)]"
-                />
-              </div>
+            {newSourceKind !== 'suwayomi' && (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-2.5">
+                <div>
+                  <label
+                    htmlFor="source-user-input"
+                    className="block text-[11px] text-[var(--text-2)] mb-1"
+                  >
+                    Username
+                  </label>
+                  <input
+                    id="source-user-input"
+                    type="text"
+                    placeholder="Optional username"
+                    value={newSourceUser}
+                    onChange={(e) => setNewSourceUser(e.target.value)}
+                    className="w-full h-8 px-2.5 rounded-[var(--r-md)] bg-[var(--layer-2)] border border-[var(--stroke)] text-xs text-[var(--text-1)] outline-none focus:border-[var(--accent)]"
+                  />
+                </div>
 
-              <div>
-                <label
-                  htmlFor="source-pass-input"
-                  className="block text-[11px] text-[var(--text-2)] mb-1"
-                >
-                  Password
-                </label>
-                <input
-                  id="source-pass-input"
-                  type="password"
-                  placeholder="Optional password"
-                  value={newSourcePass}
-                  onChange={(e) => setNewSourcePass(e.target.value)}
-                  className="w-full h-8 px-2.5 rounded-[var(--r-md)] bg-[var(--layer-2)] border border-[var(--stroke)] text-xs text-[var(--text-1)] outline-none focus:border-[var(--accent)]"
-                />
+                <div>
+                  <label
+                    htmlFor="source-pass-input"
+                    className="block text-[11px] text-[var(--text-2)] mb-1"
+                  >
+                    Password
+                  </label>
+                  <input
+                    id="source-pass-input"
+                    type="password"
+                    placeholder="Optional password"
+                    value={newSourcePass}
+                    onChange={(e) => setNewSourcePass(e.target.value)}
+                    className="w-full h-8 px-2.5 rounded-[var(--r-md)] bg-[var(--layer-2)] border border-[var(--stroke)] text-xs text-[var(--text-1)] outline-none focus:border-[var(--accent)]"
+                  />
+                </div>
               </div>
-            </div>
+            )}
 
-            <div className="mt-2.5">
+            <div>
               <label
                 htmlFor="source-key-input"
                 className="block text-[11px] text-[var(--text-2)] mb-1"
