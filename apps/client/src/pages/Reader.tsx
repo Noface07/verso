@@ -18,6 +18,7 @@ import { IconButton } from '../design/components/IconButton'
 import { Button } from '../design/components/Button'
 import { ShortcutsDialog } from '../design/components/ShortcutsDialog'
 import { ImageViewerDialog } from '../design/components/ImageViewerDialog'
+import { FocusTrap } from '../design/components/FocusTrap'
 import { useWheelPaging } from '../lib/useWheelPaging'
 import { useReaderTouch } from '../lib/useReaderTouch'
 import { isInputTarget } from '../lib/useHotkeys'
@@ -803,15 +804,20 @@ export default function Reader() {
       >
         {/* Left docked panel (360px on desktop) */}
         {panel && isLeftPanel && (
-          <aside className="hidden md:flex w-[360px] h-full shrink-0 border-r border-[var(--rline)] bg-[var(--rbg)] flex-col z-10 animate-in slide-in-from-left duration-200">
-            <div className="flex items-center justify-between h-12 px-4 border-b border-[var(--rline)] shrink-0">
-              <h3 className="font-display font-semibold text-sm">{PANEL_TITLE[panel]}</h3>
-              <IconButton label="Close panel" icon={<X className="w-4 h-4" />} size="sm" onClick={() => setPanel(null)} />
-            </div>
-            <div className="flex-1 overflow-y-auto p-3">
-              {renderPanelContent()}
-            </div>
-          </aside>
+          <FocusTrap
+            onClose={() => setPanel(null)}
+            className="hidden md:flex w-[360px] h-full shrink-0 border-r border-[var(--rline)] bg-[var(--rbg)] flex-col z-10 animate-in slide-in-from-left duration-200"
+          >
+            <aside className="w-full h-full flex flex-col">
+              <div className="flex items-center justify-between h-12 px-4 border-b border-[var(--rline)] shrink-0">
+                <h3 className="font-display font-semibold text-sm">{PANEL_TITLE[panel]}</h3>
+                <IconButton label="Close panel" icon={<X className="w-4 h-4" />} size="sm" onClick={() => setPanel(null)} />
+              </div>
+              <div className="flex-1 overflow-y-auto p-3">
+                {renderPanelContent()}
+              </div>
+            </aside>
+          </FocusTrap>
         )}
 
         {/* Reading stage */}
@@ -846,15 +852,20 @@ export default function Reader() {
 
         {/* Right docked panel (360px on desktop) */}
         {panel && isRightPanel && (
-          <aside className="hidden md:flex w-[360px] h-full shrink-0 border-l border-[var(--rline)] bg-[var(--rbg)] flex-col z-10 animate-in slide-in-from-right duration-200">
-            <div className="flex items-center justify-between h-12 px-4 border-b border-[var(--rline)] shrink-0">
-              <h3 className="font-display font-semibold text-sm">{PANEL_TITLE[panel]}</h3>
-              <IconButton label="Close panel" icon={<X className="w-4 h-4" />} size="sm" onClick={() => setPanel(null)} />
-            </div>
-            <div className="flex-1 overflow-y-auto p-3">
-              {renderPanelContent()}
-            </div>
-          </aside>
+          <FocusTrap
+            onClose={() => setPanel(null)}
+            className="hidden md:flex w-[360px] h-full shrink-0 border-l border-[var(--rline)] bg-[var(--rbg)] flex-col z-10 animate-in slide-in-from-right duration-200"
+          >
+            <aside className="w-full h-full flex flex-col">
+              <div className="flex items-center justify-between h-12 px-4 border-b border-[var(--rline)] shrink-0">
+                <h3 className="font-display font-semibold text-sm">{PANEL_TITLE[panel]}</h3>
+                <IconButton label="Close panel" icon={<X className="w-4 h-4" />} size="sm" onClick={() => setPanel(null)} />
+              </div>
+              <div className="flex-1 overflow-y-auto p-3">
+                {renderPanelContent()}
+              </div>
+            </aside>
+          </FocusTrap>
         )}
       </main>
 
@@ -867,16 +878,21 @@ export default function Reader() {
             className="fixed inset-0 bg-black/60 backdrop-blur-xs animate-in fade-in duration-200 border-none p-0 cursor-default"
             onClick={() => setPanel(null)}
           />
-          <aside className="relative z-10 w-full max-h-[85vh] rounded-t-2xl bg-[var(--rbg)] border-t border-[var(--rline)] shadow-[var(--shadow-flyout)] flex flex-col animate-in slide-in-from-bottom duration-200">
-            <div className="w-10 h-1 rounded-full bg-[var(--rline)] mx-auto mt-2.5 mb-1" />
-            <div className="flex items-center justify-between h-11 px-4 border-b border-[var(--rline)] shrink-0">
-              <h3 className="font-display font-semibold text-sm">{PANEL_TITLE[panel]}</h3>
-              <IconButton label="Close panel" icon={<X className="w-4 h-4" />} size="sm" onClick={() => setPanel(null)} />
-            </div>
-            <div className="flex-1 overflow-y-auto p-4 pb-8">
-              {renderPanelContent()}
-            </div>
-          </aside>
+          <FocusTrap
+            onClose={() => setPanel(null)}
+            className="relative z-10 w-full max-h-[85vh] rounded-t-2xl bg-[var(--rbg)] border-t border-[var(--rline)] shadow-[var(--shadow-flyout)] flex flex-col animate-in slide-in-from-bottom duration-200"
+          >
+            <aside className="w-full h-full flex flex-col">
+              <div className="w-10 h-1 rounded-full bg-[var(--rline)] mx-auto mt-2.5 mb-1" />
+              <div className="flex items-center justify-between h-11 px-4 border-b border-[var(--rline)] shrink-0">
+                <h3 className="font-display font-semibold text-sm">{PANEL_TITLE[panel]}</h3>
+                <IconButton label="Close panel" icon={<X className="w-4 h-4" />} size="sm" onClick={() => setPanel(null)} />
+              </div>
+              <div className="flex-1 overflow-y-auto p-4 pb-8">
+                {renderPanelContent()}
+              </div>
+            </aside>
+          </FocusTrap>
         </div>
       )}
 

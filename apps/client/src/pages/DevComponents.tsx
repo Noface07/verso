@@ -26,6 +26,7 @@ import { ProgressBar, ProgressRing, Skeleton } from '../design/components/Progre
 import { BookCard } from '../design/components/BookCard';
 import { Shelf } from '../design/components/Shelf';
 import { EmptyState } from '../design/components/EmptyState';
+import { FocusTrap } from '../design/components/FocusTrap';
 
 export default function DevComponents() {
   const [togglePressed, setTogglePressed] = useState(false);
@@ -33,6 +34,7 @@ export default function DevComponents() {
   const [tabVal, setTabVal] = useState('overview');
   const [searchVal, setSearchVal] = useState('');
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [trapOpen, setTrapOpen] = useState(false);
   const [sliderVal, setSliderVal] = useState([65]);
   const [switchVal, setSwitchVal] = useState(true);
   const [checkVal, setCheckVal] = useState<boolean | 'indeterminate'>(true);
@@ -197,6 +199,30 @@ export default function DevComponents() {
             This dialog adheres to the 560px max width and token-based layer styles.
           </p>
         </Dialog>
+
+        <div className="pt-2">
+          <Button variant="standard" onClick={() => setTrapOpen(!trapOpen)}>
+            {trapOpen ? 'Close Focus Trap' : 'Open Focus Trap Demo'}
+          </Button>
+          {trapOpen && (
+            <div className="mt-3 p-4 bg-[var(--layer-2)] border border-[var(--stroke)] rounded-[var(--r-md)] max-w-md">
+              <FocusTrap onClose={() => setTrapOpen(false)} className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-sm font-semibold text-[var(--text-1)]">Focus Trap Active</h4>
+                  <span className="text-xs text-[var(--text-2)]">Press Esc to close</span>
+                </div>
+                <p className="text-xs text-[var(--text-2)]">
+                  Tab and Shift+Tab cycle only through the buttons below. Closing restores focus to the trigger button above.
+                </p>
+                <div className="flex gap-2">
+                  <Button size="sm" variant="accent">Action 1</Button>
+                  <Button size="sm" variant="standard">Action 2</Button>
+                  <Button size="sm" variant="subtle" onClick={() => setTrapOpen(false)}>Done</Button>
+                </div>
+              </FocusTrap>
+            </div>
+          )}
+        </div>
       </section>
 
       {/* Feedback & Indicators */}
