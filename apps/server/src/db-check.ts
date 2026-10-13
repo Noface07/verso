@@ -33,13 +33,25 @@ const bad = (msg: string) => {
 async function main() {
   for (const warning of describeConnection()) console.log(`  ! ${warning}`);
 
-  const info = await pool.query<{ version: string; user: string; ssl: boolean | null }>(
-    `select version() as version, current_user as user,
-            (select ssl from pg_stat_ssl where pid = pg_backend_pid()) as ssl`,
-  );
-  const { version, user, ssl } = info.rows[0];
+  const client = await pool.connect();
+  let version: string;
+  let user: string;
+  let tls: string | null;
+  try {
+    const info = await client.query<{ version: string; user: string }>(
+      'select version() as version, current_user as user',
+    );
+    ({ version, user } = info.rows[0]);
+    // Inspect our own socket: through a pooler, pg_stat_ssl describes the
+    // pooler -> Postgres hop rather than this app's connection.
+    const stream = (client as unknown as { connection: { stream: { encrypted?: boolean; getProtocol?: () => string | null } } })
+      .connection.stream;
+    tls = stream.encrypted ? (stream.getProtocol?.() ?? 'TLS') : null;
+  } finally {
+    client.release();
+  }
   ok(`connected as ${user} — ${version.split(' on ')[0]}`);
-  if (ssl) ok('connection is encrypted (TLS)');
+  if (tls) ok(`connection is encrypted (${tls})`);
   else console.log('  ! connection is not encrypted (fine for local Docker, not for a hosted DB)');
 
   const tables = await pool.query<{ tablename: string; rowsecurity: boolean }>(
@@ -73,16 +85,16 @@ async function main() {
   const hub = new NotifyHub();
   const channel = `folio_check_${randomUUID()}`;
   try {
-    const received = new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error('timed out')), 5000);
-      void hub.subscribe(channel, () => {
-        clearTimeout(timer);
-        resolve();
-      });
-    });
-    await new Promise((r) => setTimeout(r, 300));
+    let resolveReceived!: () => void;
+    const received = new Promise<void>((resolve) => (resolveReceived = resolve));
+    // Wait until LISTEN is in place, then NOTIFY from a different connection,
+    // exactly as a sync push from another device would.
+    await hub.subscribe(channel, () => resolveReceived());
     await pool.query('select pg_notify($1, $2)', [channel, '']);
-    await received;
+    await Promise.race([
+      received,
+      new Promise((_, reject) => setTimeout(() => reject(new Error('timed out after 10s')), 10_000)),
+    ]);
     ok('LISTEN/NOTIFY works (live sync between devices)');
   } catch (err) {
     bad(
