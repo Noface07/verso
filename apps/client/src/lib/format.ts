@@ -14,3 +14,15 @@ export function fmtMinutes(min: number): string {
 export function fmtDate(ms: number): string {
   return new Date(ms).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })
 }
+
+export function fmtRelativeTime(ms: number | null): string {
+  if (!ms) return 'Never'
+  const diffSec = Math.floor((Date.now() - ms) / 1000)
+  if (diffSec < 10) return 'Just now'
+  if (diffSec < 60) return `${diffSec}s ago`
+  const diffMin = Math.floor(diffSec / 60)
+  if (diffMin < 60) return `${diffMin}m ago`
+  const diffHr = Math.floor(diffMin / 60)
+  if (diffHr < 24) return `${diffHr}h ago`
+  return fmtDate(ms)
+}

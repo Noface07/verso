@@ -1,4 +1,5 @@
 import Dexie, { type EntityTable } from 'dexie'
+import { SYNC_TABLES as SHARED_SYNC_TABLES, type SyncTableName } from '@folio/shared'
 
 export interface Syncable {
   id: string
@@ -59,6 +60,7 @@ export interface Annotation extends Syncable {
 export interface Collection extends Syncable {
   name: string
   sort_order: number
+  meta?: Record<string, unknown>
 }
 
 export interface CollectionBook extends Syncable {
@@ -75,10 +77,50 @@ export interface ReadingSession extends Syncable {
   end_percent: number
   words_read: number
   device_id: string
+  kind?: string
 }
 
 export interface SettingsRow extends Syncable {
   data: Record<string, unknown>
+}
+
+export interface Series extends Syncable {
+  source: string
+  source_id: string
+  title: string
+  author?: string
+  cover_url?: string
+  status?: string
+  meta: Record<string, unknown>
+  added_at?: number
+  last_read_at?: number
+  last_checked_at?: number
+}
+
+export interface ChapterProgress extends Syncable {
+  series_id: string
+  source: string
+  chapter_id: string
+  chapter_number?: number
+  title?: string
+  page?: number
+  total_pages?: number
+  read: boolean
+  read_at?: number
+}
+
+export interface Source extends Syncable {
+  kind: string
+  name: string
+  url: string
+  meta: Record<string, unknown>
+  sort_order: number
+}
+
+export interface Device extends Syncable {
+  name: string
+  platform: string
+  last_seen_at?: number
 }
 
 export interface FileRow { hash: string; blob: Blob }
@@ -93,11 +135,16 @@ export const db = new Dexie('folio') as Dexie & {
   collection_books: EntityTable<CollectionBook, 'id'>
   reading_sessions: EntityTable<ReadingSession, 'id'>
   settings: EntityTable<SettingsRow, 'id'>
+  series: EntityTable<Series, 'id'>
+  chapter_progress: EntityTable<ChapterProgress, 'id'>
+  sources: EntityTable<Source, 'id'>
+  devices: EntityTable<Device, 'id'>
   files: EntityTable<FileRow, 'hash'>
   covers: EntityTable<CoverRow, 'id'>
   kv: EntityTable<KV, 'key'>
 }
 
+// Version 1: initial tables
 db.version(1).stores({
   books: 'id, title, author, added_at, last_opened_at, _dirty',
   progress: 'id, _dirty',
@@ -111,13 +158,46 @@ db.version(1).stores({
   kv: 'key',
 })
 
-export const SYNC_TABLES = [
-  'books', 'progress', 'annotations', 'collections',
-  'collection_books', 'reading_sessions', 'settings',
-] as const
+// Version 2: manga, series, sources, devices
+db.version(2).stores({
+  books: 'id, title, author, added_at, last_opened_at, _dirty',
+  progress: 'id, _dirty',
+  annotations: 'id, book_id, type, _dirty',
+  collections: 'id, _dirty',
+  collection_books: 'id, collection_id, book_id, _dirty',
+  reading_sessions: 'id, book_id, started_at, _dirty',
+  settings: 'id, _dirty',
+  series: 'id, source, title, last_read_at, _dirty',
+  chapter_progress: 'id, series_id, source, _dirty',
+  sources: 'id, kind, _dirty',
+  devices: 'id, _dirty',
+  files: 'hash',
+  covers: 'id',
+  kv: 'key',
+})
+
+export const SYNC_TABLES = Object.keys(SHARED_SYNC_TABLES) as SyncTableName[]
 
 export const uid = () => crypto.randomUUID()
-export const dirty = () => ({ updated_at: Date.now(), _dirty: 1 as const })
+
+let clockOffset = 0
+export function setClockOffset(offset: number) {
+  clockOffset = offset
+  db.kv.put({ key: 'clock_offset', value: offset }).catch(() => {})
+}
+export function getClockOffset(): number {
+  return clockOffset
+}
+
+// Restore cached clock offset on initialization
+db.kv.get('clock_offset').then((row) => {
+  if (row && typeof row.value === 'number') {
+    clockOffset = row.value
+  }
+}).catch(() => {})
+
+export const now = () => Date.now() + clockOffset
+export const dirty = () => ({ updated_at: now(), _dirty: 1 as const })
 
 export function deviceId(): string {
   let id = localStorage.getItem('device_id')

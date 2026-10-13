@@ -13,6 +13,7 @@ import { useGlobalHotkeys } from '../lib/useHotkeys';
 export interface ShellContext {
   openImport: () => void;
   importing: boolean;
+  openSettings: (tab?: 'appearance' | 'account') => void;
 }
 
 export default function Shell() {
@@ -21,12 +22,17 @@ export default function Shell() {
   const [importing, setImporting] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsTab, setSettingsTab] = useState<'appearance' | 'account'>('appearance');
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [toast, setToast] = useState<{ id: number; message: string; severity?: 'info' | 'success' | 'warning' | 'error' } | null>(null);
 
   const { activeCoverUrl, settings } = useTheme();
 
   const openImport = () => inputRef.current?.click();
+  const openSettings = (tab: 'appearance' | 'account' = 'appearance') => {
+    setSettingsTab(tab);
+    setSettingsOpen(true);
+  };
 
   useGlobalHotkeys({
     onSearch: () => {
@@ -39,7 +45,7 @@ export default function Shell() {
       }
     },
     onImport: openImport,
-    onSettings: () => setSettingsOpen(true),
+    onSettings: () => openSettings('appearance'),
     onNavigate: (path) => navigate(path),
     onHelp: () => setShortcutsOpen((o) => !o),
     onEscape: () => {
@@ -92,15 +98,15 @@ export default function Shell() {
       <AmbientBackdrop coverUrl={activeCoverUrl} enabled={settings.ambientEnabled} />
 
       {/* Desktop/Tablet Navigation Rail */}
-      <NavRail onOpenSettings={() => setSettingsOpen(true)} />
+      <NavRail onOpenSettings={() => openSettings('appearance')} />
 
       {/* Main Content Area */}
       <main className="relative z-10 flex-1 flex flex-col h-full overflow-hidden pb-[56px] md:pb-0">
-        <Outlet context={{ openImport, importing } satisfies ShellContext} />
+        <Outlet context={{ openImport, importing, openSettings } satisfies ShellContext} />
       </main>
 
       {/* Mobile Bottom Navigation Bar (< 600px) */}
-      <BottomNav onOpenSettings={() => setSettingsOpen(true)} />
+      <BottomNav onOpenSettings={() => openSettings('appearance')} />
 
       {/* Global Hidden File Input */}
       <input
@@ -137,7 +143,11 @@ export default function Shell() {
       )}
 
       {/* Global Settings Modal */}
-      <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
+      <SettingsDialog
+        open={settingsOpen}
+        onOpenChange={setSettingsOpen}
+        initialTab={settingsTab}
+      />
 
       {/* Keyboard Shortcuts Help Modal */}
       <ShortcutsDialog open={shortcutsOpen} onOpenChange={setShortcutsOpen} />

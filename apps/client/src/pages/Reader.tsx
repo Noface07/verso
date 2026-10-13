@@ -19,6 +19,9 @@ import { Button } from '../design/components/Button'
 import { ShortcutsDialog } from '../design/components/ShortcutsDialog'
 import { ImageViewerDialog } from '../design/components/ImageViewerDialog'
 import { FocusTrap } from '../design/components/FocusTrap'
+import { InfoBar } from '../design/components/InfoBar'
+import { getFile } from '../features/sync/api'
+import { getRefreshToken } from '../features/auth/storage'
 import { useWheelPaging } from '../lib/useWheelPaging'
 import { useReaderTouch } from '../lib/useReaderTouch'
 import { isInputTarget } from '../lib/useHotkeys'
@@ -124,8 +127,38 @@ export default function Reader() {
     annotationsRef.current = annotations
   }, [annotations])
 
+  const [viewInstance, setViewInstance] = useState<FoliateView | null>(null)
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading')
+  const [downloading, setDownloading] = useState(false)
   const [error, setError] = useState('')
+  const remoteProgress = useLiveQuery(() => db.progress.get(id), [id])
+  const [conflict, setConflict] = useState<{
+    device: string
+    chapter: string
+    percent: number
+    cfi: string
+  } | null>(null)
+  const dismissedConflictCfi = useRef<string | null>(null)
+
+  useEffect(() => {
+    if (!remoteProgress || !remoteProgress.cfi || !viewInstance) return
+    const myDeviceId = deviceId()
+    if (remoteProgress.device_id && remoteProgress.device_id !== myDeviceId) {
+      const diff = remoteProgress.percent - fractionRef.current
+      if (diff > 0.01 && dismissedConflictCfi.current !== remoteProgress.cfi) {
+        void (async () => {
+          const dev = await db.devices.get(remoteProgress.device_id)
+          setConflict({
+            device: dev?.name || 'another device',
+            chapter: remoteProgress.chapter || '',
+            percent: remoteProgress.percent,
+            cfi: remoteProgress.cfi,
+          })
+        })()
+      }
+    }
+  }, [remoteProgress, viewInstance])
+
   const [toc, setToc] = useState<TocItem[]>([])
   const [loc, setLoc] = useState<Loc | null>(null)
   const [scrub, setScrub] = useState<number | null>(null)
@@ -140,7 +173,6 @@ export default function Reader() {
   const [fullscreen, setFullscreen] = useState(!!document.fullscreenElement)
   const [ttsState, setTtsState] = useState<TTSState>('idle')
   const [expandedLookupWord, setExpandedLookupWord] = useState('')
-  const [viewInstance, setViewInstance] = useState<FoliateView | null>(null)
   const onKeyRef = useRef<(e: KeyboardEvent) => void>(() => {})
   const voices = useVoices()
 
@@ -345,8 +377,27 @@ export default function Reader() {
       try {
         const row = await db.books.get(id)
         if (!row) throw new Error('This book is not in your library.')
-        const stored = await db.files.get(row.file_hash)
-        if (!stored) throw new Error('The book file is not on this device yet. It will download once sync is set up.')
+        let stored = await db.files.get(row.file_hash)
+        if (!stored) {
+          const isOnline = typeof navigator !== 'undefined' ? navigator.onLine : true
+          const refreshToken = await getRefreshToken()
+          if (!isOnline) {
+            throw new Error('Book file not downloaded. Connect to the internet to download it from your server.')
+          }
+          if (!refreshToken) {
+            throw new Error('The book file is not on this device. Sign in to your account to download it.')
+          }
+          setDownloading(true)
+          try {
+            const blob = await getFile(row.file_hash)
+            await db.files.put({ hash: row.file_hash, blob })
+            stored = { hash: row.file_hash, blob }
+          } catch (dlErr) {
+            throw new Error(`Failed to download book: ${dlErr instanceof Error ? dlErr.message : 'network error'}`, { cause: dlErr })
+          } finally {
+            setDownloading(false)
+          }
+        }
         if (cancelled || !stageRef.current) return
 
         const file = new File([stored.blob], row.meta.file_name || `book.${row.format.toLowerCase()}`, {
@@ -794,6 +845,45 @@ export default function Reader() {
         </div>
       </header>
 
+      {/* Progress conflict banner */}
+      {conflict && (
+        <div className="fixed top-14 inset-x-4 z-40 max-w-xl mx-auto animate-in fade-in-0 slide-in-from-top-2">
+          <InfoBar
+            severity="info"
+            message={`You're further along on ${conflict.device}: ${conflict.chapter ? conflict.chapter + ', ' : ''}${Math.round(conflict.percent * 100)}%. Jump there?`}
+            action={
+              <div className="flex items-center gap-1.5">
+                <Button
+                  size="sm"
+                  variant="accent"
+                  onClick={() => {
+                    dismissedConflictCfi.current = conflict.cfi
+                    void viewRef.current?.goTo(conflict.cfi)
+                    setConflict(null)
+                  }}
+                >
+                  Jump
+                </Button>
+                <Button
+                  size="sm"
+                  variant="subtle"
+                  onClick={() => {
+                    dismissedConflictCfi.current = conflict.cfi
+                    setConflict(null)
+                  }}
+                >
+                  Stay
+                </Button>
+              </div>
+            }
+            onClose={() => {
+              dismissedConflictCfi.current = conflict.cfi
+              setConflict(null)
+            }}
+          />
+        </div>
+      )}
+
       {/* Main viewport with docked side panels */}
       <main
         className="flex-1 flex overflow-hidden relative transition-all duration-200"
@@ -836,7 +926,7 @@ export default function Reader() {
           {status === 'loading' && (
             <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 bg-[var(--rbg)] text-[var(--rmuted)]">
               <div className="w-8 h-8 rounded-full border-2 border-[var(--rline)] border-t-[var(--accent)] animate-spin" />
-              <span className="text-sm">Opening book…</span>
+              <span className="text-sm">{downloading ? 'Downloading from your server…' : 'Opening book…'}</span>
             </div>
           )}
 

@@ -8,7 +8,10 @@ import Library from './pages/Library'
 import Notebook from './pages/Notebook'
 import Reader from './pages/Reader'
 import DevComponents from './pages/DevComponents'
+import { syncEngine } from './features/sync/engine'
 import './design/tokens.css'
+
+syncEngine.init()
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

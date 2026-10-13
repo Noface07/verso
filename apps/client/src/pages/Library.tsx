@@ -15,8 +15,9 @@ import {
   CheckCircle,
   FileText,
   ChevronDown,
+  Edit3,
 } from 'lucide-react';
-import { db, dirty, uid, type Book, type Progress, type Collection } from '../db';
+import { db, dirty, uid, deviceId, type Book, type Progress, type Collection, type CollectionBook } from '../db';
 import { fmtBytes, fmtDate, fmtMinutes } from '../lib/format';
 import { toggleFavorite, useFavoriteIds } from '../lib/favourites';
 import { CommandBar } from '../design/components/CommandBar';
@@ -24,7 +25,7 @@ import { SegmentedControl } from '../design/components/SegmentedControl';
 import { SearchBox } from '../design/components/SearchBox';
 import { Button } from '../design/components/Button';
 import { IconButton } from '../design/components/IconButton';
-import { Dropdown } from '../design/components/Dropdown';
+import { Dropdown, type DropdownMenuSection } from '../design/components/Dropdown';
 import { ContextMenu } from '../design/components/ContextMenu';
 import { Dialog } from '../design/components/Dialog';
 import { CoverGrid } from '../design/components/CoverGrid';
@@ -44,6 +45,11 @@ export default function Library() {
   const books = useLiveQuery(() => db.books.filter((b) => !b.deleted_at).toArray(), [], [] as Book[]);
   const progressRows = useLiveQuery(() => db.progress.toArray(), [], [] as Progress[]);
   const collections = useLiveQuery(() => db.collections.filter((c) => !c.deleted_at).toArray(), [], [] as Collection[]);
+  const collectionBooks = useLiveQuery(
+    () => db.collection_books.filter((cb) => !cb.deleted_at).toArray(),
+    [],
+    [] as CollectionBook[],
+  );
   const favIds = useFavoriteIds();
 
   const [query, setQuery] = useState('');
@@ -63,6 +69,9 @@ export default function Library() {
   const [detailsBook, setDetailsBook] = useState<Book | null>(null);
   const [newCollectionOpen, setNewCollectionOpen] = useState(false);
   const [newCollectionName, setNewCollectionName] = useState('');
+  const [renameCollectionOpen, setRenameCollectionOpen] = useState(false);
+  const [renameCollectionName, setRenameCollectionName] = useState('');
+  const [deleteCollectionOpen, setDeleteCollectionOpen] = useState(false);
 
   const progress = useMemo(() => new Map(progressRows.map((p) => [p.id, p])), [progressRows]);
   const pct = (b: Book) => progress.get(b.id)?.percent ?? 0;
@@ -74,6 +83,16 @@ export default function Library() {
       // Format segmented filter
       if (formatType === 'comics' && b.format !== 'CBZ' && b.format !== 'CBR') return false;
       if (formatType === 'books' && (b.format === 'CBZ' || b.format === 'CBR')) return false;
+
+      // Collection filter
+      if (selectedCollection === 'favorites') {
+        if (!favIds.has(b.id)) return false;
+      } else if (selectedCollection !== 'all') {
+        const inCol = collectionBooks.some(
+          (cb) => cb.collection_id === selectedCollection && cb.book_id === b.id,
+        );
+        if (!inCol) return false;
+      }
 
       // Search query
       if (q && !`${b.title} ${b.author} ${b.meta.series ?? ''}`.toLowerCase().includes(q)) return false;
@@ -96,7 +115,7 @@ export default function Library() {
     };
 
     return list.sort(cmp[sort]);
-  }, [books, progress, favIds, query, filter, sort, formatType]);
+  }, [books, progress, favIds, query, filter, sort, formatType, selectedCollection, collectionBooks]);
 
   const openBook = (b: Book) => navigate(`/read/${b.id}`);
 
@@ -111,8 +130,9 @@ export default function Library() {
 
   const createCollection = useCallback(async () => {
     if (!newCollectionName.trim()) return;
+    const newId = uid();
     await db.collections.add({
-      id: uid(),
+      id: newId,
       name: newCollectionName.trim(),
       sort_order: collections.length,
       deleted_at: null,
@@ -120,7 +140,58 @@ export default function Library() {
     });
     setNewCollectionName('');
     setNewCollectionOpen(false);
+    setSelectedCollection(newId);
   }, [collections.length, newCollectionName]);
+
+  const renameCollection = useCallback(async () => {
+    if (!renameCollectionName.trim() || selectedCollection === 'all' || selectedCollection === 'favorites') return;
+    await db.collections.update(selectedCollection, {
+      name: renameCollectionName.trim(),
+      ...dirty(),
+    });
+    setRenameCollectionOpen(false);
+  }, [selectedCollection, renameCollectionName]);
+
+  const deleteCollection = useCallback(async () => {
+    if (selectedCollection === 'all' || selectedCollection === 'favorites') return;
+    const nowMs = Date.now();
+    await db.collections.update(selectedCollection, {
+      deleted_at: nowMs,
+      ...dirty(),
+    });
+    const related = collectionBooks.filter((cb) => cb.collection_id === selectedCollection);
+    for (const r of related) {
+      await db.collection_books.update(r.id, {
+        deleted_at: nowMs,
+        ...dirty(),
+      });
+    }
+    setDeleteCollectionOpen(false);
+    setSelectedCollection('all');
+  }, [selectedCollection, collectionBooks]);
+
+  const toggleBookInCollection = useCallback(
+    async (bookId: string, colId: string) => {
+      const existing = collectionBooks.find(
+        (cb) => cb.collection_id === colId && cb.book_id === bookId,
+      );
+      if (existing) {
+        await db.collection_books.update(existing.id, {
+          deleted_at: Date.now(),
+          ...dirty(),
+        });
+      } else {
+        await db.collection_books.put({
+          id: uid(),
+          collection_id: colId,
+          book_id: bookId,
+          deleted_at: null,
+          ...dirty(),
+        });
+      }
+    },
+    [collectionBooks],
+  );
 
   // Collection Dropdown Items
   const collectionDropdownSections = [
@@ -253,29 +324,130 @@ export default function Library() {
     },
   ];
 
+  const getBookContextSections = useCallback(
+    (b: Book) => {
+      const fav = favIds.has(b.id);
+      const sections: DropdownMenuSection[] = [
+        {
+          items: [
+            {
+              key: 'open',
+              label: 'Open reader',
+              icon: <BookOpen className="w-4 h-4" />,
+              onSelect: () => openBook(b),
+            },
+            {
+              key: 'details',
+              label: 'Book details',
+              icon: <FileText className="w-4 h-4" />,
+              onSelect: () => setDetailsBook(b),
+            },
+            {
+              key: 'fav',
+              label: fav ? 'Remove favourite' : 'Add favourite',
+              icon: <Heart className="w-4 h-4" />,
+              onSelect: () => void toggleFavorite(b.id),
+            },
+            {
+              key: 'finish',
+              label: pct(b) >= 0.99 ? 'Mark unread' : 'Mark finished',
+              icon: <CheckCircle className="w-4 h-4" />,
+              onSelect: async () => {
+                const newPercent = pct(b) >= 0.99 ? 0 : 1;
+                await db.progress.put({
+                  id: b.id,
+                  cfi: '',
+                  percent: newPercent,
+                  chapter: null,
+                  device_id: deviceId(),
+                  deleted_at: null,
+                  ...dirty(),
+                });
+              },
+            },
+            {
+              key: 'remove',
+              label: 'Remove book',
+              icon: <Trash2 className="w-4 h-4" />,
+              danger: true,
+              onSelect: () => void removeBook(b),
+            },
+          ],
+        },
+      ];
+
+      if (collections.length > 0) {
+        sections.push({
+          title: 'Collections',
+          items: collections.map((c) => {
+            const inCol = collectionBooks.some(
+              (cb) => cb.collection_id === c.id && cb.book_id === b.id,
+            );
+            return {
+              key: `col_${c.id}`,
+              label: c.name,
+              checked: inCol,
+              onSelect: () => {
+                void toggleBookInCollection(b.id, c.id);
+              },
+            };
+          }),
+        });
+      }
+
+      return sections;
+    },
+    [favIds, collections, collectionBooks, removeBook, toggleBookInCollection, openBook, pct],
+  );
+
   return (
     <div className="flex-1 flex flex-col h-full overflow-hidden bg-[var(--bg-base)]">
       {/* 48px CommandBar */}
       <CommandBar
         title={
-          <Dropdown
-            trigger={
-              <button
-                type="button"
-                className="flex items-center gap-1.5 text-base font-semibold text-[var(--text-1)] hover:text-[var(--accent)] transition-colors cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] px-1.5 py-1 rounded-[var(--r-sm)]"
-              >
-                <span>
-                  {selectedCollection === 'all'
-                    ? 'All Books'
-                    : selectedCollection === 'favorites'
-                      ? 'Favourites'
-                      : collections.find((c) => c.id === selectedCollection)?.name || 'Library'}
-                </span>
-                <ChevronDown className="w-4 h-4 text-[var(--text-3)]" />
-              </button>
-            }
-            sections={collectionDropdownSections}
-          />
+          <div className="flex items-center gap-1.5">
+            <Dropdown
+              trigger={
+                <button
+                  type="button"
+                  className="flex items-center gap-1.5 text-base font-semibold text-[var(--text-1)] hover:text-[var(--accent)] transition-colors cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] px-1.5 py-1 rounded-[var(--r-sm)]"
+                >
+                  <span>
+                    {selectedCollection === 'all'
+                      ? 'All Books'
+                      : selectedCollection === 'favorites'
+                        ? 'Favourites'
+                        : collections.find((c) => c.id === selectedCollection)?.name || 'Library'}
+                  </span>
+                  <ChevronDown className="w-4 h-4 text-[var(--text-3)]" />
+                </button>
+              }
+              sections={collectionDropdownSections}
+            />
+
+            {selectedCollection !== 'all' && selectedCollection !== 'favorites' && (
+              <div className="flex items-center gap-0.5">
+                <IconButton
+                  size="sm"
+                  label="Rename collection"
+                  icon={<Edit3 className="w-3.5 h-3.5" />}
+                  onClick={() => {
+                    const col = collections.find((c) => c.id === selectedCollection);
+                    if (col) {
+                      setRenameCollectionName(col.name);
+                      setRenameCollectionOpen(true);
+                    }
+                  }}
+                />
+                <IconButton
+                  size="sm"
+                  label="Delete collection"
+                  icon={<Trash2 className="w-3.5 h-3.5 text-[var(--danger)]" />}
+                  onClick={() => setDeleteCollectionOpen(true)}
+                />
+              </div>
+            )}
+          </div>
         }
         subtitle={`${shown.length} ${shown.length === 1 ? 'item' : 'items'}`}
         rightActions={
@@ -379,57 +551,8 @@ export default function Library() {
           <CoverGrid columnWidth={150}>
             {shown.map((b) => {
               const fav = favIds.has(b.id);
-              const contextSections = [
-                {
-                  items: [
-                    {
-                      key: 'open',
-                      label: 'Open reader',
-                      icon: <BookOpen className="w-4 h-4" />,
-                      onSelect: () => openBook(b),
-                    },
-                    {
-                      key: 'details',
-                      label: 'Book details',
-                      icon: <FileText className="w-4 h-4" />,
-                      onSelect: () => setDetailsBook(b),
-                    },
-                    {
-                      key: 'fav',
-                      label: fav ? 'Remove favourite' : 'Add favourite',
-                      icon: <Heart className="w-4 h-4" />,
-                      onSelect: () => void toggleFavorite(b.id),
-                    },
-                    {
-                      key: 'finish',
-                      label: pct(b) >= 0.99 ? 'Mark unread' : 'Mark finished',
-                      icon: <CheckCircle className="w-4 h-4" />,
-                      onSelect: async () => {
-                        const newPercent = pct(b) >= 0.99 ? 0 : 1;
-                        await db.progress.put({
-                          id: b.id,
-                          cfi: '',
-                          percent: newPercent,
-                          chapter: null,
-                          device_id: 'local',
-                          deleted_at: null,
-                          ...dirty(),
-                        });
-                      },
-                    },
-                    {
-                      key: 'remove',
-                      label: 'Remove book',
-                      icon: <Trash2 className="w-4 h-4" />,
-                      danger: true,
-                      onSelect: () => void removeBook(b),
-                    },
-                  ],
-                },
-              ];
-
               return (
-                <ContextMenu key={b.id} sections={contextSections}>
+                <ContextMenu key={b.id} sections={getBookContextSections(b)}>
                   <div>
                     <BookCard
                       id={b.id}
@@ -451,57 +574,8 @@ export default function Library() {
           <div className="flex flex-col gap-1 py-2">
             {shown.map((b) => {
               const fav = favIds.has(b.id);
-              const contextSections = [
-                {
-                  items: [
-                    {
-                      key: 'open',
-                      label: 'Open reader',
-                      icon: <BookOpen className="w-4 h-4" />,
-                      onSelect: () => openBook(b),
-                    },
-                    {
-                      key: 'details',
-                      label: 'Book details',
-                      icon: <FileText className="w-4 h-4" />,
-                      onSelect: () => setDetailsBook(b),
-                    },
-                    {
-                      key: 'fav',
-                      label: fav ? 'Remove favourite' : 'Add favourite',
-                      icon: <Heart className="w-4 h-4" />,
-                      onSelect: () => void toggleFavorite(b.id),
-                    },
-                    {
-                      key: 'finish',
-                      label: pct(b) >= 0.99 ? 'Mark unread' : 'Mark finished',
-                      icon: <CheckCircle className="w-4 h-4" />,
-                      onSelect: async () => {
-                        const newPercent = pct(b) >= 0.99 ? 0 : 1;
-                        await db.progress.put({
-                          id: b.id,
-                          cfi: '',
-                          percent: newPercent,
-                          chapter: null,
-                          device_id: 'local',
-                          deleted_at: null,
-                          ...dirty(),
-                        });
-                      },
-                    },
-                    {
-                      key: 'remove',
-                      label: 'Remove book',
-                      icon: <Trash2 className="w-4 h-4" />,
-                      danger: true,
-                      onSelect: () => void removeBook(b),
-                    },
-                  ],
-                },
-              ];
-
               return (
-                <ContextMenu key={b.id} sections={contextSections}>
+                <ContextMenu key={b.id} sections={getBookContextSections(b)}>
                   <div
                     role="button"
                     tabIndex={0}
@@ -591,6 +665,61 @@ export default function Library() {
             onKeyDown={(e) => e.key === 'Enter' && void createCollection()}
             className="w-full h-9 px-3 rounded-[var(--r-md)] bg-[var(--layer-2)] border border-[var(--stroke)] text-sm text-[var(--text-1)] outline-none focus:border-[var(--accent)] focus:ring-2 focus:ring-[var(--accent)]"
           />
+        </div>
+      </Dialog>
+
+      {/* Rename Collection Modal */}
+      <Dialog
+        open={renameCollectionOpen}
+        onOpenChange={setRenameCollectionOpen}
+        title="Rename Collection"
+        description="Update the name of this collection."
+        footer={
+          <>
+            <Button variant="subtle" onClick={() => setRenameCollectionOpen(false)}>
+              Cancel
+            </Button>
+            <Button variant="accent" onClick={() => void renameCollection()}>
+              Save
+            </Button>
+          </>
+        }
+      >
+        <div className="py-2">
+          <input
+            type="text"
+            placeholder="Collection name…"
+            value={renameCollectionName}
+            onChange={(e) => setRenameCollectionName(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && void renameCollection()}
+            className="w-full h-9 px-3 rounded-[var(--r-md)] bg-[var(--layer-2)] border border-[var(--stroke)] text-sm text-[var(--text-1)] outline-none focus:border-[var(--accent)] focus:ring-2 focus:ring-[var(--accent)]"
+          />
+        </div>
+      </Dialog>
+
+      {/* Delete Collection Modal */}
+      <Dialog
+        open={deleteCollectionOpen}
+        onOpenChange={setDeleteCollectionOpen}
+        title="Delete Collection"
+        description="Are you sure you want to delete this collection? The books inside will remain in your library."
+        footer={
+          <>
+            <Button variant="subtle" onClick={() => setDeleteCollectionOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              variant="accent"
+              className="bg-[var(--danger)] hover:opacity-90"
+              onClick={() => void deleteCollection()}
+            >
+              Delete Collection
+            </Button>
+          </>
+        }
+      >
+        <div className="py-2 text-xs text-[var(--text-2)]">
+          This collection will be deleted across all your synced devices.
         </div>
       </Dialog>
     </div>

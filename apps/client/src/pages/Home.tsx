@@ -1,6 +1,7 @@
-import { useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { Link, useNavigate, useOutletContext } from 'react-router-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
+import { getAuthUser } from '../features/auth/storage';
 import {
   BookOpen,
   CalendarDays,
@@ -11,8 +12,9 @@ import {
   Play,
   Heart,
   CheckCircle,
+  Sparkles,
 } from 'lucide-react';
-import { db, dirty, type Book, type Progress, type ReadingSession } from '../db';
+import { db, dirty, deviceId, type Book, type Progress, type ReadingSession } from '../db';
 import { useFavoriteIds, toggleFavorite } from '../lib/favourites';
 import { BookCover, useCoverBlobUrl } from '../design/components/BookCover';
 import { BookCard } from '../design/components/BookCard';
@@ -47,8 +49,24 @@ function readingStats(sessions: ReadingSession[]) {
 
 export default function Home() {
   const navigate = useNavigate();
-  const { openImport } = useOutletContext<ShellContext>();
+  const { openImport, openSettings } = useOutletContext<ShellContext>();
   const { setActiveCoverUrl } = useTheme();
+  const [showSyncPrompt, setShowSyncPrompt] = useState(false);
+
+  useEffect(() => {
+    void (async () => {
+      const dismissed = await db.kv.get('dismissed_sync_prompt');
+      const user = await getAuthUser();
+      if (!user && dismissed?.value !== true) {
+        setShowSyncPrompt(true);
+      }
+    })();
+  }, []);
+
+  const handleDismissPrompt = async () => {
+    setShowSyncPrompt(false);
+    await db.kv.put({ key: 'dismissed_sync_prompt', value: true });
+  };
 
   const books = useLiveQuery(() => db.books.filter((b) => !b.deleted_at).toArray(), [], [] as Book[]);
   const progressRows = useLiveQuery(() => db.progress.toArray(), [], [] as Progress[]);
@@ -88,7 +106,35 @@ export default function Home() {
 
   if (!books.length) {
     return (
-      <div className="flex-1 flex items-center justify-center p-6">
+      <div className="flex-1 flex flex-col items-center justify-center p-6 max-w-xl mx-auto w-full gap-6">
+        {showSyncPrompt && (
+          <div className="w-full p-4 rounded-[var(--r-lg)] bg-[var(--layer-2)] border border-[var(--stroke)] flex flex-col sm:flex-row sm:items-center justify-between gap-3 animate-in fade-in-0 duration-200">
+            <div className="flex items-start gap-3">
+              <Sparkles className="w-5 h-5 text-[var(--accent)] shrink-0 mt-0.5" />
+              <div>
+                <div className="font-semibold text-sm text-[var(--text-1)]">Sync across devices?</div>
+                <div className="text-xs text-[var(--text-2)] mt-0.5">
+                  Folio lets you sync books, notes, and reading progress across all your devices.
+                </div>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 self-end sm:self-auto shrink-0">
+              <Button size="sm" variant="subtle" onClick={handleDismissPrompt}>
+                Not now
+              </Button>
+              <Button
+                size="sm"
+                variant="accent"
+                onClick={() => {
+                  void handleDismissPrompt();
+                  openSettings?.('account');
+                }}
+              >
+                Sign in
+              </Button>
+            </div>
+          </div>
+        )}
         <EmptyState
           icon={<BookOpen className="w-8 h-8" />}
           title="Welcome to Folio"
@@ -131,7 +177,7 @@ export default function Home() {
                 cfi: '',
                 percent: newPercent,
                 chapter: null,
-                device_id: 'local',
+                device_id: deviceId(),
                 deleted_at: null,
                 ...dirty(),
               });
@@ -144,6 +190,35 @@ export default function Home() {
 
   return (
     <div className="flex-1 overflow-y-auto px-4 md:px-8 py-6 space-y-8 max-w-7xl mx-auto w-full">
+      {/* First-run sync prompt */}
+      {showSyncPrompt && (
+        <div className="p-4 rounded-[var(--r-lg)] bg-[var(--layer-2)] border border-[var(--stroke)] flex flex-col sm:flex-row sm:items-center justify-between gap-3 animate-in fade-in-0 duration-200">
+          <div className="flex items-start gap-3">
+            <Sparkles className="w-5 h-5 text-[var(--accent)] shrink-0 mt-0.5" />
+            <div>
+              <div className="font-semibold text-sm text-[var(--text-1)]">Sync across devices?</div>
+              <div className="text-xs text-[var(--text-2)] mt-0.5">
+                Folio lets you sync books, notes, and reading progress across all your devices.
+              </div>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 self-end sm:self-auto shrink-0">
+            <Button size="sm" variant="subtle" onClick={handleDismissPrompt}>
+              Not now
+            </Button>
+            <Button
+              size="sm"
+              variant="accent"
+              onClick={() => {
+                void handleDismissPrompt();
+                openSettings?.('account');
+              }}
+            >
+              Sign in
+            </Button>
+          </div>
+        </div>
+      )}
       {/* Top Split: Recent Reads & Hero + Stats Chips */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
         {/* Left / Hero Column */}

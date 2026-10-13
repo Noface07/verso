@@ -10,10 +10,17 @@ import {
   BarChart2,
   Settings,
   RefreshCw,
+  Check,
+  CloudOff,
+  AlertCircle,
 } from 'lucide-react';
 import { clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { Tooltip } from './Tooltip';
+import { Popover } from './Popover';
+import { Button } from './Button';
+import { useSyncStore } from '../../features/sync/engine';
+import { fmtRelativeTime } from '../../lib/format';
 
 export interface NavRailItem {
   to: string;
@@ -38,7 +45,7 @@ export interface NavRailProps {
 }
 
 export const NavRail: React.FC<NavRailProps> = ({
-  syncStatus = 'idle',
+  syncStatus: syncStatusProp,
   className,
   onOpenSettings,
 }) => {
@@ -46,15 +53,34 @@ export const NavRail: React.FC<NavRailProps> = ({
     return localStorage.getItem('folio_nav_expanded') === 'true';
   });
 
+  const {
+    status: storeSyncStatus,
+    lastSyncAt,
+    lastError,
+    pendingChanges,
+    filesUploadingCount,
+    filesUploadingTotal,
+    runSync,
+  } = useSyncStore();
+
+  const effectiveStatus = syncStatusProp ?? storeSyncStatus;
+
   useEffect(() => {
     localStorage.setItem('folio_nav_expanded', String(expanded));
   }, [expanded]);
 
   const syncLabels = {
-    idle: 'Sync idle',
+    idle: 'Synced',
     syncing: 'Syncing…',
     error: 'Sync error',
     offline: 'Offline',
+  };
+
+  const syncIcons = {
+    idle: <Check className="w-4 h-4 text-[var(--success)] shrink-0" />,
+    syncing: <RefreshCw className="w-4 h-4 animate-spin text-[var(--accent)] shrink-0" />,
+    offline: <CloudOff className="w-4 h-4 text-[var(--text-3)] shrink-0" />,
+    error: <AlertCircle className="w-4 h-4 text-[var(--danger)] shrink-0" />,
   };
 
   return (
@@ -165,38 +191,59 @@ export const NavRail: React.FC<NavRailProps> = ({
           )}
         </button>
 
-        {/* Sync status indicator */}
-        <div
-          className={clsx(
-            'flex items-center h-[36px] rounded-[var(--r-md)] text-xs text-[var(--text-3)] select-none',
-            expanded ? 'px-3 gap-3' : 'justify-center',
-          )}
+        {/* Sync status indicator & Popover flyout */}
+        <Popover
+          side="right"
+          align="end"
+          trigger={
+            <button
+              type="button"
+              className={clsx(
+                'flex items-center h-[36px] w-full rounded-[var(--r-md)] text-xs text-[var(--text-2)] hover:text-[var(--text-1)] hover:bg-[var(--layer-2)] transition-colors cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] select-none',
+                expanded ? 'px-3 gap-3' : 'justify-center px-0',
+              )}
+            >
+              {syncIcons[effectiveStatus]}
+              {expanded && <span className="truncate">{syncLabels[effectiveStatus]}</span>}
+            </button>
+          }
         >
-          {expanded ? (
-            <>
-              <RefreshCw
-                className={clsx(
-                  'w-4 h-4 shrink-0',
-                  syncStatus === 'syncing' && 'animate-spin text-[var(--accent)]',
-                  syncStatus === 'error' && 'text-[var(--danger)]',
-                )}
-              />
-              <span className="truncate">{syncLabels[syncStatus]}</span>
-            </>
-          ) : (
-            <Tooltip content={syncLabels[syncStatus]} side="right">
-              <div className="flex items-center justify-center w-full h-full">
-                <RefreshCw
-                  className={clsx(
-                    'w-4 h-4',
-                    syncStatus === 'syncing' && 'animate-spin text-[var(--accent)]',
-                    syncStatus === 'error' && 'text-[var(--danger)]',
-                  )}
-                />
+          <div className="w-64 flex flex-col gap-3 p-1">
+            <div className="flex items-center justify-between border-b border-[var(--stroke)] pb-2">
+              <div className="flex items-center gap-2">
+                {syncIcons[effectiveStatus]}
+                <span className="font-semibold text-sm capitalize">{syncLabels[effectiveStatus]}</span>
               </div>
-            </Tooltip>
-          )}
-        </div>
+              {pendingChanges > 0 && (
+                <span className="text-[11px] font-bold px-1.5 py-0.5 rounded-full bg-[var(--accent-soft)] text-[var(--accent)]">
+                  {pendingChanges} pending
+                </span>
+              )}
+            </div>
+
+            <div className="flex flex-col gap-1 text-xs text-[var(--text-2)]">
+              <div>Last synced: {fmtRelativeTime(lastSyncAt)}</div>
+              {filesUploadingTotal > 0 && (
+                <div>Uploading files: {filesUploadingCount} / {filesUploadingTotal}</div>
+              )}
+              {lastError && (
+                <div className="text-[var(--danger)] mt-1 font-mono text-[11px] break-words">
+                  {lastError}
+                </div>
+              )}
+            </div>
+
+            <Button
+              size="sm"
+              variant="accent"
+              disabled={effectiveStatus === 'syncing' || effectiveStatus === 'offline'}
+              onClick={() => void runSync()}
+              className="w-full mt-1"
+            >
+              {effectiveStatus === 'syncing' ? 'Syncing…' : 'Sync now'}
+            </Button>
+          </div>
+        </Popover>
       </div>
     </aside>
   );
