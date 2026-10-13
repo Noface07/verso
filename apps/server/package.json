@@ -1,0 +1,23 @@
+{
+  "name": "server",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "typecheck": "echo 'server typecheck: skipped (JS, will convert to TS in P3)'",
+    "lint": "echo 'server lint: skipped (JS, will convert to TS in P3)'",
+    "test": "echo 'server tests: skipped (will add in P3)'",
+    "build": "echo 'server build: no build step (plain JS)'"
+  },
+  "dependencies": {
+    "@fastify/cors": "^10.0.0",
+    "@fastify/jwt": "^9.0.0",
+    "@fastify/rate-limit": "^10.0.0",
+    "bcryptjs": "^2.4.3",
+    "fastify": "^5.0.0",
+    "pg": "^8.13.0"
+  }
+}

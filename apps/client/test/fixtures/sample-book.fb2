@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FictionBook xmlns="http://www.gribuser.ru/xml/fictionbook/2.0" xmlns:l="http://www.w3.org/1999/xlink">
+  <description>
+    <title-info>
+      <genre>fiction</genre>
+      <author>
+        <first-name>Test</first-name>
+        <last-name>Author</last-name>
+      </author>
+      <book-title>Sample FB2 Book</book-title>
+      <lang>en</lang>
+    </title-info>
+  </description>
+  <body>
+    <title>
+      <p>Sample FB2 Book</p>
+    </title>
+    <section>
+      <title>
+        <p>Chapter 1</p>
+      </title>
+      <p>This is a sample paragraph in FictionBook 2.0 format.</p>
+    </section>
+  </body>
+</FictionBook>

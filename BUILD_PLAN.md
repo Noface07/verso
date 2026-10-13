@@ -1,0 +1,1159 @@
+# Folio — Build Plan v2
+
+Oct 13, 2026 · @Hivanta Intelligence LLP
+
+## 0. How to use this document
+
+This is the single source of truth for building the Folio eBook and manga reader. The coding agent should follow these rules:
+
+1. **Work one phase at a time, in order.** Do not start a phase until every acceptance criterion of the previous one passes.
+2. **Treat each task as a small unit.** Build it, then typecheck, lint and test, then commit with a message like `P4.3: sync engine pull loop`.
+3. **Never change a synced table's shape without a migration** on both client (Dexie version bump) and server (SQL migration), and update `packages/shared/src/sync-schema.ts`.
+4. **When this plan and reality disagree, document it.** For example, a third-party API may behave differently than described. Note the difference in `docs/DECISIONS.md` and pick the closest option that keeps the acceptance criteria true.
+5. **Never invent API endpoints for external services.** Verify them against the official docs listed in Appendix B before coding.
+
+**Assumptions made in this plan:**
+
+- **"Scroll to change tab"** is specified two ways: the mouse wheel or trackpad turns pages in the reader (as Aquile does), and horizontal scroll or swipe switches between tabs in tabbed screens.
+- **Manga sources** are limited to ones that are legal to integrate: MangaDex via its official API (credit scanlation groups, no ads or paid features), Komga and Kavita (self-hosted), OPDS, and local CBZ/CBR files. No scraper-based piracy sites.
+
+### 0.1 Current state (what already exists)
+
+The app is currently a single Vite + React + TypeScript project with these parts:
+
+| Area | Files |
+| --- | --- |
+| **Entry and routing** | `src/main.tsx` (HashRouter; Shell wraps Home, Library and Notebook; Reader is full-screen) |
+| **Local DB** | `src/db.ts` (Dexie: books, progress, annotations, collections, collection\_books, reading\_sessions, settings, files, covers, kv) |
+| **Rendering engine** | `src/foliate-js/` (git clone), typed bridge in `src/lib/foliate.ts` |
+| **Import** | `src/lib/importBook.ts` (SHA-256 IDs, covers, word/paragraph counts) |
+| **Reader** | `src/pages/Reader.tsx`, `src/components/ReaderPanels.tsx`, `SelectionPopover.tsx`, `LookupCard.tsx`, `TTSBar.tsx` |
+| **Features** | Highlights (6 colours × 4 styles), notes, bookmarks, in-book search, dictionary (Wiktionary + Free Dictionary), translation (MyMemory), Wikipedia, read-aloud (Web Speech + foliate TTS), reading sessions, favourites |
+| **Pages** | Home, Library, Notebook |
+| **Backend** | Separate folder `reader-backend/` (Fastify + Postgres + Caddy via Docker Compose), with auth, `/sync/push`, `/sync/pull` and `/files/:hash` |
+| **Styling** | One hand-written `styles.css` (to be replaced in Phase 1) |
+
+### 0.2 Product goal
+
+A beautiful cross-platform reader for Windows, Android and the web. It should be on par with Aquile Reader for books and add manga support. Every core feature is free, with unlimited sync to the user's self-hosted server.
+
+## 1. Final architecture
+
+### 1.1 Tech stack
+
+| Layer | Choice | Why |
+| --- | --- | --- |
+| **UI** | React 19 + TypeScript (strict) + Vite | Already in place |
+| **Styling** | Tailwind CSS v4 with CSS-variable design tokens | Fast to build and consistent; agents handle it well |
+| **Accessible primitives** | Radix UI (Dialog, Popover, DropdownMenu, ContextMenu, Tabs, Slider, Switch, Tooltip, ScrollArea, Toast) | Keyboard and screen-reader support for free |
+| **Icons** | `lucide-react` | Already in use |
+| **Fonts (bundled, OFL)** | Inter Variable (UI), Literata (display and reading), Source Serif 4, Atkinson Hyperlegible, JetBrains Mono, via `@fontsource-variable/*` | Consistent across Windows and Android |
+| **Local data** | Dexie (IndexedDB) + `dexie-react-hooks` | Already in place, offline-first |
+| **UI state** | Zustand | Small, simple |
+| **Network data** | TanStack Query | Caching and retries for store and manga catalogs |
+| **Lists** | `@tanstack/react-virtual` | Libraries with 5,000+ books |
+| **Book rendering** | foliate-js (vendored as a git submodule) | EPUB, MOBI, AZW3, FB2, CBZ, PDF |
+| **Comic and manga archives** | `fflate` (ZIP/CBZ), `libarchive.js` WASM (CBR/RAR, CB7) | CBR support |
+| **Charts** | Recharts | Statistics |
+| **Validation and contracts** | Zod, shared between client and server | One schema, two sides |
+| **Native shell** | Tauri 2 (Windows + Android) | Small binaries, native HTTP, file access |
+| **Backend** | Fastify 5 + `pg` + Postgres 17 + Caddy, in Docker Compose | Already in place |
+| **Migrations** | `node-pg-migrate` (server), Dexie versions (client) | Safe schema evolution |
+| **Testing** | Vitest + Testing Library (unit), Playwright (end-to-end), Vitest + Docker Postgres (server) |  |
+| **Package manager** | pnpm workspaces | Monorepo |
+
+### 1.2 Repository layout (after Phase 0)
+
+```
+folio/
+├── apps/
+│   ├── client/                 # Vite React app (web + Tauri frontend)
+│   │   ├── src/
+│   │   │   ├── app/            # routes, shell, providers
+│   │   │   ├── design/         # tokens.css, components/ (Button, Tabs, …)
+│   │   │   ├── features/
+│   │   │   │   ├── library/
+│   │   │   │   ├── reader/     # foliate reader
+│   │   │   │   ├── manga/      # manga reader + series pages
+│   │   │   │   ├── store/      # catalogs
+│   │   │   │   ├── notebook/
+│   │   │   │   ├── stats/
+│   │   │   │   ├── settings/
+│   │   │   │   └── sync/
+│   │   │   ├── lib/            # db, net, tts, lookup, blobstore, input hooks
+│   │   │   └── sources/        # catalog + manga source plugins
+│   │   ├── vendor/foliate-js/  # git submodule
+│   │   └── src-tauri/          # added in Phase 10
+│   └── server/                 # Fastify backend (moved from reader-backend/)
+├── packages/
+│   └── shared/                 # zod schemas, sync table registry, API types
+├── docs/
+│   ├── DECISIONS.md
+│   └── QA-CHECKLIST.md
+├── AGENTS.md
+└── BUILD_PLAN.md
+```
+
+### 1.3 Runtime diagram
+
+```
+┌──────────── Client (Web / Tauri Windows / Tauri Android) ────────────┐
+│ UI (React) ── Zustand (UI state)                                     │
+│   │                                                                  │
+│   ├── Dexie (IndexedDB) ← single source of truth on device           │
+│   │      ▲   ▲                                                       │
+│   │      │   └── BlobStore (IndexedDB | Tauri FS) for book/page files│
+│   │      │                                                           │
+│   ├── SyncEngine ── push/pull/files/SSE ──────────┐                  │
+│   └── net.fetch() ── Tauri HTTP (native) ─────────┼──► External APIs │
+│                     └─ or backend /proxy (web) ───┘   (Gutendex, SE, │
+└───────────────────────────────────────────────────┼─  MangaDex, OPDS)│
+                                                    ▼
+                   Caddy (HTTPS) ──► Fastify API ──► Postgres
+                                         └──► /data/files (book blobs)
+```
+
+## 2. Design system ("Mica")
+
+The goal is the calm, premium Windows 11 feel of Aquile Reader: dark translucent layers, cover art as the hero, soft blurred ambient colour taken from the book you're reading, crisp typography, and restrained motion.
+
+### 2.1 Design principles
+
+1. **Covers are the art.** The UI is neutral and quiet so covers carry the colour. Big covers, soft glows, nothing competing with them.
+2. **Layers, not boxes.** Surfaces are translucent sheets over a blurred ambient background, separated by hairline strokes rather than heavy borders or shadows.
+3. **One accent at a time.** A single accent colour, either user-chosen or taken dynamically from the current book's cover.
+4. **Calm motion.** 150–250 ms with a decelerate easing, never bouncy. Everything respects `prefers-reduced-motion`.
+5. **Reader first.** When reading, chrome disappears; only a whisper-thin status line remains.
+
+### 2.2 Tokens (implement exactly in `apps/client/src/design/tokens.css`)
+
+```css
+@import "@fontsource-variable/inter";
+@import "@fontsource/literata/400.css";
+@import "@fontsource/literata/600.css";
+
+:root {
+  /* Typography */
+  --font-ui: "Inter Variable", "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  --font-display: "Literata", Georgia, serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+
+  /* Type ramp (Fluent-style): size / line-height / weight */
+  --t-caption: 12px/16px var(--font-ui);
+  --t-body: 14px/20px var(--font-ui);
+  --t-body-strong: 600 14px/20px var(--font-ui);
+  --t-body-large: 18px/24px var(--font-ui);
+  --t-subtitle: 600 20px/28px var(--font-ui);
+  --t-title: 600 28px/36px var(--font-ui);
+  --t-title-large: 600 40px/52px var(--font-display);
+  --t-display: 600 56px/64px var(--font-display);
+
+  /* Spacing (4px grid) */
+  --s-1: 4px; --s-2: 8px; --s-3: 12px; --s-4: 16px; --s-5: 20px;
+  --s-6: 24px; --s-8: 32px; --s-10: 40px; --s-12: 48px; --s-16: 64px;
+
+  /* Radius */
+  --r-sm: 4px;      /* inputs, small chips */
+  --r-md: 8px;      /* buttons, cards, menus */
+  --r-lg: 12px;     /* panels, dialogs */
+  --r-xl: 16px;     /* hero cards */
+  --r-cover: 3px 6px 6px 3px; /* book spine feel */
+  --r-pill: 999px;
+
+  /* Motion */
+  --ease-out: cubic-bezier(0.1, 0.9, 0.2, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --d-fast: 120ms; --d-normal: 200ms; --d-slow: 320ms;
+
+  /* Accent (overridden at runtime by user choice or cover colour) */
+  --accent: #4cc2ff;
+  --accent-hover: color-mix(in oklab, var(--accent) 88%, white);
+  --accent-pressed: color-mix(in oklab, var(--accent) 80%, black);
+  --on-accent: #001a2b;
+  --accent-soft: color-mix(in oklab, var(--accent) 18%, transparent);
+}
+
+/* ---------- Dark (default) ---------- */
+:root, [data-theme="dark"] {
+  color-scheme: dark;
+  --bg-base: #0e0f11;                         /* window backdrop under ambient */
+  --bg-ambient-opacity: 0.32;                 /* blurred cover strength */
+  --layer-1: rgb(255 255 255 / 0.035);        /* nav rail, command bar */
+  --layer-2: rgb(255 255 255 / 0.055);        /* cards, panels */
+  --layer-3: rgb(255 255 255 / 0.085);        /* hover, inputs */
+  --layer-solid: #1c1d20;                     /* menus, dialogs (no blur) */
+  --stroke: rgb(255 255 255 / 0.08);
+  --stroke-strong: rgb(255 255 255 / 0.16);
+  --text-1: #f5f5f5;
+  --text-2: rgb(255 255 255 / 0.72);
+  --text-3: rgb(255 255 255 / 0.48);
+  --danger: #ff8a80; --success: #6ccb5f; --warning: #fce100;
+  --shadow-cover: 0 0 0 1px rgb(255 255 255 / 0.06), 0 10px 30px rgb(0 0 0 / 0.55);
+  --shadow-flyout: 0 16px 48px rgb(0 0 0 / 0.55);
+  --blur: 40px;
+}
+
+/* ---------- Light ---------- */
+[data-theme="light"] {
+  color-scheme: light;
+  --bg-base: #f3f3f3;
+  --bg-ambient-opacity: 0.22;
+  --layer-1: rgb(255 255 255 / 0.55);
+  --layer-2: rgb(255 255 255 / 0.72);
+  --layer-3: rgb(255 255 255 / 0.9);
+  --layer-solid: #fbfbfb;
+  --stroke: rgb(0 0 0 / 0.07);
+  --stroke-strong: rgb(0 0 0 / 0.14);
+  --text-1: #1a1a1a;
+  --text-2: rgb(0 0 0 / 0.66);
+  --text-3: rgb(0 0 0 / 0.45);
+  --danger: #c42b1c; --success: #0f7b0f; --warning: #9d5d00;
+  --accent: #005fb8; --on-accent: #ffffff;
+  --shadow-cover: 0 0 0 1px rgb(0 0 0 / 0.06), 0 10px 26px rgb(0 0 0 / 0.22);
+  --shadow-flyout: 0 16px 40px rgb(0 0 0 / 0.18);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root { --d-fast: 0ms; --d-normal: 0ms; --d-slow: 0ms; }
+}
+```
+
+Map these into Tailwind v4 via `@theme` so classes like `bg-layer-2`, `text-text-2`, `rounded-md` and `border-stroke` exist.
+
+### 2.3 App theming options (Settings → Appearance)
+
+| Setting | Values | Default |
+| --- | --- | --- |
+| App theme | Dark, Light, System | Dark |
+| Accent | Dynamic (from current book cover), plus 8 presets: Sky `#4cc2ff`, Iris `#8b7cf6`, Rose `#ff6b9a`, Ember `#ff8a3d`, Gold `#f5c542`, Jade `#3ccf91`, Teal `#2ec4b6`, Slate `#9aa7b8` | Dynamic |
+| Ambient background | On / Off, plus a strength slider (0–60%) | On, 32% |
+| Cover glow | On / Off | On |
+| Density | Comfortable, Compact | Comfortable |
+
+**Dynamic accent:** compute the dominant colour of the current book's cover by drawing it into a 32×32 canvas and averaging saturated pixels in OKLCH. Then clamp the colour so it stays readable:
+
+- Dark mode: lightness L ∈ \[0.70, 0.82\] and chroma C ≤ 0.16.
+- Light mode: lightness L ∈ \[0.45, 0.55\].
+
+Cache the result per book in `books.meta.accent`. Animate accent changes over `--d-slow`.
+
+### 2.4 Signature visual elements
+
+1. **Ambient backdrop.** A fixed full-window layer behind everything: the current book's cover at `background-size: cover`, `filter: blur(90px) saturate(1.4)`, `opacity: var(--bg-ambient-opacity)`, scaled 1.2× so the blurred edges are never visible. Crossfade it over 320 ms when the cover changes. Without a current book, use a slow two-stop gradient of the accent at 8% opacity.
+2. **Translucent layers.** The nav rail, command bar and cards use `background: var(--layer-n)` plus `backdrop-filter: blur(var(--blur))` and a `1px solid var(--stroke)` border. Menus, dialogs and the reader popover use `--layer-solid` with no blur, which is both readable and fast.
+3. **Covers.** Aspect ratio 2:3, `border-radius: var(--r-cover)`, `box-shadow: var(--shadow-cover)`, plus a 2px inner left "spine" highlight (`linear-gradient(90deg, rgb(255 255 255 / .12), transparent 6px)`). On hover: `translateY(-4px)` and a glow in the cover's own colour (`0 18px 40px color-mix(in oklab, var(--cover-color) 45%, transparent)`).
+4. **Selection indicator.** A 3px × 16px accent pill on the left of the active nav item, which animates (slides) between items.
+5. **Progress.** A thin 3px track with an accent fill; on covers it sits 8px from the bottom edge on a darkened scrim.
+
+### 2.5 Component inventory (build in `src/design/components/`)
+
+Each component needs every state (rest, hover, pressed, focus-visible, disabled), a test, and a story-like demo on `/dev/components` (dev builds only).
+
+| Component | Notes |
+| --- | --- |
+| `Button` | Variants: `accent`, `standard` (layer-3 with stroke), `subtle` (transparent), `danger`. Sizes: sm 28px, md 32px, lg 40px. Icon-left support. |
+| `IconButton` | 36px square, `subtle` by default, tooltip required (`label` prop is mandatory). |
+| `ToggleButton` | For on/off actions such as Favourite or Bookmark. |
+| `SegmentedControl` | Pill track with a sliding thumb. |
+| `Tabs` (Pivot) | Text tabs with an animated 3px accent underline. Supports wheel and swipe switching (see §5). |
+| `NavRail` | 56px collapsed, 280px expanded (hamburger toggles; preference persists); items show icon plus label when expanded; badge support for update counts. |
+| `CommandBar` | 48px page header: left title or dropdown, right action icons, overflow `…` menu. |
+| `SearchBox` | With a clear button and Ctrl+K / `/` shortcut. |
+| `Select` / `Dropdown` | Radix DropdownMenu styled as a Fluent ComboBox. |
+| `Slider`, `Switch`, `Checkbox`, `RadioGroup` | Radix-based. |
+| `Flyout` / `Popover` | `--layer-solid`, `--r-lg`, `--shadow-flyout`, enter animation: fade plus 6px slide over 150 ms. |
+| `ContextMenu` | Right-click on desktop, long-press on touch, for covers, highlights and list rows. |
+| `Dialog` | Centred, max 560px, `--r-lg`. |
+| `InfoBar` / `Toast` | Informational, success, warning and error variants, with an optional action button. |
+| `ProgressRing`, `ProgressBar`, `Skeleton` | Skeleton shimmer for covers and lists. |
+| `BookCover` | Image or generated fallback (title and author on a hue derived from the ID), progress overlay, badge slot (e.g. "NEW", unread chapter count), favourite heart on hover. |
+| `BookCard` | Cover plus 2-line title and 1-line author. |
+| `Shelf` | Horizontal scroll row with snap, arrow buttons on desktop hover, wheel-to-scroll horizontally. |
+| `CoverGrid` | Virtualized responsive grid; column width 140–180px; supports selection mode. |
+| `EmptyState` | Illustration slot, title, body and primary action. |
+
+### 2.6 Screen specifications
+
+**App shell (desktop ≥ 900px)**
+
+```
+┌──┬─────────────────────────────────────────────────────────────┐
+│≡ │ CommandBar: [Page title / dropdown]          [actions…] [⋯] │
+│⌂ ├─────────────────────────────────────────────────────────────┤
+│▤ │                                                             │
+│✎ │                 page content (scrolls)                      │
+│◎ │                                                             │
+│▦ │                                                             │
+│  │                                                             │
+│⚙ │                                                             │
+│⟳ │  ← sync status (icon: idle / syncing / error / offline)     │
+└──┴─────────────────────────────────────────────────────────────┘
+Rail items: Home, Library, Notebook, Store, Manga Updates, Statistics
+Footer: Settings, Sync status
+```
+
+- **Tablet (600–899px):** the rail stays collapsed and the expanded pane overlays the content.
+- **Phone (< 600px):** a bottom navigation bar with 5 items (Home, Library, Store, Notebook, More); "More" opens a sheet containing Statistics, Updates and Settings. Use edge-to-edge layout with safe-area insets.
+
+**Home**
+
+```
+┌ Recent reads ────────────────── Open library › ┐┌ [Today 24m] [Week 3h] [Streak 6d] ┐
+│ ┌──────────┐   Continue reading                ││ Favourite books ─────── See more › │
+│ │          │   Musashi                         ││ [▯][▯][▯][▯][▯] →                  │
+│ │  HERO    │   Eiji Yoshikawa · Ch. "A Spring" ││ Recently added ──────── See more › │
+│ │  COVER   │   ━━━━━━━━░░░░░░░░ 17%  [Resume]  ││ [▯][▯][▯][▯][▯] →                  │
+│ │ (glow)   │   [▯][▯]                          ││ Continue manga ─────── See more ›  │
+│ └──────────┘   [▯][▯]  (4 more recent)         ││ [▯][▯][▯] (unread badges)          │
+└────────────────────────────────────────────────┘└────────────────────────────────────┘
+```
+
+- The hero cover is 300px wide on desktop and uses the ambient backdrop from that cover.
+- Section headings use `--t-subtitle`; "See more" is a subtle link with a chevron.
+- Stats chips are compact cards on `--layer-2`.
+
+**Library**
+
+- **CommandBar:**
+  - Left: a dropdown with All books, Favourites, each Collection, and "+ New collection".
+  - Right: Search, Filter (status, format, language, tags), Sort (recently read, added, title, author, progress, series), View (grid, list, compact grid), Add (`+`), and Select mode.
+- **Segmented control under the CommandBar:** `Books | Manga | Comics`.
+- **Grid:** virtualized, with covers and a two-line title underneath, as in Aquile's library screen. Group headers appear when sorted by author or series.
+- **Multi-select:**
+  - Ctrl/Shift-click or long-press to start.
+  - A bulk action bar slides up with Add to collection, Mark finished, Remove and Export.
+- **Right-click a cover** for Open, Details, Add to collection, Favourite, Mark as finished/unread, Edit metadata, Show file (desktop) and Remove.
+
+**Store**
+
+```
+┌ Sources ─────────────┬ [Search this source…]   [Popular|Latest|Genres]  ⟳ ← → ┐
+│ (G) Project Gutenberg │                                                        │
+│ (S) Standard Ebooks   │   cover grid of results (infinite scroll)              │
+│ (O) My Calibre (OPDS) │                                                        │
+│ ── Manga ──           │   click → Details sheet (right side on desktop,        │
+│ (M) MangaDex          │   full screen on phone): cover, title, author, tags,   │
+│ (K) Komga             │   synopsis, formats, [Download] / [Add to library]     │
+│ + Add source          │                                                        │
+└───────────────────────┴────────────────────────────────────────────────────────┘
+Downloads (↓ icon in CommandBar) → flyout queue with progress, retry, cancel.
+```
+
+**Reader (books)**
+
+- **Top bar** (48px, `--layer-1` tinted with the reader theme): Back, Contents, Highlights, Bookmarks | title (centred, ellipsized) | Search, Read aloud, Typography (Aa), Layout (1 or 2 pages), Fullscreen, overflow (book details, export highlights, share quote).
+- **Status line** (always visible, 28px, 12px text at 55% opacity): `location 10/13` · chapter name · `17.12%`. It can be switched off.
+- **Scrub bar:** shown with the chrome; includes chapter tick marks and a preview tooltip of the chapter name while dragging.
+- **Side panels:** slide in from the left (Contents, Highlights, Bookmarks) or the right (Search, Typography). Desktop panels are 360px and docked, so the page reflows instead of being covered. Phone panels are bottom sheets.
+- **Selection popover:**
+  - Same functions as today, restyled as a Fluent flyout: a colour-dot row, a style row, then a 9-icon tool row.
+  - The lookup card sits above the tools, like Aquile's definition popup.
+  - The "expand" icon opens the lookup in the side panel for long reads.
+
+**Manga reader**
+
+- Pure black background by default. All chrome is hidden until tapped.
+- **Top:** series and chapter title, plus a chapter dropdown.
+- **Bottom:** a page slider with page numbers, Previous/Next chapter buttons and reading-mode quick toggles.
+- **Credit line** on the first page of every MangaDex chapter: "Scanlation by {group} · via MangaDex".
+
+### 2.7 Reader themes (book content)
+
+Keep the existing six themes (Paper, Sepia, Sage, Dusk, Night, OLED) and add:
+
+- **Custom theme editor:** background, text, link and highlight-opacity settings with a live preview, saved to the synced settings.
+- **Match app theme** toggle.
+- **Night light:** a warm overlay tint, 0–40%.
+- **Reduce brightness overlay:** for OLED reading at night.
+
+### 2.8 Microcopy and tone
+
+Use sentence case everywhere and keep it short and warm. Examples:
+
+- "Continue reading"
+- "Nothing here yet. Select text while reading to highlight it."
+- "Couldn't reach your server. Your changes are safe and will sync later."
+
+## 3. Data model
+
+### 3.1 Shared sync registry (`packages/shared/src/sync-schema.ts`)
+
+One file defines every synced table and its columns. The server's `TABLES` map and the client's Dexie schema are both generated from or checked against it.
+
+```ts
+export const SYNC_TABLES = {
+  books:            ['title','author','format','file_hash','file_size','cover_hash','meta','added_at','last_opened_at'],
+  progress:         ['cfi','percent','chapter','device_id'],
+  annotations:      ['book_id','type','cfi','text','note','color','style','chapter','created_at'],
+  collections:      ['name','sort_order','meta'],
+  collection_books: ['collection_id','book_id'],
+  reading_sessions: ['book_id','started_at','ended_at','duration_sec','start_percent','end_percent','words_read','device_id','kind'],
+  settings:         ['data'],
+  // New in Phase 3:
+  series:           ['source','source_id','title','author','cover_url','status','meta','added_at','last_read_at','last_checked_at'],
+  chapter_progress: ['series_id','source','chapter_id','chapter_number','title','page','total_pages','read','read_at'],
+  sources:          ['kind','name','url','meta','sort_order'],   // user-added OPDS/Komga/Kavita (NO credentials)
+  devices:          ['name','platform','last_seen_at'],
+} as const
+```
+
+Every synced row also has `id` (text), `updated_at` (epoch ms), `deleted_at` (epoch ms or null), `_dirty` (client only), and `server_seq` (server only).
+
+### 3.2 Notes on new fields
+
+| Table / field | Meaning |
+| --- | --- |
+| `books.meta` additions | `accent` (dynamic colour), `tags: string[]`, `rating: 0–5`, `finished_at`, `source: {kind, id, url}` if downloaded from the store, `kind: 'book' or 'comic'` |
+| `collections.meta` | `{ icon, color, smart?: { rules } }` (smart collections come later) |
+| `reading_sessions.kind` | `'book'` or `'manga'` |
+| `series.id` | `${source}:${source_id}` (deterministic, so two devices never create duplicates) |
+| `chapter_progress.id` | `${source}:${chapter_id}` |
+| `series.meta` | `{ description, tags, contentRating, lang, readingMode, unreadCount, latestChapterAt, groupPrefs }` |
+| `sources.meta` | `{ type: 'opds1' or 'opds2' or 'komga' or 'kavita', authKind: 'none' or 'basic' or 'apikey' }` — credentials are stored only locally (see §3.4) |
+| `devices.id` | The `deviceId()` UUID; used to show "Continue from 45% on Pixel 8?" |
+
+### 3.3 Client-only tables (not synced)
+
+| Table | Purpose |
+| --- | --- |
+| `files` (`hash`, `blob`) | Book and archive blobs (moves behind a `BlobStore` interface in Phase 10) |
+| `covers` (`id`, `blob`) | Thumbnails |
+| `kv` | Sync cursor, clock offset, auth tokens (web only), UI prefs |
+| `downloads` | Queue: `{ id, kind, source, title, url, status, progress, error, created_at }` |
+| `catalog_cache` | Cached source responses (TTL 6h) |
+| `manga_pages` | Offline chapter pages: `{ chapter_key, index, blob }` |
+| `source_credentials` | Web fallback only; on Tauri, credentials go to the OS keychain |
+
+### 3.4 Credentials policy
+
+OPDS, Komga and Kavita passwords and API keys never sync to your server and are never logged:
+
+- **Tauri:** stored in the OS keychain (`tauri-plugin-keyring` or Stronghold).
+- **Web:** stored in IndexedDB with a warning shown in the UI.
+
+## 4. Server (v2)
+
+### 4.1 Changes
+
+1. **Move the code** from `reader-backend/` to `apps/server/` and convert it to TypeScript, using the shared Zod schemas.
+2. **Migrations:** replace the single `init.sql` with `node-pg-migrate`:
+   - `001_init` is the existing schema.
+   - `002_manga_sources_devices` adds `series`, `chapter_progress`, `sources` and `devices` with the same sync columns, triggers and indexes, plus a `kind` column on `reading_sessions` and `meta` on `collections`.
+3. **Generic sync:** the `TABLES` map is imported from `packages/shared`.
+4. **Clock sync:** push and pull responses include `serverTime` (epoch ms). The client stores `offset = serverTime − Date.now()` and stamps `updated_at = Date.now() + offset`.
+5. **Live updates (SSE):** `GET /sync/events` is a Server-Sent Events stream, authenticated with a short-lived 5-minute token from `POST /sync/events-token` passed as a query param (EventSource can't set headers).
+   - A Postgres trigger on every synced table runs `pg_notify('sync_'||user_id, '')`.
+   - The server `LISTEN`s and forwards a `changed` event to that user's streams, coalescing events over 500 ms.
+   - It sends a keep-alive comment every 25 s.
+6. **Proxy for the web build:** `GET /proxy?url=…` (authenticated).
+   - **Host allowlist:** `gutendex.com`, `www.gutenberg.org`, `gutenberg.org`, `standardebooks.org`, `api.mangadex.org`, `uploads.mangadex.org`, `*.mangadex.network`, plus hosts of the user's own `sources` rows.
+   - It forwards `Accept`, `Range` and `Authorization` (only for user source hosts), sets `User-Agent: Folio/<version> (+contact)`, and streams the body back with CORS headers.
+   - **Rate limits:** 10 requests per second per user overall, and 4 per second for `api.mangadex.org`.
+   - Desktop and Android builds don't use this route; they call external APIs directly through native HTTP.
+7. **Account routes:**
+   - `GET /account`, `PATCH /account/password`, `DELETE /account` (cascade, including files on disk).
+   - `GET /account/sessions` lists refresh tokens with device names and created dates; `DELETE /account/sessions/:id`.
+   - `GET /account/export` returns a ZIP of all JSON rows plus a file manifest.
+8. **Files:** add `GET /files` (list hashes and sizes for the user) and per-user quota reporting in `GET /account` (bytes used).
+9. **Observability:** request IDs in logs, a `/health` route that checks database and disk, and an optional `/metrics` endpoint behind auth.
+10. **Local dev:** add `docker-compose.dev.yml`, which exposes the API on `http://localhost:8080` without Caddy and sets `CORS_ORIGINS=http://localhost:5173,http://tauri.localhost,tauri://localhost`.
+
+### 4.2 API contract summary
+
+| Method | Path | Body / query | Response |
+| --- | --- | --- | --- |
+| POST | `/auth/register` | `{email, password, deviceName}` | `{accessToken, refreshToken, user}` |
+| POST | `/auth/login` | same | same |
+| POST | `/auth/refresh` | `{refreshToken}` | same (rotated) |
+| POST | `/auth/logout` | `{refreshToken}` | `{ok}` |
+| POST | `/sync/push` | `{changes: {table: Row[]}}` | `{accepted, stale, invalid, staleIds: {table: id[]}, serverTime}` |
+| GET | `/sync/pull` | `?since=<seq>` | `{changes, cursor, hasMore, serverTime}` |
+| POST | `/sync/events-token` | — | `{token, expiresIn}` |
+| GET | `/sync/events` | `?token=` | SSE `event: changed` |
+| HEAD/GET/PUT/DELETE | `/files/:sha256` | octet-stream | — |
+| GET | `/files` | — | `[{hash, size}]` |
+| GET | `/proxy` | `?url=` | streamed upstream response |
+| GET/PATCH/DELETE | `/account…` | see above | — |
+
+### 4.3 Acceptance criteria (server)
+
+- `pnpm --filter server test` passes the integration tests against a real Postgres in Docker:
+  - register/login/refresh rotation;
+  - push last-write-wins (newer wins, older counted as stale, equal keeps the server version);
+  - pull pagination across tables with the `PULL_LIMIT` boundary;
+  - file hash mismatch is rejected;
+  - one user can't read another user's rows or files;
+  - the proxy rejects non-allowlisted hosts;
+  - SSE delivers `changed` within 2 s of a push from another session.
+
+## 5. Input and navigation spec (wheel, swipe, keys)
+
+### 5.1 Reader: wheel and trackpad paging
+
+Implement as `useWheelPaging(viewRef, settings)`:
+
+- **Paginated mode:** accumulate `deltaY + deltaX`. When the absolute sum is ≥ 60px (normalised for `deltaMode` 1 = lines × 16, 2 = pages × viewport height), turn the page in that direction, reset, and start a 280 ms cooldown.
+- **Trackpad inertia:** ignore events during the cooldown, and treat a gap of more than 120 ms between events as a new gesture.
+- **Ctrl + wheel:** change the font size by ±1 (clamped between 12 and 36). Call `preventDefault` so the browser doesn't zoom.
+- **Scrolled mode:** native scrolling, with no interception.
+- **Attach the listener** to both the main window and every loaded section document (the `load` event), with `{ passive: false }`.
+- **Setting:** "Mouse wheel turns pages" (on by default), plus an "Invert direction" option.
+
+### 5.2 Manga reader
+
+- **Paged modes (LTR/RTL):** the same wheel logic. In RTL, wheel-down still means the next page.
+- **Webtoon mode:** native scrolling. Ctrl + wheel zooms the strip width (50–100%).
+
+### 5.3 Scroll and swipe to change tab
+
+Implement as `useSwipeTabs({ tabs, value, onChange, containerRef })`, applied to the `Tabs` component and its content area:
+
+- **Wheel:** a horizontal wheel (absolute `deltaX` greater than absolute `deltaY`) or Shift + vertical wheel over the tab bar or content switches to the adjacent tab once per gesture (threshold 80px, cooldown 350 ms). It never hijacks plain vertical scrolling of content.
+- **Touch:** a horizontal swipe of at least 60px within 400 ms, with vertical movement under 40px, switches tabs. The content follows the finger with a rubber-band effect and snaps on release.
+- **Keyboard:** Ctrl+Tab / Ctrl+Shift+Tab, plus arrow keys when the tab bar has focus.
+- **Where it applies:**
+  - Library (Books | Manga | Comics)
+  - Store (Popular | Latest | Genres)
+  - Notebook (All | Highlights | Notes)
+  - Statistics (Week | Month | Year | All time)
+  - Reader side panel tabs, the lookup card (Dictionary | Translate | Wikipedia), and Settings sections on phones
+- **Animation:** content slides horizontally by 24px with a fade over `--d-normal`. Respect reduced motion.
+
+### 5.4 Global keyboard shortcuts
+
+| Keys | Action |
+| --- | --- |
+| Ctrl+K or `/` | Focus search |
+| Ctrl+O | Add books |
+| Ctrl+, | Settings |
+| G then H / L / N / S | Go to Home / Library / Notebook / Store |
+| Reader: ← → PgUp PgDn Space | Page navigation |
+| Reader: T, B, H, F | Contents, bookmark toggle, highlights panel, fullscreen |
+| Reader: Ctrl+F | Search in book |
+| Reader: R | Read aloud play/pause |
+| Reader: Ctrl+= / Ctrl+− | Font size |
+| Esc | Close the topmost layer (popover, then panel, then fullscreen) |
+
+Show the shortcuts in a `?` help dialog.
+
+## 6. Phases
+
+### Overview
+
+| # | Phase | Outcome |
+| --- | --- | --- |
+| P0 | Repo, tooling, agent setup | Monorepo builds, lints and tests in CI |
+| P1 | Design system and UI overhaul | Aquile-grade look across every existing screen |
+| P2 | Input and navigation | Wheel paging, swipe tabs, shortcuts, context menus |
+| P3 | Server v2 + local dev | Migrations, new tables, SSE, proxy, account routes |
+| P4 | Accounts and sync engine | Multi-device sync of everything, including files |
+| P5 | Library power features | Collections, bulk actions, metadata editing, series |
+| P6 | Network layer and book store | Gutenberg, Standard Ebooks, any OPDS catalog |
+| P7 | Manga | Sources, manga reader, follows, updates, offline chapters |
+| P8 | Statistics | Charts, heatmap, goals, per-book insights |
+| P9 | Reader polish | Custom themes and fonts, footnotes, images, PDF |
+| P10 | Tauri: Windows | Installer, native HTTP and files, file associations |
+| P11 | Tauri: Android | APK/AAB, native TTS, intents, mobile UX pass |
+| P12 | Settings, backup, onboarding, a11y, i18n | Finished product feel |
+| P13 | Hardening | Performance budgets, end-to-end tests, crash reporting |
+| P14 | Deploy and release | Public backend, store listings |
+
+### P0 — Repository, tooling and agent setup
+
+**Tasks**
+
+1. Create the pnpm workspace (`apps/client`, `apps/server`, `packages/shared`). Move the current app into `apps/client` and `reader-backend` into `apps/server`.
+2. Convert `src/foliate-js` into a git submodule at `apps/client/vendor/foliate-js`, pinned to a commit. Update imports in `lib/foliate.ts`.
+3. Set up TypeScript project references, with strict mode everywhere.
+4. Add ESLint (typescript-eslint, react-hooks, jsx-a11y) and Prettier. Exclude `vendor/`.
+5. Add Vitest plus Testing Library to the client, Vitest to the server, and Playwright at the root.
+6. Add GitHub Actions CI: install, then typecheck, lint, unit tests and build for every package. Run Playwright on main.
+7. Create `AGENTS.md` (content in Appendix A), `docs/DECISIONS.md` and `docs/QA-CHECKLIST.md`.
+8. Create a test-book corpus in `apps/client/test/fixtures/` using small public-domain files:
+   - an EPUB2 and an EPUB3 Gutenberg book;
+   - a right-to-left Arabic EPUB;
+   - a Japanese vertical-text EPUB;
+   - a MOBI, an AZW3, an FB2, a 20-page CBZ, a CBR and a 5-page PDF.
+
+**Acceptance criteria**
+
+- `pnpm i && pnpm -r typecheck && pnpm -r lint && pnpm -r test && pnpm -r build` passes from a clean clone.
+- The app behaves exactly as before the move (smoke test: import, read, highlight).
+
+### P1 — Design system and UI overhaul
+
+**Tasks**
+
+1. **Install** Tailwind v4, Radix primitives, the `@fontsource` packages and Zustand.
+2. **Create `design/tokens.css`** exactly as in §2.2, map it into Tailwind `@theme`, and delete the old `styles.css` once every screen has migrated.
+3. **Build every component** in §2.5 with all states, plus the `/dev/components` gallery.
+4. **`ThemeProvider`:**
+   - Sets `data-theme` (dark, light or system).
+   - Sets the accent variables (preset or dynamic).
+   - Shows or hides the ambient backdrop.
+   - Is driven by `settings.data.app`, which syncs.
+5. **`useCoverColor(bookId)`:** dominant-colour extraction as in §2.3, cached in `books.meta.accent`.
+6. **New shell:**
+   - `NavRail` (collapsible on desktop, bottom nav on phones), `CommandBar` per page, the ambient backdrop layer, and page transition animations.
+   - A sync status slot in the rail footer, as a placeholder until P4.
+7. **Rebuild Home** per §2.6: hero, recent grid, stats chips, shelves with arrows and wheel-to-scroll, and a "Continue manga" shelf placeholder hidden until P7.
+8. **Rebuild Library** per §2.6:
+   - CommandBar with a collection dropdown.
+   - Books | Manga | Comics segmented tabs. Manga is hidden until P7; Comics shows CBZ/CBR/CB7 books.
+   - Virtualized `CoverGrid`, list view, compact view.
+   - Right-click context menu and the details dialog redesigned as a two-column sheet.
+9. **Rebuild Notebook** with the new components: search, colour filters, a group-by-book collapsible list, and Export all (Markdown and JSON).
+10. **Reskin the Reader chrome:**
+    - Top bar, status line, scrub bar with chapter ticks, and docked side panels on desktop / bottom sheets on phone.
+    - Restyle the selection popover and lookup card as a Fluent flyout with an expand-to-panel option.
+    - Restyle the TTS bar as a floating pill.
+11. **Empty states and skeletons** for every list.
+
+**Acceptance criteria**
+
+- Every screen uses only token-based styles (`grep` for hex colours outside `tokens.css` returns nothing, apart from cover fallback hues).
+- Dark and light themes both pass WCAG AA contrast for body text (automated check with axe in Playwright).
+- Switching accent or theme updates instantly without a reload, and syncs to a second tab (Dexie liveQuery).
+- Desktop at 1920×1080: the Home hero cover is ≥ 280px wide, the ambient backdrop is visible, and there is no layout shift on load (CLS < 0.05).
+- Phone at 390×844: bottom nav works, there's no horizontal overflow, and touch targets are ≥ 44px.
+- A Library with 3,000 generated fake books scrolls at 60 fps (Chrome performance trace shows no long tasks over 50 ms while scrolling).
+
+### P2 — Input and navigation
+
+**Tasks**
+
+1. Implement `useWheelPaging` per §5.1, with settings toggles (enable, invert) and a Ctrl+wheel font size step.
+2. Implement `useSwipeTabs` per §5.3 and wire it into the `Tabs` component so every tab group inherits it.
+3. Add a `useHotkeys` registry with the shortcuts from §5.4, plus the `?` help dialog.
+4. Add context menus on covers, list rows, highlights in the Notebook, and highlights in the reader (right-click or long-press on a highlight opens the same popover as a tap).
+5. Reader touch gestures:
+   - Tap zones (left 25%, middle, right 25%), configurable to "left and right" or "all next".
+   - Swipe to turn pages (foliate already handles this; verify).
+   - Pinch to zoom on images.
+6. Focus management: panels trap focus; closing a panel returns focus to the button that opened it.
+
+**Acceptance criteria**
+
+- With a mouse wheel, one notch equals one page, never two. A fast trackpad flick turns exactly one page per flick.
+- Shift+wheel over the Library tabs switches Books → Manga → Comics. Plain vertical wheel scrolls the grid and never switches tabs.
+- On touch, a horizontal swipe on the Store content switches tabs; a diagonal scroll that is mostly vertical does not.
+- Every action in §5.4 works and appears in the help dialog.
+
+### P3 — Server v2 and local development
+
+**Tasks**
+
+1. Convert the server to TypeScript, add `node-pg-migrate`, and write migrations `001` and `002` per §4.1.
+2. Import `SYNC_TABLES` from `packages/shared`; generate the upsert column lists from it.
+3. Add `serverTime` to push and pull responses, plus `staleIds` to push.
+4. Add the SSE events token and stream, with `LISTEN/NOTIFY`.
+5. Add the `/proxy` route with the allowlist, user-source hosts, streaming, range support and rate limits.
+6. Add the account routes, file listing and the export ZIP.
+7. Add `docker-compose.dev.yml` and a `pnpm dev:server` script that starts Postgres and the API with hot reload.
+8. Write the integration test suite (§4.3).
+
+**Acceptance criteria**
+
+- Everything in §4.3 passes.
+- `docker compose -f docker-compose.dev.yml up` and then `curl localhost:8080/health` returns `{"ok":true}` on Windows with Docker Desktop.
+
+### P4 — Accounts and sync engine
+
+**Tasks**
+
+1. **`features/sync/api.ts`:** a typed client for the §4.2 contract.
+   - Attaches the access token and refreshes it once on a 401 (with a single-flight lock), then retries.
+   - Signs the user out on refresh failure.
+2. **Auth storage:**
+   - Web: refresh token in IndexedDB `kv`.
+   - Tauri: OS keychain (wired up in P10, behind an interface now).
+3. **Screens:**
+   - Settings → Account: server URL (default `http://localhost:8080` in dev), sign in / create account, signed-in state with email, storage used, devices list, sign out, delete account.
+   - First-run prompt on Home: "Sync across devices?" with Sign in or Not now.
+4. **SyncEngine (`features/sync/engine.ts`):** follow this algorithm exactly.
+
+```
+runSync():
+  if (!online || !signedIn) return
+  acquire navigator.locks.request('folio-sync', { ifAvailable: true })   // one tab only
+  status = 'syncing'
+  1) PUSH
+     for each table in SYNC_TABLES:
+       rows = dirty rows (index _dirty = 1), in batches of 500
+       POST /sync/push { changes: { [table]: rows without _dirty } }
+       in a Dexie transaction: for each pushed row, if the current local
+       updated_at === the pushed updated_at → set _dirty = 0
+       (compare-and-set, so an edit made during the push stays dirty)
+  2) FILES UP
+     for books where file_hash not in kv('uploaded') and the blob exists locally:
+       HEAD /files/:hash → 404 ? PUT : skip; add to kv('uploaded')
+     same for covers (cover_hash)
+     run in the background with concurrency 2; show progress in the status flyout
+  3) PULL
+     loop: GET /sync/pull?since=cursor
+       in ONE Dexie transaction per page:
+         for each row: local = get(id)
+           if !local → put({...row, _dirty: 0})
+           else if local._dirty === 0 → put({...row, _dirty: 0})
+           else if row.updated_at > local.updated_at → put({...row, _dirty: 0})
+           else keep local (it will win on the next push)
+         set kv('cursor') = page.cursor
+       until !hasMore
+  4) FILES DOWN
+     covers: download any missing cover_hash immediately (small)
+     book files: on demand when opened, or all if "Download all books" is on
+  5) status = 'idle', lastSyncAt = now; on error: status = 'error', exponential backoff 5s → 5min
+```
+
+5. **Triggers:** app start, sign-in, window focus or visibility gain, the `online` event, every 30 s while visible, 2 s after any local write (debounced via a Dexie `hook('creating'/'updating')` on synced tables), and the SSE `changed` event.
+6. **Clock offset** from `serverTime`. All `dirty()` helpers use `now() = Date.now() + offset`.
+7. **First sign-in on a device that already has local data:** push everything (all rows are already dirty). When signing into a different account than last time, show a dialog: "Merge this device's library into {email}?" with Merge or Start fresh (Start fresh wipes local synced tables).
+8. **Sign out:** a dialog with "Keep books on this device" or "Remove everything".
+9. **Progress conflict banner:** while a book is open, if pulled progress comes from another device and is more than 1% ahead, show an InfoBar: "You're further along on {device}: {chapter}, {percent}. Jump there?" with Jump or Stay.
+10. **Devices:** on startup, upsert `devices/{deviceId}` with the name (user-editable; defaults to platform plus browser), platform and `last_seen_at`.
+11. **Sync status UI:**
+    - Rail footer icon with four states: idle (check), syncing (spinning), offline (cloud-off), error (warning).
+    - The flyout shows last sync time, pending changes count, file uploads in progress, a "Sync now" button and the last error.
+12. **On-demand files:** opening a book whose blob is missing shows "Downloading from your server…" with progress, then opens it. Offline shows a friendly error.
+13. **Collections UI** (now that they sync): create, rename, delete, reorder, add or remove books; plus the Library dropdown.
+
+**Acceptance criteria**
+
+- **Two browser profiles on the same account:**
+  - A highlight made in A appears in B within 3 s while both are open (SSE path), and within 30 s with SSE disabled.
+  - Reading position, notes, bookmarks, settings, collections, favourites and reading sessions all sync.
+  - A book imported in A can be opened in B (the file downloads).
+- **Offline edits:** turn off the network in A, make 20 highlights, turn it back on. All 20 arrive in B with none lost or duplicated.
+- **Conflict:** edit the same note in A (offline) and then B (online). After A reconnects, the later edit wins on both devices.
+- **Deletes:** deleting a highlight in B removes it in A (tombstone).
+- **Two tabs of the same profile:** only one sync runs at a time (verify with server logs).
+- Unit tests cover the merge rules and compare-and-set for every branch.
+
+### P5 — Library power features
+
+**Tasks**
+
+1. **Multi-select** with a bulk action bar: add to collection, favourite, mark finished/unread, remove, export files (ZIP on desktop, share on Android).
+2. **Edit metadata dialog:** title, author, series and number, tags, rating, language, description, and replace cover (image file or URL). Store the changes in `books` (synced). Never modify the original file.
+3. **Series:** group by series in the Library sort; a series detail view with ordered volumes and a combined progress bar.
+4. **Status:** add `finished_at`. Auto-mark finished at ≥ 99% plus at least 1 minute of reading on the last page; show a "Mark as finished?" toast near the end.
+5. **Duplicate detection** when importing the same title and author with a different hash: offer Keep both or Replace (the new file inherits the annotations only if the CFIs resolve; otherwise keep the old file).
+6. **Import improvements:** a progress dialog with per-file status and cancel; folder import (desktop); background word counting through a Web Worker queue.
+7. **Library search** across title, author, series, tags and description, plus a full-text "Search inside all books" option that builds a background index (FlexSearch over section text, stored in IndexedDB). This is optional and off by default.
+
+**Acceptance criteria**
+
+- Bulk-adding 200 books to a collection finishes in under 1 s and syncs.
+- Edited metadata appears on all devices; the original file's hash is unchanged.
+
+### P6 — Network layer and book store
+
+**Tasks**
+
+1. **`lib/net.ts`:**
+   - `net.fetch(url, init)` uses `@tauri-apps/plugin-http` when running in Tauri; otherwise it calls the backend `/proxy?url=`. Same Response API either way.
+   - A per-host token-bucket rate limiter (default 4 requests per second; MangaDex 4/s, at-home 40/min) and retry with jitter on 429/5xx, respecting `Retry-After`.
+   - A `User-Agent` header (native) of `Folio/<version>`.
+2. **Source plugin interface (`sources/types.ts`):**
+
+```ts
+export interface CatalogEntry {
+  id: string; title: string; authors: string[]; cover?: string;
+  summary?: string; languages?: string[]; tags?: string[];
+  formats?: { mime: string; url: string; size?: number }[];
+  kind: 'book' | 'manga' | 'comic';
+}
+export interface CatalogPage { items: CatalogEntry[]; next?: string }
+export interface CatalogSection { id: string; title: string }
+export interface CatalogSource {
+  id: string; name: string; icon: string; kind: 'books' | 'manga';
+  sections(): Promise<CatalogSection[]>;            // Popular, Latest, Genres…
+  browse(sectionId: string, cursor?: string): Promise<CatalogPage>;
+  search(query: string, cursor?: string, filters?: Record<string,string>): Promise<CatalogPage>;
+  details(id: string): Promise<CatalogEntry>;
+  download?(entry: CatalogEntry, format: string, onProgress: (p: number) => void): Promise<File>;
+}
+export interface MangaSource extends CatalogSource {
+  chapters(seriesId: string): Promise<ChapterInfo[]>;
+  pages(chapterId: string): Promise<PageRef[]>;     // URLs or blob loaders
+  credit?(chapter: ChapterInfo): string;            // shown in reader
+}
+```
+
+3. **Project Gutenberg** source via Gutendex (`https://gutendex.com/books`):
+   - Sections: Popular (default sort), Latest (`sort=descending`), Topics (Fiction, Science fiction, Mystery, Adventure, Romance, Philosophy, Poetry, Children, History; maps to `topic=`), and Languages (`languages=`).
+   - Search with `search=`; paginate by following the `next` URL.
+   - Format preference: `application/epub+zip` (prefer the `.epub3.images` variant when present), then `text/html`. Cover: `image/jpeg`.
+   - Downloaded books are imported through the existing import pipeline, with `meta.source = { kind:'gutenberg', id }`.
+4. **Standard Ebooks** source:
+   - The New Releases feed is public; the full OPDS catalog requires Patrons Circle membership (HTTP Basic auth with the member email and an empty password).
+   - Without credentials, show only New Releases and a note with a link to join; with credentials, show the full OPDS browse and search.
+   - Verify current feed URLs at `https://standardebooks.org/feeds` before coding.
+5. **Generic OPDS** source (1.2 Atom XML and 2.0 JSON):
+   - "Add source" with a URL, optional username/password or API key, and a name.
+   - Navigation feeds become sections; acquisition feeds become grids; search uses OpenSearch descriptions.
+   - Works with Calibre-Web, Calibre content server, Kavita, Komga and others.
+6. **Store UI** per §2.6: source list, sections as tabs (with swipe tabs), infinite-scroll grid, details sheet, Download / Open in library (when already owned, matched by `meta.source`), and a downloads flyout with queue, progress, cancel and retry. Downloads continue while navigating.
+7. **Caching:** TanStack Query with stale time 30 min for browse and 6 h for details; images cached by the browser or WebView.
+
+**Acceptance criteria**
+
+- Search Gutenberg for "Dostoevsky", download "Crime and Punishment", and it appears in the Library with a cover and opens. A second download is detected as owned.
+- Adding a Calibre-Web or Kavita OPDS URL with credentials lets you browse, search and download.
+- The web build works through `/proxy`; native builds (after P10) work without the proxy.
+- No API is called more often than its rate limit (unit test on the limiter; manual check of the network log).
+
+### P7 — Manga
+
+**Legal and policy guardrails (must follow)**
+
+- **Only these source types:**
+  - MangaDex, through its official API and its Acceptable Usage Policy.
+  - Komga and Kavita, the user's own servers.
+  - Generic OPDS.
+  - Local files (CBZ, CBR, CB7, PDF, image folders).
+- Do not build scrapers for unofficial manga sites.
+- **MangaDex rules:**
+  - Credit MangaDex and the scanlation group on chapter lists and the first page of each chapter.
+  - No ads or paid features around MangaDex content.
+  - Respect rate limits: about 5 requests per second globally (target 4/s); the at-home server endpoint is limited to 40 per minute.
+  - MangaDex does not send CORS headers for third-party sites, so web builds must go through `/proxy`.
+- **Content rating:** filter defaults to `safe` and `suggestive` only. Adult ratings require an explicit opt-in in Settings with an 18+ confirmation, and stay off by default in Play Store builds.
+- **Distribution:** a build flag `ENABLE_MANGADEX` (default on for desktop and web, off for the Play Store build, since app stores may reject scanlation access).
+- Verify all endpoints against `https://api.mangadex.org/docs` before coding.
+
+**Tasks**
+
+1. **Manga data layer:** `series` and `chapter_progress` tables (synced), and `manga_pages` (local offline cache).
+2. **MangaDex source:**
+   - **Search:** `GET /manga` with `title`, `limit`, `offset`, `includes[]=cover_art&includes[]=author`, `contentRating[]` and `availableTranslatedLanguage[]`.
+   - **Sections:** Popular (`order[followedCount]=desc`), Latest updates (`order[latestUploadedChapter]=desc`), Recently added (`order[createdAt]=desc`), and Tags (from `GET /manga/tag`).
+   - **Covers:** `https://uploads.mangadex.org/covers/{mangaId}/{fileName}.256.jpg` for grids, `.512.jpg` for details.
+   - **Chapters:** `GET /manga/{id}/feed` with `translatedLanguage[]`, `order[chapter]=asc`, `includes[]=scanlation_group`, `limit=500`, paginated.
+     - De-duplicate multiple groups per chapter number, preferring the user's preferred groups and otherwise the most recent.
+     - Chapters with `externalUrl` (official publishers) show "Read on {publisher}" and open externally.
+   - **Pages:** `GET /at-home/server/{chapterId}` → `baseUrl`, `chapter.hash`, `data[]` / `dataSaver[]`. The image URL is `{baseUrl}/data/{hash}/{file}` (or `/data-saver/`). A "Data saver" setting is on by default when on mobile data.
+   - **Reliability:** if an image fails, re-request the at-home server once and retry. Report image loads to `https://api.mangadex.network/report` as the docs require, best-effort and fire-and-forget, only for non-`mangadex.org` base URLs.
+   - **Language preference:** a multi-select setting, defaulting to the system language plus English.
+3. **Komga source:** OPDS 1.2 with page streaming (OPDS-PSE) when available; otherwise download the CBZ.
+4. **Kavita source:** OPDS with the API key in the URL.
+5. **Local manga:** CBZ (fflate), CBR and CB7 (libarchive.js WASM in a Web Worker), and image folders (desktop). Natural-sort the pages.
+6. **Series page:**
+   - Banner using the blurred cover as ambient, cover, title, authors, status, tags and description (expandable).
+   - Buttons: Follow / Unfollow, Continue / Start reading.
+   - Chapter list (virtualized) with read state, group credit and a download icon.
+   - Filters: language, group, hide read. Sort ascending/descending.
+   - Bulk actions: mark previous as read, download next N, download all.
+7. **Manga reader (`features/manga/MangaReader.tsx`):**
+   - **Modes:** paged LTR, paged RTL (default for content in Japanese), vertical (paged scroll), webtoon (continuous, no gaps; default for Korean, Chinese and long-strip tags), and double-page spread with a "cover is single" offset toggle.
+   - **Fit:** width, height, screen, original. Zoom via pinch, double-tap and Ctrl+wheel.
+   - **Navigation:** tap zones depend on the mode and are configurable; wheel paging per §5.2; keyboard.
+   - **Loading:** preload the next 4 pages and the first 3 of the next chapter. Show a skeleton while loading, and a retry button on failure.
+   - **Chapter transition page:** "Finished Chapter 12 · Next: Chapter 13 — {title}" with a Continue button. At the end of the last chapter, show "You're caught up."
+   - **Progress:** save `chapter_progress` with the page on every page change (debounced 500 ms). Mark the chapter read when the last page has been shown for 1 s.
+   - **Reading sessions** with `kind: 'manga'`.
+   - **Settings saved per series** (`series.meta.readingMode`) and globally: background colour, page gap (webtoon), crop borders (auto-trim white margins on canvas), and keep screen on.
+   - Show the credit line per the guardrails.
+8. **Offline chapters:**
+   - The download queue stores page blobs in `manga_pages`.
+   - Downloaded chapters show a check icon and work offline.
+   - Show storage used per series, with a delete-downloads action.
+9. **Library integration:** the Manga tab shows followed series with an unread badge (`unreadCount`) and a sort by "Latest update".
+10. **Updates:**
+    - The "Updates" rail item checks followed series for new chapters on app start and every 6 hours while open.
+    - Respect rate limits: batch with `GET /chapter?manga[]=…&publishAtSince=` for MangaDex, then group the feed by day.
+    - A badge count appears on the rail item; on Android (P11), a local notification is optional.
+11. **Home:** a "Continue manga" shelf.
+
+**Acceptance criteria**
+
+- Search MangaDex for a popular safe-rated title, follow it, read chapter 1 in RTL mode, and close at page 10. Opening on a second device resumes at chapter 1, page 10.
+- Webtoon mode scrolls smoothly at 60 fps through a 60-image chapter with no blank gaps, and memory stays stable (off-screen images are unloaded beyond ±10 pages).
+- A downloaded chapter is readable in airplane mode.
+- Local CBR and CBZ files open in the manga reader from the Library's Comics tab.
+- The app never exceeds 4 requests per second to `api.mangadex.org` (unit test plus a network log check). The credit line is visible on the first page.
+- An adult-rated title never appears unless the opt-in is enabled.
+
+### P8 — Statistics
+
+**Tasks**
+
+1. **Session quality:**
+   - Idle detection: no relocate event or input for 5 minutes ends the session at the last activity time.
+   - Sessions shorter than 20 s are discarded.
+   - Use the local time zone (the user is in Asia/Kolkata; never assume UTC).
+2. **Statistics page** with tabs Week | Month | Year | All time:
+   - Total reading time, a daily bar chart, average per day, longest session, and reading speed (words per minute for books, pages per minute for manga).
+   - A calendar heatmap (GitHub-style), plus current and longest streak.
+   - Books finished (cover wall) and chapters read.
+   - Top books and series by time, and a time-of-day distribution chart.
+3. **Goals:** daily minutes goal and yearly books goal, shown as a progress ring on Home; an optional reminder notification on Android.
+4. **Per-book insights** in the details sheet: time spent, sessions, estimated time left (based on your personal reading speed), started and finished dates, and highlights count.
+5. **Export stats** as CSV.
+
+**Acceptance criteria**
+
+- Numbers match a hand-calculated fixture of 30 seeded sessions across time zones and midnight boundaries.
+- Charts render in under 200 ms with 2 years of data (about 5,000 sessions).
+
+### P9 — Reader polish
+
+**Tasks**
+
+1. **Custom reader themes** editor (see §2.7), plus night light and dim overlays.
+2. **Custom fonts:**
+   - Bundle Literata, Source Serif 4, Atkinson Hyperlegible and Inter.
+   - Allow importing TTF/OTF/WOFF2 files, stored as blobs, synced as files plus a settings entry, and injected into book documents via `@font-face` with blob URLs.
+3. **Typography additions:** paragraph spacing, first-line indent, word and letter spacing, a bold toggle, and "override publisher fonts and colours" as an explicit switch.
+4. **Footnote popups:**
+   - Clicking a noteref link opens the footnote in a flyout instead of navigating (foliate-js exposes link events; detect `epub:type="noteref"` or links to `aside`).
+   - The popup has "Go to note" as a secondary action.
+5. **Image viewer:** double-click or tap an image to open a full-screen zoom and pan viewer.
+6. **Links:** external links ask before opening; internal links push history, with a "Back to where you were" chip.
+7. **PDF:** a fit-width default, continuous scroll, a text-layer selection check (highlights work on text PDFs), and an outline as the table of contents.
+8. **Page turn animation options:** none, slide, fade (where supported by foliate's paginator).
+9. **Auto-scroll and auto-page-turn** mode with speed control.
+10. **Read-aloud improvements:**
+    - A sleep timer (15, 30 or 60 minutes, or end of chapter).
+    - Skipping footnote references and page numbers.
+    - Per-language voice memory.
+11. **Quote image share:** render the selected text on a styled card (the book cover's colours) to PNG, then share or save.
+
+**Acceptance criteria**
+
+- An imported custom font appears in the font list on a second device after sync.
+- Footnotes open in a popup in a Standard Ebooks EPUB that has endnotes.
+
+### P10 — Tauri: Windows
+
+**Tasks**
+
+1. Initialise Tauri 2 in `apps/client/src-tauri`. Window settings:
+   - Minimum size 900×600, a custom title bar matching the CommandBar (drag region, min/max/close buttons styled like Windows 11).
+   - Mica window effect via `window-vibrancy` when available, with the ambient backdrop layered on top.
+2. **Plugins:** `http` (for `net.fetch`), `fs`, `dialog`, `opener`, `os`, `single-instance`, `window-state`, `deep-link` (`folio://`), `updater`, `notification`, and keyring (or Stronghold) for tokens and source credentials.
+3. **`BlobStore` interface** with two implementations: IndexedDB (web) and the filesystem (`$APPDATA/Folio/files/<hash>`). Migrate existing blobs on first launch with a progress dialog.
+4. **File associations** for `.epub .mobi .azw3 .azw .fb2 .fbz .cbz .cbr .cb7 .pdf`. Opening a file imports it if new, then opens it. With single-instance, the running window handles the open.
+5. **Fullscreen** through the Tauri window API (F11). Remember the window size and position.
+6. **Read-aloud on Windows:** Web Speech in WebView2 (system voices). Verify word-boundary events with Microsoft voices.
+7. **Packaging:**
+   - NSIS installer plus MSI.
+   - Code signing (Azure Trusted Signing or another certificate; document the steps).
+   - Auto-update through a static `latest.json` hosted on the backend or GitHub Releases.
+8. **Content Security Policy:** allow the bundled resources plus `https:` image hosts for covers and manga; script sources stay local only.
+
+**Acceptance criteria**
+
+- A clean install on Windows 11: double-clicking an EPUB in Explorer opens it in Folio.
+- The Store and MangaDex work without `/proxy`.
+- Books are stored on disk, not in IndexedDB; 1,000 books import without errors.
+- The installer is under 15 MB.
+
+### P11 — Tauri: Android
+
+**Tasks**
+
+1. Add the Android target (minimum SDK 26). Use edge-to-edge layout, status and navigation bar colours from the theme, the back button mapped to closing layers in order, and keep the screen on while reading (optional).
+2. **Native text-to-speech plugin** (Kotlin, `android.speech.tts.TextToSpeech`):
+   - Commands: `speak(text, utteranceId, rate, voice)`, `stop`, `listVoices`.
+   - Events: `onRangeStart(start, end)` for word highlighting, and `onDone`.
+   - The `ReadAloud` class picks the native engine when it's available.
+   - Use a foreground media service so reading continues with the screen off, with a media notification (play/pause/next).
+3. **Text selection:** suppress the native ActionMode menu in the WebView (custom WebView `startActionMode` override in the Android activity) so only Folio's popover shows. Fall back gracefully if that isn't possible.
+4. **Intents:**
+   - Open EPUB/MOBI/PDF/CBZ/CBR from file managers (an `ACTION_VIEW` intent filter).
+   - Share-to-Folio (`ACTION_SEND`) to import files.
+   - Request storage access through the system file picker only (no broad storage permission).
+5. **Mobile UX pass:**
+   - Bottom sheets for every panel and 44px touch targets.
+   - Swipe tabs and pull-to-refresh on the Store and Updates.
+   - Haptics on page turn (optional).
+   - The volume keys turn pages (setting).
+6. **Background update checks** for manga with WorkManager every 6 hours; local notifications for new chapters (opt-in).
+7. **Packaging:** a signed release APK for sideloading, plus an AAB with the `ENABLE_MANGADEX=false` flavour for the Play Store.
+
+**Acceptance criteria**
+
+- Read-aloud on a Pixel-class device highlights words and continues with the screen off.
+- Opening an EPUB from Files imports and opens it.
+- 60 fps page turns on a mid-range device (Android GPU profiling).
+
+### P12 — Settings, backup, onboarding, accessibility, internationalisation
+
+**Tasks**
+
+1. **Settings sections:**
+   - Appearance: theme, accent, ambient, density.
+   - Reading: defaults for typography and layout, wheel/tap behaviour, read-aloud defaults, dictionary languages, translation target.
+   - Manga: languages, content rating, data saver, default reading mode, preferred groups.
+   - Library: import options, auto-remove finished downloads.
+   - Sync and account.
+   - Storage: usage by books, covers and manga cache, with clear-cache actions.
+   - Backup.
+   - About: version, licences for foliate-js and fonts, MangaDex attribution, and credits.
+2. **Backup and restore:**
+   - "Export everything" produces `.foliobackup` (a ZIP of JSON rows plus book files, with an optional excludes list).
+   - Import merges using the same last-write-wins rules as sync.
+3. **Onboarding (first launch, 3 screens):**
+   - Welcome and pick theme and accent.
+   - Add books (with a drag zone) or browse the Store.
+   - Optional sync sign-in.
+4. **Accessibility pass:**
+   - Every interactive element is reachable by keyboard, with visible focus rings in the accent colour.
+   - Screen-reader labels; the reader announces chapter changes via `aria-live`.
+   - Respect OS text scaling; a high-contrast reader theme.
+5. **Internationalisation:**
+   - Extract all strings into `i18next` resources; ship English first.
+   - Make layouts RTL-safe (logical CSS properties); the app UI mirrors when the language is Arabic or Hebrew.
+
+**Acceptance criteria**
+
+- Running axe across every route reports zero serious or critical violations.
+- A backup from device A restored to fresh device B reproduces the library, highlights and progress exactly.
+
+### P13 — Hardening
+
+**Tasks**
+
+1. **Performance budgets** (enforced in CI where possible):
+
+| Metric | Budget |
+| --- | --- |
+| Desktop cold start to interactive Home | < 1.5 s |
+| Open a 2 MB EPUB at its saved position | < 1 s |
+| Page turn | < 16 ms main-thread work |
+| Library with 5,000 books | 60 fps scroll, < 300 MB memory |
+| Import of 100 EPUBs | < 60 s, UI responsive throughout |
+| Initial JS bundle | < 350 KB gzip (lazy-load the reader, manga, stats and store routes) |
+
+2. **Error handling:**
+   - A global error boundary per route with "Reload this view".
+   - Optional crash and error reporting to a self-hosted GlitchTip/Sentry, off by default and opt-in.
+3. **Playwright end-to-end suite** (runs against the dev server and the dev backend):
+   - import → read → highlight → note → bookmark → search → reload persistence;
+   - two-context sync;
+   - store download (mocked network);
+   - manga reader paging (mocked source);
+   - wheel and swipe tabs;
+   - keyboard-only navigation.
+4. **Database:** add indexes for hot queries (annotations by `book_id`, sessions by `started_at`, `chapter_progress` by `series_id`). Run a Dexie schema upgrade test from v1 to the latest with fixture data.
+5. **Security review:**
+   - Book content is rendered in sandboxed iframes by foliate; verify scripts inside EPUBs are blocked.
+   - Every external HTML (dictionary, OPDS summaries) goes through the safe renderer.
+   - No `dangerouslySetInnerHTML` anywhere.
+   - The proxy allowlist is enforced; tokens never appear in logs.
+
+**Acceptance criteria**
+
+- The whole end-to-end suite passes in CI three times in a row (no flakes).
+- Every budget is met on a mid-range laptop and phone.
+
+### P14 — Deployment and release
+
+**Tasks**
+
+1. **Backend on the public internet:**
+   - Use the existing `ffxasce.duckdns.org` domain.
+   - Confirm the router WAN IP matches the public IP (no CGNAT); otherwise use a Cloudflare Tunnel.
+   - Forward ports 80/443, add the DuckDNS updater container and run Caddy.
+   - Set `ALLOW_SIGNUP=false` after creating accounts.
+2. **Backups:** a nightly `pg_dump` plus a restic snapshot of the files volume to an off-site target (Backblaze B2 or similar), with 30-day retention. Test a restore monthly (document the steps in `docs/OPERATIONS.md`).
+3. **Monitoring:** Uptime Kuma checks `/health`; disk-usage alert at 80%.
+4. **Client defaults:** the production build defaults the server URL to `https://ffxasce.duckdns.org` (editable in Settings).
+5. **Releases:**
+   - GitHub Releases with signed Windows installers and the Android APK, plus the auto-update manifest.
+   - Optional Microsoft Store (MSIX/MSI submission) and Google Play (AAB without MangaDex) listings, with a privacy policy page (what's stored on the server, no tracking).
+
+**Acceptance criteria**
+
+- A fresh Windows PC and an Android phone, both on mobile data, sign in and sync against the public server.
+- The restore drill succeeds.
+
+## 7. Cross-cutting requirements
+
+| Area | Requirement |
+| --- | --- |
+| **Privacy** | No analytics by default. Lookups send only the selected text to the dictionary or translation service, as disclosed in Settings → About. |
+| **Offline** | Every feature except the Store, MangaDex and lookups works fully offline. |
+| **Data safety** | Never delete user data without confirmation. Deletes are soft (tombstones) and become permanent only by compaction after 30 days. |
+| **Licensing** | foliate-js (MIT) and fonts (OFL) are credited in About. MangaDex is attributed per its policy. |
+| **Code quality** | No `any` without a comment explaining it; components stay under about 300 lines (split otherwise); no `dangerouslySetInnerHTML`. |
+| **Testing** | Every new pure function gets a unit test; every phase adds end-to-end coverage for its happy path. |
+
+## 8. Risks and mitigations
+
+| Risk | Mitigation |
+| --- | --- |
+| Wiktionary's REST definition endpoint is marked experimental and could change | Free Dictionary fallback is already in place. Wrap both behind `define()` so a new provider (e.g. a self-hosted Wiktextract dump) can be swapped in. |
+| The free MyMemory translation tier caps daily usage | Show the quota message clearly; add an optional user-supplied DeepL or LibreTranslate endpoint in Settings. |
+| MangaDex policy, rate-limit or availability changes | Isolate it in its own source module with a feature flag. Komga, Kavita and local files remain fully functional without it. |
+| Standard Ebooks' full feeds require a Patrons Circle login | Public new releases by default; patron login optional. |
+| Android WebView limitations (TTS, selection menu) | Native plugins in P11 with graceful fallbacks. |
+| IndexedDB eviction on the web | Request `navigator.storage.persist()`; desktop and Android use filesystem storage. |
+| Home network problems (CGNAT, port 80 blocked) | Cloudflare Tunnel fallback documented in P14. |
+
+## Appendix A — `AGENTS.md` (create in P0)
+
+```markdown
+# Folio — agent guide
+
+## Commands
+- Install: `pnpm i`
+- Dev (client): `pnpm --filter client dev` → http://localhost:5173
+- Dev (server + db): `pnpm dev:server` → http://localhost:8080
+- Typecheck all: `pnpm -r typecheck`
+- Lint: `pnpm -r lint`
+- Unit tests: `pnpm -r test`
+- E2E: `pnpm e2e`
+- Tauri desktop: `pnpm --filter client tauri dev`
+
+## Rules
+1. Follow BUILD_PLAN.md phase by phase. Do not start a phase until the previous one's acceptance criteria pass.
+2. Synced schema lives in packages/shared/src/sync-schema.ts. Any change needs a Dexie version bump AND a server migration AND tests.
+3. Styling: only design tokens (CSS variables / Tailwind theme). No raw hex colours outside design/tokens.css.
+4. Components: use design/components. Need a new primitive? Add it there with all states and a demo on /dev/components.
+5. Never use dangerouslySetInnerHTML. Render external HTML with lib/safeHtml (DOMParser → React nodes).
+6. All network calls go through lib/net.ts (rate limits, proxy, native HTTP).
+7. All writes to synced tables go through lib/db helpers that set updated_at (clock-offset aware) and _dirty = 1.
+8. Every user-visible string goes through i18n `t()` (from P12 on; add keys as you go).
+9. Commit after each task: `P<phase>.<task>: <summary>`. Keep PR-sized changes.
+10. When reality differs from the plan, write it in docs/DECISIONS.md with date, context, decision.
+
+## Definition of done (per task)
+- Typecheck, lint, tests green
+- Works in dark + light theme, desktop + 390px phone width
+- Keyboard accessible
+- No console errors or React warnings
+```
+
+## Appendix B — External references to verify before coding
+
+| Service | Docs |
+| --- | --- |
+| foliate-js | `github.com/johnfactotum/foliate-js` (README plus `view.js`, `tts.js`, `overlayer.js`, `paginator.js`) |
+| Gutendex | `gutendex.com` (README on GitHub: `garethbjohnson/gutendex`) |
+| Standard Ebooks feeds | [standardebooks.org/feeds](https://standardebooks.org/feeds) |
+| OPDS 1.2 / 2.0 | `specs.opds.io` |
+| MangaDex API and limits | [api.mangadex.org/docs](https://api.mangadex.org/docs/2-limitations) (especially "Limitations", "Reading a chapter", "Acceptable usage policy") |
+| Komga OPDS / page streaming | `komga.org/docs` |
+| Kavita OPDS | `wiki.kavitareader.com` |
+| Wiktionary REST | `en.wiktionary.org/api/rest_v1/` |
+| MyMemory | `mymemory.translated.net/doc/spec.php` |
+| Tauri 2 plugins | `v2.tauri.app/plugin/` |
+| Radix UI | `radix-ui.com/primitives` |
+| Fluent 2 design reference | `fluent2.microsoft.design` |
+
+## Appendix C — Phase dependency map
+
+```
+P0 → P1 → P2 ─┐
+     P3 → P4 ─┼→ P5
+              ├→ P6 → P7
+              ├→ P8
+              └→ P9
+P4 + P6 → P10 → P11 → P12 → P13 → P14
+```
+
+P3 can be built in parallel with P1 and P2 if you run two agents: one on the client, one on the server.
+
+To get started, give your agent this file and ask it to complete P0 and stop for review. Check the new design after P1 before moving on; that's the cheapest point to adjust the look.

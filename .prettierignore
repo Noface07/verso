@@ -1,0 +1,9 @@
+node_modules/
+dist/
+vendor/
+apps/client/vendor/
+pgdata/
+caddy_data/
+caddy_config/
+*.tsbuildinfo
+pnpm-lock.yaml

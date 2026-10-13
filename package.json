@@ -1,0 +1,26 @@
+{
+  "name": "folio",
+  "private": true,
+  "scripts": {
+    "dev": "pnpm --filter client dev",
+    "dev:server": "docker compose -f apps/server/docker-compose.dev.yml up -d && pnpm --filter server dev",
+    "build": "pnpm -r build",
+    "typecheck": "pnpm -r typecheck",
+    "lint": "pnpm -r lint",
+    "test": "pnpm -r test",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "e2e": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.50.1",
+    "prettier": "^3.5.3"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": ["esbuild"]
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "packageManager": "pnpm@10.28.1"
+}
