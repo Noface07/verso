@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useLiveQuery } from 'dexie-react-hooks'
 import {
@@ -185,6 +185,12 @@ export default function Reader() {
   const [panel, setPanel] = useState<Panel>(null)
   const [searchSeed, setSearchSeed] = useState('')
   const [chrome, setChrome] = useState(true)
+  // Opened from a file, a deep link or a fresh start there is no history entry to
+  // pop, and navigate(-1) did nothing; fall back to the Library.
+  const goBack = useCallback(() => {
+    if (((window.history.state as { idx?: number } | null)?.idx ?? 0) > 0) navigate(-1)
+    else navigate('/library')
+  }, [navigate])
   const [pop, setPop] = useState<Pop | null>(null)
   const [lookup, setLookup] = useState<LookupTab | null>(null)
   const [noteFor, setNoteFor] = useState<Annotation | null>(null)
@@ -960,6 +966,21 @@ export default function Reader() {
   const theme = getEffectiveTheme(settings)
   const fraction = scrub ?? loc?.fraction ?? 0
 
+  // Docking or closing a side panel changes the stage width. The paginator's own
+  // ResizeObserver could fire before layout settled, leaving the page laid out for
+  // the old width (a blank strip on the right after closing a panel), so re-render
+  // explicitly once layout settles and again after the slide animation.
+  const panelSide = panel ? (panel === 'toc' || panel === 'notes' || panel === 'bookmarks' ? 'left' : 'right') : null
+  useEffect(() => {
+    const rerender = () => viewInstance?.renderer?.render?.()
+    const raf = requestAnimationFrame(() => requestAnimationFrame(rerender))
+    const timer = window.setTimeout(rerender, 260)
+    return () => {
+      cancelAnimationFrame(raf)
+      clearTimeout(timer)
+    }
+  }, [panelSide, viewInstance])
+
   const isLeftPanel = panel === 'toc' || panel === 'notes' || panel === 'bookmarks'
   const isRightPanel = panel === 'search' || panel === 'settings' || panel === 'lookup'
 
@@ -1003,7 +1024,7 @@ export default function Reader() {
 
   return (
     <div
-      className="fixed inset-0 overflow-hidden flex flex-col select-none"
+      className="fixed inset-x-0 bottom-0 top-[var(--titlebar-h,0px)] overflow-hidden flex flex-col select-none"
       style={{
         backgroundColor: 'var(--rbg)',
         color: 'var(--rfg)',
@@ -1024,14 +1045,21 @@ export default function Reader() {
         {loc?.chapter ? `Chapter: ${loc.chapter}` : ''}
       </div>
 
+      {/* Back stays reachable while the toolbars are hidden. */}
+      {!chrome && (
+        <div className="fixed top-[calc(var(--titlebar-h,0px)+6px)] left-3 z-30 opacity-50 hover:opacity-100 focus-within:opacity-100 transition-opacity">
+          <IconButton label="Back" icon={<ArrowLeft className="w-4.5 h-4.5" />} onClick={goBack} />
+        </div>
+      )}
+
       {/* Top chrome header */}
       <header
-        className={`fixed top-0 inset-x-0 h-12 z-30 transition-all duration-200 ease-[var(--ease-out)] bg-[color-mix(in_srgb,var(--rbg)_96%,transparent)] border-b border-[var(--rline)] flex items-center justify-between px-3 ${
+        className={`fixed top-[var(--titlebar-h,0px)] inset-x-0 h-12 z-30 transition-all duration-200 ease-[var(--ease-out)] bg-[color-mix(in_srgb,var(--rbg)_96%,transparent)] border-b border-[var(--rline)] flex items-center justify-between px-3 ${
           chrome ? 'translate-y-0 opacity-100' : '-translate-y-full opacity-0 pointer-events-none'
         }`}
       >
         <div className="flex items-center gap-1 shrink-0">
-          <IconButton label="Back" icon={<ArrowLeft className="w-4.5 h-4.5" />} onClick={() => navigate(-1)} />
+          <IconButton label="Back" icon={<ArrowLeft className="w-4.5 h-4.5" />} onClick={goBack} />
           <IconButton
             label="Contents"
             icon={<List className="w-4.5 h-4.5" />}
@@ -1137,12 +1165,11 @@ export default function Reader() {
       )}
 
       {/* Main viewport with docked side panels */}
+      {/* The viewport keeps a constant size: the toolbars slide over it. Resizing it
+          on every tap made foliate re-paginate, so text jumped and the page changed. */}
       <main
-        className="flex-1 flex overflow-hidden relative transition-all duration-200"
-        style={{
-          paddingTop: chrome ? '48px' : '0px',
-          paddingBottom: chrome ? '72px' : '28px',
-        }}
+        className="flex-1 flex overflow-hidden relative"
+        style={{ paddingTop: '48px', paddingBottom: '28px' }}
       >
         {/* Left docked panel (360px on desktop) */}
         {panel && isLeftPanel && (

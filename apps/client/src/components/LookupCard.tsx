@@ -1,23 +1,26 @@
-import { Fragment, useEffect, useMemo, useState, type ReactNode } from 'react';
-import { Copy, ExternalLink, Volume2, X, Maximize2 } from 'lucide-react';
-import { LANGUAGES, baseLang, cleanWord, define, langName, translate, wikipedia } from '../lib/lookup';
+import { Fragment, useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { ArrowLeft, Copy, ExternalLink, Volume2, X, Maximize2 } from 'lucide-react';
+import { LANGUAGES, baseLang, cleanWord, define, langName, pronunciation, translate, wikipedia } from '../lib/lookup';
 import { IconButton } from '../design/components/IconButton';
 import { SegmentedControl } from '../design/components/SegmentedControl';
 
 export type LookupTab = 'define' | 'translate' | 'wiki';
 
 function useAsync<T>(fn: () => Promise<T>, deps: unknown[]) {
-  const [state, setState] = useState<{ loading: boolean; data?: T; error?: string }>({ loading: true });
+  // Results are tagged with the deps they belong to, so changing the term shows a
+  // loading state instead of the previous word's definition until the new one lands.
+  const key = JSON.stringify(deps);
+  const [state, setState] = useState<{ key: string; data?: T; error?: string } | null>(null);
   useEffect(() => {
     let alive = true;
     fn().then(
-      (data) => { if (alive) setState({ loading: false, data }); },
-      (e) => { if (alive) setState({ loading: false, error: e instanceof Error ? e.message : String(e) }); },
+      (data) => { if (alive) setState({ key, data }); },
+      (e) => { if (alive) setState({ key, error: e instanceof Error ? e.message : String(e) }); },
     );
     return () => { alive = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, deps);
-  return state;
+  }, [key]);
+  return state?.key === key ? { loading: false, data: state.data, error: state.error } : { loading: true };
 }
 
 function toNodes(node: Node, onLookup: (t: string) => void, key: string): ReactNode {
@@ -55,9 +58,11 @@ function RichText({ html, onLookup }: { html: string; onLookup: (t: string) => v
 
 function DefinePane({ term, lang, onLookup }: { term: string; lang: string; onLookup: (t: string) => void }) {
   const s = useAsync(() => define(term, lang), [term, lang]);
+  // Pronunciation comes from a slower, less reliable service; it fills in when ready.
+  const p = useAsync(() => pronunciation(term, lang), [term, lang]);
   if (s.loading) return <p className="text-xs text-[var(--text-3)] p-3">Looking up “{cleanWord(term)}”…</p>;
   if (!s.data) return <p className="text-xs text-[var(--text-3)] p-3">No definition found for “{cleanWord(term)}”.</p>;
-  const d = s.data;
+  const d = { ...s.data, phonetic: s.data.phonetic ?? p.data?.phonetic, audio: s.data.audio ?? p.data?.audio };
   return (
     <div className="space-y-3 p-3 max-h-[220px] overflow-y-auto text-xs">
       <div className="flex items-baseline gap-2">
@@ -169,6 +174,11 @@ export function LookupCard({
   onExpand?: () => void;
 }) {
   const [currentTab, setCurrentTab] = useState<LookupTab>(tab);
+  // Words followed from links inside a definition; the last one is shown.
+  const [trail, setTrail] = useState<string[]>([]);
+  const term = trail.at(-1) ?? text;
+
+  const onFollowLink = useCallback((t: string) => setTrail((prev) => [...prev, t]), []);
 
   return (
     <div className="flex flex-col border-b border-[var(--stroke)] bg-[var(--layer-solid)] text-[var(--text-1)] select-none">
@@ -211,7 +221,20 @@ export function LookupCard({
       </div>
 
       <div>
-        {currentTab === 'define' && <DefinePane term={text} lang={lang} onLookup={() => onTab('define')} />}
+        {currentTab === 'define' && (
+          <>
+            {trail.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setTrail((t) => t.slice(0, -1))}
+                className="flex items-center gap-1 px-3 pt-2 text-[11px] text-[var(--accent)] hover:underline cursor-pointer"
+              >
+                <ArrowLeft className="w-3 h-3" /> Back to “{cleanWord(trail.at(-2) ?? text)}”
+              </button>
+            )}
+            <DefinePane term={term} lang={lang} onLookup={onFollowLink} />
+          </>
+        )}
         {currentTab === 'translate' && (
           <TranslatePane text={text} from={baseLang(lang)} to={translateTo} onSpeak={onSpeak} />
         )}

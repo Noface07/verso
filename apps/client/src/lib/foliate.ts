@@ -30,6 +30,7 @@ export interface OverlayerHandle {
 
 export interface FoliateRenderer extends HTMLElement {
   setStyles?: (css: string) => void
+  render?: () => void
   scrollToAnchor?: (range: Range, select?: boolean) => unknown
   getContents?: () => { doc: Document; index: number; overlayer?: OverlayerHandle }[]
 }

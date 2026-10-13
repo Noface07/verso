@@ -3,7 +3,7 @@ import { useLiveQuery } from 'dexie-react-hooks'
 import { db, dirty, type HighlightStyle } from '../db'
 import type { FoliateView } from './foliate'
 
-export type ThemeId = 'light' | 'sepia' | 'green' | 'dusk' | 'dark' | 'black' | 'custom'
+export type ThemeId = 'auto' | 'light' | 'sepia' | 'green' | 'dusk' | 'dark' | 'black' | 'custom'
 export type PageAnimation = 'none' | 'slide' | 'fade'
 
 export interface CustomTheme {
@@ -15,7 +15,7 @@ export interface CustomTheme {
   highlightOpacity?: number
 }
 
-export const THEMES: Record<Exclude<ThemeId, 'custom'>, { name: string; bg: string; fg: string; link: string; dark: boolean }> = {
+export const THEMES: Record<Exclude<ThemeId, 'custom' | 'auto'>, { name: string; bg: string; fg: string; link: string; dark: boolean }> = {
   light: { name: 'Paper', bg: '#fbfbf8', fg: '#1f1f1f', link: '#2563eb', dark: false },
   sepia: { name: 'Sepia', bg: '#f4ecd8', fg: '#5b4636', link: '#8b5a2b', dark: false },
   green: { name: 'Sage', bg: '#dfeedd', fg: '#22331f', link: '#2f6b3a', dark: false },
@@ -90,7 +90,8 @@ export interface ReaderSettings {
 }
 
 export const DEFAULT_SETTINGS: ReaderSettings = {
-  theme: 'light',
+  // Follows the app: a dark app opens books on a true-black (OLED) page.
+  theme: 'auto',
   customTheme: {
     name: 'Custom',
     bg: '#fbfbf8',
@@ -137,10 +138,15 @@ export const DEFAULT_SETTINGS: ReaderSettings = {
   keepScreenOn: true,
 }
 
+/** The app's current light/dark mode (set on <html> by the ThemeProvider). */
+const appIsDark = () =>
+  typeof document !== 'undefined' && document.documentElement.getAttribute('data-theme') !== 'light'
+
 export function getEffectiveTheme(s: ReaderSettings): { name: string; bg: string; fg: string; link: string; dark: boolean } {
   if (s.theme === 'custom' && s.customTheme) {
     return s.customTheme
   }
+  if (s.theme === 'auto') return appIsDark() ? THEMES.black : THEMES.light
   return THEMES[s.theme as keyof typeof THEMES] ?? THEMES.light
 }
 
@@ -192,16 +198,21 @@ export function applyLayout(renderer: FoliateView['renderer'], s: ReaderSettings
 
 export function useReaderSettings(): [ReaderSettings, (patch: Partial<ReaderSettings>) => void] {
   const row = useLiveQuery(() => db.settings.get('reader'), [])
-  const settings = useMemo(
-    () => ({ ...DEFAULT_SETTINGS, ...((row?.data ?? {}) as Partial<ReaderSettings>) }),
-    [row],
-  )
+  const settings = useMemo(() => {
+    const stored = (row?.data ?? {}) as Partial<ReaderSettings> & { themeV?: number }
+    const merged = { ...DEFAULT_SETTINGS, ...stored }
+    // Before 'auto' existed, saving any setting also persisted the then-default
+    // 'light' theme, so a stored 'light' from that era wasn't a real choice.
+    if (!stored.themeV && stored.theme === 'light') merged.theme = 'auto'
+    return merged
+  }, [row])
   const update = useCallback((patch: Partial<ReaderSettings>) => {
     void db.transaction('rw', db.settings, async () => {
       const cur = await db.settings.get('reader')
       await db.settings.put({
         id: 'reader',
-        data: { ...DEFAULT_SETTINGS, ...(cur?.data ?? {}), ...patch },
+        // themeV marks settings written after 'auto' was introduced (see above).
+        data: { ...DEFAULT_SETTINGS, ...(cur?.data ?? {}), ...patch, themeV: 2 },
         deleted_at: null,
         ...dirty(),
       })

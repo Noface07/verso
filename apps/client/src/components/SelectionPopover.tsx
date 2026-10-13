@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import {
   BookA,
   Bookmark,
@@ -18,6 +18,7 @@ import {
 import type { HighlightStyle } from '../db';
 import { HIGHLIGHT_COLORS } from '../lib/readerSettings';
 import { LookupCard, type LookupTab } from './LookupCard';
+import { define } from '../lib/lookup';
 import { IconButton } from '../design/components/IconButton';
 
 export interface MenuAnchor {
@@ -58,6 +59,16 @@ export function SelectionPopover(props: {
   onShareQuote?: () => void;
 }) {
   const { anchor, lookup } = props;
+
+  // Warm the dictionary as soon as a single word is selected, so by the time the
+  // reader taps "Define" the answer is usually already cached.
+  const { text, lang } = props;
+  useEffect(() => {
+    const word = text.trim();
+    if (!word || word.length > 40 || /\s/.test(word)) return;
+    const timer = setTimeout(() => void define(word, lang).catch(() => {}), 250);
+    return () => clearTimeout(timer);
+  }, [text, lang]);
   const width = Math.min(390, window.innerWidth - 16);
   const left = Math.min(Math.max(anchor.x - width / 2, 8), window.innerWidth - width - 8);
   const needed = lookup ? 420 : 130;

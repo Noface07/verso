@@ -50,6 +50,38 @@ const CARD_THEMES: Record<
   },
 };
 
+/**
+ * Greedy word wrap for canvas text. Words wider than the line are broken by
+ * character; with `maxLines`, the last line ends in an ellipsis if text remains.
+ */
+function wrapText(ctx: CanvasRenderingContext2D, text: string, maxWidth: number, maxLines = Infinity): string[] {
+  const fits = (s: string) => ctx.measureText(s).width <= maxWidth;
+  const lines: string[] = [];
+  let line = '';
+  for (const word of text.split(/\s+/).filter(Boolean)) {
+    const candidate = line ? `${line} ${word}` : word;
+    if (fits(candidate)) {
+      line = candidate;
+      continue;
+    }
+    if (line) lines.push(line);
+    line = word;
+    while (!fits(line)) {
+      let cut = line.length - 1;
+      while (cut > 1 && !fits(line.slice(0, cut))) cut--;
+      lines.push(line.slice(0, cut));
+      line = line.slice(cut);
+    }
+  }
+  if (line) lines.push(line);
+  if (lines.length <= maxLines) return lines;
+  const kept = lines.slice(0, maxLines);
+  let last = kept[maxLines - 1];
+  while (last && !fits(`${last}…`)) last = last.slice(0, -1);
+  kept[maxLines - 1] = `${last.trimEnd()}…`;
+  return kept;
+}
+
 export function QuoteCardShare({ quote, title, author, onClose }: QuoteCardShareProps) {
   const [theme, setTheme] = useState<CardThemeId>('obsidian');
   const [copied, setCopied] = useState(false);
@@ -85,29 +117,36 @@ export function QuoteCardShare({ quote, title, author, onClose }: QuoteCardShare
     ctx.font = 'bold 180px Georgia, serif';
     ctx.fillText('“', 80, 200);
 
-    // Word wrapping for quote text
-    ctx.fillStyle = t.text;
-    ctx.font = '42px Literata, Georgia, serif';
-    const maxWidth = width - 200;
-    const lineHeight = 64;
     const x = 100;
-    let y = 300;
+    const maxWidth = width - 200;
 
-    const words = cleanQuote.split(' ');
-    let line = '';
+    // Footer block (divider + title + author) is measured first so the quote can
+    // take whatever room is left. Long quotes shrink, then get an ellipsis, instead
+    // of running off the bottom of the card; long titles wrap to two lines.
+    ctx.font = '600 34px "Inter Variable", system-ui, sans-serif';
+    const titleLines = wrapText(ctx, title, maxWidth, 2);
+    const footerHeight = 80 + 70 + (titleLines.length - 1) * 44 + 46 + 40;
+    const quoteTop = 300;
+    const quoteBottom = height - 110 - footerHeight;
 
-    for (let i = 0; i < words.length; i++) {
-      const testLine = line + words[i] + ' ';
-      const metrics = ctx.measureText(testLine);
-      if (metrics.width > maxWidth && i > 0) {
-        ctx.fillText(line, x, y);
-        line = words[i] + ' ';
-        y += lineHeight;
-      } else {
-        line = testLine;
-      }
+    let fontSize = 52;
+    let quoteLines: string[] = [];
+    let lineHeight = 0;
+    for (; fontSize >= 24; fontSize -= 2) {
+      ctx.font = `${fontSize}px Literata, Georgia, serif`;
+      lineHeight = Math.round(fontSize * 1.5);
+      quoteLines = wrapText(ctx, cleanQuote, maxWidth);
+      if (quoteTop + (quoteLines.length - 1) * lineHeight <= quoteBottom) break;
     }
-    ctx.fillText(line, x, y);
+    const maxLines = Math.max(1, Math.floor((quoteBottom - quoteTop) / lineHeight) + 1);
+    if (quoteLines.length > maxLines) quoteLines = wrapText(ctx, cleanQuote, maxWidth, maxLines);
+
+    ctx.fillStyle = t.text;
+    let y = quoteTop;
+    quoteLines.forEach((l, i) => {
+      if (i > 0) y += lineHeight;
+      ctx.fillText(l, x, y);
+    });
 
     // Divider line
     y += 80;
@@ -122,12 +161,15 @@ export function QuoteCardShare({ quote, title, author, onClose }: QuoteCardShare
     y += 70;
     ctx.fillStyle = t.text;
     ctx.font = '600 34px "Inter Variable", system-ui, sans-serif';
-    ctx.fillText(title, x, y);
+    titleLines.forEach((l, i) => {
+      if (i > 0) y += 44;
+      ctx.fillText(l, x, y);
+    });
 
     y += 46;
     ctx.fillStyle = t.subtext;
     ctx.font = '28px "Inter Variable", system-ui, sans-serif';
-    ctx.fillText(author, x, y);
+    ctx.fillText(wrapText(ctx, author, maxWidth, 1)[0] ?? '', x, y);
 
     // Folio watermark at bottom
     ctx.fillStyle = t.subtext;
@@ -171,7 +213,7 @@ export function QuoteCardShare({ quote, title, author, onClose }: QuoteCardShare
       aria-label="Quote card share"
       className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md select-none animate-fade-in"
     >
-      <div className="relative w-full max-w-lg rounded-[var(--r-xl)] bg-[var(--layer-solid)] border border-[var(--stroke)] shadow-2xl p-6 flex flex-col gap-5">
+      <div className="relative w-full max-w-lg max-h-[calc(100dvh-2rem)] overflow-y-auto rounded-[var(--r-xl)] bg-[var(--layer-solid)] border border-[var(--stroke)] shadow-2xl p-4 sm:p-6 flex flex-col gap-4 sm:gap-5">
         {/* Header */}
         <div className="flex items-center justify-between border-b border-[var(--stroke)] pb-3">
           <div>
@@ -188,7 +230,7 @@ export function QuoteCardShare({ quote, title, author, onClose }: QuoteCardShare
         </div>
 
         {/* Theme Picker */}
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <span className="text-xs font-semibold text-[var(--text-2)] mr-1">Style:</span>
           {(Object.keys(CARD_THEMES) as CardThemeId[]).map((tid) => (
             <button
@@ -206,7 +248,7 @@ export function QuoteCardShare({ quote, title, author, onClose }: QuoteCardShare
         </div>
 
         {/* Canvas Preview Container */}
-        <div className="w-full aspect-[4/5] max-h-[380px] flex items-center justify-center bg-[var(--layer-2)] rounded-[var(--r-lg)] border border-[var(--stroke)] p-3 overflow-hidden">
+        <div className="w-full aspect-[4/5] max-h-[min(380px,50dvh)] flex items-center justify-center bg-[var(--layer-2)] rounded-[var(--r-lg)] border border-[var(--stroke)] p-3 overflow-hidden">
           <canvas
             ref={canvasRef}
             className="h-full w-auto max-w-full object-contain rounded-md shadow-md"
@@ -214,7 +256,7 @@ export function QuoteCardShare({ quote, title, author, onClose }: QuoteCardShare
         </div>
 
         {/* Footer Actions */}
-        <div className="flex items-center justify-end gap-2 pt-2 border-t border-[var(--stroke)]">
+        <div className="flex flex-wrap items-center justify-end gap-2 pt-2 border-t border-[var(--stroke)]">
           <Button
             variant="standard"
             icon={copied ? <Check className="w-4 h-4 text-[var(--success)]" /> : <Copy className="w-4 h-4" />}

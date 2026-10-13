@@ -47,6 +47,16 @@ export function TitleBar() {
     };
   }, [runningInTauri]);
 
+  // Full-window (position: fixed) screens like the reader offset themselves by this
+  // so their top bar isn't hidden underneath the custom title bar.
+  useEffect(() => {
+    if (!runningInTauri) return;
+    document.documentElement.style.setProperty('--titlebar-h', '32px');
+    return () => {
+      document.documentElement.style.removeProperty('--titlebar-h');
+    };
+  }, [runningInTauri]);
+
   if (!runningInTauri) return null;
 
   return (

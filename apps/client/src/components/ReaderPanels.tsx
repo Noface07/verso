@@ -361,7 +361,23 @@ export function SettingsPanel({
               Reading Theme
             </span>
             <div className="grid grid-cols-3 gap-2">
-              {(Object.keys(THEMES) as Exclude<ThemeId, 'custom'>[]).map((id) => (
+              <button
+                type="button"
+                title="Paper in light mode, OLED black in dark mode"
+                className={`h-9 rounded-[var(--r-md)] border text-xs font-medium cursor-pointer transition-transform hover:scale-102 flex items-center justify-center ${
+                  s.theme === 'auto'
+                    ? 'border-[var(--accent)] ring-2 ring-[var(--accent)]'
+                    : 'border-[var(--stroke)]'
+                }`}
+                style={{
+                  background: `linear-gradient(135deg, ${THEMES.light.bg} 50%, ${THEMES.black.bg} 50%)`,
+                  color: THEMES.light.fg,
+                }}
+                onClick={() => onChange({ theme: 'auto' })}
+              >
+                <span className="px-1.5 rounded-[var(--r-sm)] bg-[var(--layer-solid)] text-[var(--text-1)]">Match app</span>
+              </button>
+              {(Object.keys(THEMES) as Exclude<ThemeId, 'custom' | 'auto'>[]).map((id) => (
                 <button
                   key={id}
                   type="button"

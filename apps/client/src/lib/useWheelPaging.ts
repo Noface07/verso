@@ -2,6 +2,20 @@ import { useEffect, useRef } from 'react'
 import type { FoliateView } from './foliate'
 import type { ReaderSettings } from './readerSettings'
 
+/** True if the wheel event is over app UI (not the book) that can scroll itself. */
+function overScrollableUi(e: WheelEvent): boolean {
+  const target = e.target as Element | null
+  // Events from inside the book's iframe belong to the page itself.
+  if (!target || target.ownerDocument !== document) return false
+  for (let el: Element | null = target; el && el !== document.body; el = el.parentElement) {
+    if (el.tagName === 'FOLIATE-VIEW') return false
+    const cs = getComputedStyle(el)
+    if (/(auto|scroll)/.test(cs.overflowY) && el.scrollHeight > el.clientHeight + 1) return true
+    if (/(auto|scroll)/.test(cs.overflowX) && el.scrollWidth > el.clientWidth + 1 && Math.abs(e.deltaX) > Math.abs(e.deltaY)) return true
+  }
+  return false
+}
+
 export interface WheelPagingOptions {
   view: FoliateView | null
   settings: Pick<ReaderSettings, 'flow' | 'wheelPaging' | 'wheelInvert' | 'fontSize'>
@@ -64,6 +78,13 @@ export class WheelPagingController {
 
     // Scrolled mode: native scrolling, no interception
     if (settings.flow !== 'paginated') {
+      return
+    }
+
+    // The listener is on the whole window, so wheel over the dictionary card, the
+    // contents panel or any other scrollable UI used to turn the page instead of
+    // scrolling it. Leave those to native scrolling.
+    if (overScrollableUi(e)) {
       return
     }
 
