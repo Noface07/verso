@@ -20,6 +20,7 @@ import { Button } from '../design/components/Button';
 import { Dialog } from '../design/components/Dialog';
 import { exportBackup, importBackup, downloadBackupBlob } from '../lib/backup';
 import { t, setAppLanguage } from '../lib/i18n';
+import { isCrashReportingEnabled, setCrashReportingEnabled } from '../lib/crashReporter';
 import { useLiveQuery } from 'dexie-react-hooks';
 
 type SettingsTab =
@@ -52,6 +53,9 @@ export default function Settings() {
   // Adult rating confirmation
   const [adultConfirmOpen, setAdultConfirmOpen] = useState(false);
   const [pendingAdultKey, setPendingAdultKey] = useState<'erotica' | 'pornographic' | null>(null);
+
+  // Crash reporting opt-in
+  const [crashReporting, setCrashReporting] = useState(isCrashReportingEnabled());
 
   // Cache cleared toast
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -466,6 +470,26 @@ export default function Settings() {
               <p>• Foliate-js — MIT License (John Factotum)</p>
               <p>• Atkinson Hyperlegible, Literata, Inter, Source Serif 4 — Open Font Licenses</p>
               <p>• MangaDex API — Powered by MangaDex.org. Follows official Acceptable Use Policy.</p>
+            </div>
+
+            {/* Privacy & Diagnostics */}
+            <div className="flex items-center justify-between p-4 rounded-[var(--r-md)] bg-[var(--surface-subtle)] border border-[var(--border-subtle)]">
+              <div>
+                <h4 className="text-sm font-semibold">Anonymous Error Reporting</h4>
+                <p className="text-xs text-[var(--text-muted)]">
+                  Help improve Folio by sending anonymous crash logs. Off by default; no personal data or book text is ever sent.
+                </p>
+              </div>
+              <input
+                type="checkbox"
+                checked={crashReporting}
+                onChange={(e) => {
+                  setCrashReportingEnabled(e.target.checked);
+                  setCrashReporting(e.target.checked);
+                  showToast(e.target.checked ? 'Crash reporting enabled' : 'Crash reporting disabled');
+                }}
+                className="w-5 h-5 rounded cursor-pointer accent-[var(--accent)]"
+              />
             </div>
           </div>
         )}

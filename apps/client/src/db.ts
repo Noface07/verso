@@ -235,6 +235,13 @@ db.version(4).stores({
   manga_pages: 'id, series_id, chapter_id, [series_id+chapter_id]',
 })
 
+// Version 5: hot query compound indexes for annotations, sessions, and chapter progress
+db.version(5).stores({
+  annotations: 'id, book_id, type, created_at, [book_id+type], _dirty',
+  reading_sessions: 'id, book_id, started_at, [book_id+started_at], _dirty',
+  chapter_progress: 'id, series_id, source, [series_id+read], [series_id+chapter_number], _dirty',
+})
+
 export const SYNC_TABLES = Object.keys(SHARED_SYNC_TABLES) as SyncTableName[]
 
 export const uid = () => crypto.randomUUID()
