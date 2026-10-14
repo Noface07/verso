@@ -5,8 +5,10 @@ import {
   setRefreshToken,
   getServerUrl,
   setAuthUser,
+  getAuthUser,
   clearAuth,
 } from '../auth/storage';
+import { ACCOUNT_DELETED } from '@verso/shared';
 import { setClockOffset } from '../../db';
 import type {
   AuthResponse,
@@ -32,6 +34,17 @@ export class ApiError extends Error {
   }
 }
 
+/** The server reports this account no longer exists (deleted on another device). */
+export class AccountDeletedError extends ApiError {
+  constructor(data: unknown) {
+    super(401, data, 'This account was deleted.');
+    this.name = 'AccountDeletedError';
+  }
+}
+
+const isAccountDeleted = (body: unknown) =>
+  !!body && typeof body === 'object' && (body as { code?: unknown }).code === ACCOUNT_DELETED;
+
 let refreshPromise: Promise<string> | null = null;
 
 export async function executeTokenRefresh(): Promise<string> {
@@ -47,15 +60,25 @@ export async function executeTokenRefresh(): Promise<string> {
       }
 
       const serverUrl = await getServerUrl();
+      // The user id lets the server say "account deleted" even though deleting
+      // the account also removed this refresh token.
+      const user = await getAuthUser();
       const res = await fetch(`${serverUrl}/auth/refresh`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ refreshToken }),
+        body: JSON.stringify({ refreshToken, userId: user?.id }),
       });
 
       if (!res.ok) {
-        await clearAuth();
-        throw new ApiError(res.status, await res.json().catch(() => null), 'Session expired');
+        const body = await res.json().catch(() => null);
+        if (isAccountDeleted(body)) throw new AccountDeletedError(body);
+        // Only a real rejection ends the session. A 5xx (e.g. the server waking
+        // from sleep) or a proxy error used to sign the user out silently.
+        if (res.status === 401 || res.status === 403) {
+          await clearAuth();
+          throw new ApiError(res.status, body, 'Session expired');
+        }
+        throw new ApiError(res.status, body, `Server unavailable (${res.status}). Try again shortly.`);
       }
 
       const data: AuthResponse = await res.json();
@@ -88,7 +111,8 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
     if (!token) {
       try {
         token = await executeTokenRefresh();
-      } catch {
+      } catch (err) {
+        if (err instanceof AccountDeletedError) throw err;
         throw new ApiError(401, null, 'Authentication required');
       }
     }
@@ -103,22 +127,22 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
 
   // Handle 401 with single-flight token refresh and retry
   if (res.status === 401 && requiresAuth) {
-    try {
-      const newToken = await executeTokenRefresh();
-      headers['Authorization'] = `Bearer ${newToken}`;
-      res = await fetch(`${serverUrl}${path}`, {
-        method: options.method || 'GET',
-        headers,
-        body: options.body,
-      });
-    } catch (refreshErr) {
-      await clearAuth();
-      throw refreshErr;
-    }
+    const body = await res.clone().json().catch(() => null);
+    if (isAccountDeleted(body)) throw new AccountDeletedError(body);
+    // executeTokenRefresh clears auth itself when the server rejects the session
+    // (and only then; a temporarily unavailable server no longer signs you out).
+    const newToken = await executeTokenRefresh();
+    headers['Authorization'] = `Bearer ${newToken}`;
+    res = await fetch(`${serverUrl}${path}`, {
+      method: options.method || 'GET',
+      headers,
+      body: options.body,
+    });
   }
 
   if (!res.ok) {
     const errorBody = await res.json().catch(() => null);
+    if (res.status === 401 && isAccountDeleted(errorBody)) throw new AccountDeletedError(errorBody);
     throw new ApiError(res.status, errorBody);
   }
 
@@ -229,24 +253,51 @@ export async function putFile(hash: string, blob: Blob): Promise<{ stored: boole
   });
 }
 
+async function sha256Hex(blob: Blob): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', await blob.arrayBuffer());
+  return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+/**
+ * Downloads a stored file and verifies it against its hash before returning it.
+ * An unverified download (cut-off transfer, proxy error page) used to be saved
+ * as the book and could then never open, and wiping the server never fixed it.
+ */
 export async function getFile(hash: string): Promise<Blob> {
   const serverUrl = await getServerUrl();
-  let token = getAccessToken() || (await executeTokenRefresh());
-  let res = await fetch(`${serverUrl}/files/${hash}`, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
+  // A sleeping free-tier server can take about a minute to answer.
+  const fetchWithTimeout = async (token: string) => {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 120_000);
+    try {
+      return await fetch(`${serverUrl}/files/${hash}`, {
+        headers: { Authorization: `Bearer ${token}` },
+        signal: ctrl.signal,
+      });
+    } finally {
+      clearTimeout(timer);
+    }
+  };
 
+  let res = await fetchWithTimeout(getAccessToken() || (await executeTokenRefresh()));
   if (res.status === 401) {
-    token = await executeTokenRefresh();
-    res = await fetch(`${serverUrl}/files/${hash}`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
+    const body = await res.clone().json().catch(() => null);
+    if (isAccountDeleted(body)) throw new AccountDeletedError(body);
+    res = await fetchWithTimeout(await executeTokenRefresh());
   }
 
   if (!res.ok) {
-    throw new ApiError(res.status, null, `Failed to download file ${hash}`);
+    throw new ApiError(
+      res.status,
+      null,
+      res.status === 404 ? 'This book file is not on your server.' : `Failed to download file (${res.status})`,
+    );
   }
-  return res.blob();
+  const blob = await res.blob();
+  if ((await sha256Hex(blob)) !== hash) {
+    throw new ApiError(422, null, 'The downloaded file was incomplete or corrupted. Try again.');
+  }
+  return blob;
 }
 
 export async function listFiles(): Promise<Array<{ hash: string; size: number }>> {
@@ -274,7 +325,12 @@ export async function patchPassword(currentPassword: string, newPassword: string
 }
 
 export async function deleteAccount(): Promise<void> {
-  await request('/account', { method: 'DELETE' });
+  try {
+    await request('/account', { method: 'DELETE' });
+  } catch (err) {
+    // Already deleted (e.g. from another device): that's the outcome we wanted.
+    if (!(err instanceof AccountDeletedError)) throw err;
+  }
   await clearAuth();
 }
 

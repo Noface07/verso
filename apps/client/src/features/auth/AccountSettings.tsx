@@ -21,8 +21,8 @@ import {
   DEFAULT_SERVER_URL,
   type StoredUser,
 } from './storage';
-import { db, dirty, SYNC_TABLES, type Device } from '../../db';
-import { syncEngine, useSyncStore } from '../sync/engine';
+import { db, type Device } from '../../db';
+import { syncEngine, useSyncStore, markAllForUpload, wipeLocalAccountData } from '../sync/engine';
 import { Button } from '../../design/components/Button';
 import { Dialog } from '../../design/components/Dialog';
 import { fmtBytes, fmtDate } from '../../lib/format';
@@ -166,26 +166,11 @@ export const AccountSettings: React.FC<AccountSettingsProps> = ({ onAuthChange }
     }
   };
 
-  const dirtyAllSyncedRows = async () => {
-    for (const table of SYNC_TABLES) {
-      const rows = await db.table(table).toArray();
-      await db.transaction('rw', db.table(table), async () => {
-        for (const r of rows) {
-          await db.table(table).update(r.id, dirty());
-        }
-      });
-    }
-  };
-
-  const wipeLocalSyncedData = async () => {
-    for (const table of SYNC_TABLES) {
-      await db.table(table).clear();
-    }
-    await db.files.clear();
-    await db.covers.clear();
-    await db.kv.delete('sync_cursor');
-    await db.kv.delete('uploaded_files');
-  };
+  // Queue local rows for upload without touching updated_at, so newer edits from
+  // other devices still win (bumping the timestamp let a device that had been
+  // offline for weeks overwrite newer progress the moment it signed in).
+  const dirtyAllSyncedRows = markAllForUpload;
+  const wipeLocalSyncedData = wipeLocalAccountData;
 
   const handleMergeChoice = async (choice: 'merge' | 'fresh') => {
     if (choice === 'merge') {

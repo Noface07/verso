@@ -3,13 +3,67 @@ import { db, SYNC_TABLES, now, dirty, deviceId } from '../../db';
 import {
   syncPush,
   syncPull,
-  headFile,
   putFile,
   getFile,
+  listFiles,
   syncEventsToken,
+  AccountDeletedError,
 } from './api';
-import { getRefreshToken, getServerUrl } from '../auth/storage';
+import { getAuthUser, getRefreshToken, getServerUrl, clearAuth } from '../auth/storage';
 import type { SyncTableName } from '@verso/shared';
+
+/**
+ * Sync bookkeeping, scoped to one server database + account. The cursor and the
+ * set of files known to be on the server are only meaningful for the database
+ * they came from: after the server's database or bucket is wiped, or the app is
+ * pointed at another server or account, they must be reset, otherwise the
+ * client never re-pulls (cursor ahead of the new sequence) or re-uploads (it
+ * "knows" the files are there).
+ */
+interface SyncBookkeeping {
+  scope: string;
+  cursor: number;
+  uploaded: string[];
+  lastFileCheck: number;
+}
+const SYNC_STATE_KEY = 'sync_state';
+// How often to compare local files with the server's file list (self-heals a
+// wiped or partially lost bucket) even when nothing else changed.
+const FILE_RECONCILE_MS = 10 * 60_000;
+// The device row is refreshed this rarely; writing it on every sync made every
+// sync schedule the next one, so sync ran in a loop every ~2s.
+const DEVICE_SEEN_MS = 12 * 60 * 60_000;
+
+async function readSyncState(): Promise<SyncBookkeeping | null> {
+  const row = await db.kv.get(SYNC_STATE_KEY);
+  const v = row?.value as SyncBookkeeping | undefined;
+  return v && typeof v.scope === 'string' ? v : null;
+}
+
+async function writeSyncState(state: SyncBookkeeping): Promise<void> {
+  await db.kv.put({ key: SYNC_STATE_KEY, value: state });
+}
+
+/**
+ * Marks every synced row for upload WITHOUT changing updated_at, so the server's
+ * last-write-wins still keeps whichever copy really is newer. (Bumping
+ * updated_at here let a long-offline device overwrite newer edits on sign-in.)
+ */
+export async function markAllForUpload(): Promise<void> {
+  for (const table of SYNC_TABLES) {
+    await db.table(table).toCollection().modify({ _dirty: 1 });
+  }
+}
+
+/** Removes everything this device holds for the account (used on deletion/sign-out). */
+export async function wipeLocalAccountData(): Promise<void> {
+  for (const table of SYNC_TABLES) {
+    await db.table(table).clear();
+  }
+  await db.files.clear();
+  await db.covers.clear();
+  await db.kv.bulkDelete([SYNC_STATE_KEY, 'sync_cursor', 'uploaded_files']);
+}
 
 // 'signedOut': no account, so nothing is synced (previously shown as 'idle' = "Synced").
 export type SyncStatus = 'idle' | 'syncing' | 'offline' | 'error' | 'signedOut';
@@ -22,6 +76,8 @@ export interface SyncState {
   filesUploadingCount: number;
   filesUploadingTotal: number;
   isOnline: boolean;
+  /** Set when the server reported this account deleted (local copy was wiped). */
+  accountDeleted: boolean;
   runSync: () => Promise<void>;
   updatePendingCount: () => Promise<number>;
 }
@@ -34,6 +90,7 @@ export const useSyncStore = create<SyncState>((set) => ({
   filesUploadingCount: 0,
   filesUploadingTotal: 0,
   isOnline: typeof navigator !== 'undefined' ? navigator.onLine : true,
+  accountDeleted: false,
 
   updatePendingCount: async () => {
     let count = 0;
@@ -84,6 +141,14 @@ export class SyncEngine {
         ? (navigator.userAgent.includes('Android') ? 'android' : 'windows')
         : 'web';
 
+      const existing = await db.devices.get(id);
+      const fresh =
+        existing &&
+        !existing.deleted_at &&
+        existing.name === name &&
+        existing.platform === platform &&
+        now() - (existing.last_seen_at ?? 0) < DEVICE_SEEN_MS;
+      if (fresh) return;
       await db.devices.put({
         id,
         name,
@@ -145,6 +210,9 @@ export class SyncEngine {
     useSyncStore.setState({ status: 'syncing', lastError: null });
 
     try {
+      // Stage 0: which server database + account is this? Reset if it changed.
+      const state = await this.resolveScope();
+
       // Register current device first
       await this.registerDevice();
 
@@ -152,10 +220,10 @@ export class SyncEngine {
       await this.stage1Push();
 
       // Stage 2: FILES UP
-      await this.stage2FilesUp();
+      await this.stage2FilesUp(state);
 
       // Stage 3: PULL
-      await this.stage3Pull();
+      await this.stage3Pull(state);
 
       // Stage 4: FILES DOWN
       await this.stage4FilesDown();
@@ -169,6 +237,10 @@ export class SyncEngine {
       this.backoffAttempt = 0;
       await useSyncStore.getState().updatePendingCount();
     } catch (err: unknown) {
+      if (err instanceof AccountDeletedError) {
+        await this.handleAccountDeleted();
+        return;
+      }
       const errorMessage = err instanceof Error ? err.message : String(err);
       useSyncStore.setState({
         status: 'error',
@@ -188,6 +260,41 @@ export class SyncEngine {
     }
   }
 
+  /**
+   * Identifies the server database and account this device syncs with. When it
+   * differs from what the stored cursor belongs to, starts over: cursor 0, no
+   * files assumed uploaded, every local row queued for upload (timestamps kept).
+   */
+  private async resolveScope(): Promise<SyncBookkeeping> {
+    const [serverUrl, user, probe] = await Promise.all([
+      getServerUrl(),
+      getAuthUser(),
+      // since=MAX returns no rows, just the server's instance id.
+      syncPull(Number.MAX_SAFE_INTEGER),
+    ]);
+    const scope = `${serverUrl}|${user?.id ?? ''}|${probe.instanceId ?? 'legacy'}`;
+    const saved = await readSyncState();
+    if (saved?.scope === scope) return saved;
+
+    const fresh: SyncBookkeeping = { scope, cursor: 0, uploaded: [], lastFileCheck: 0 };
+    await markAllForUpload();
+    await db.kv.bulkDelete(['sync_cursor', 'uploaded_files']);
+    await writeSyncState(fresh);
+    return fresh;
+  }
+
+  /** The server says the account no longer exists: wipe this device's copy. */
+  private async handleAccountDeleted(): Promise<void> {
+    this.disconnectSSE();
+    await wipeLocalAccountData();
+    await clearAuth();
+    useSyncStore.setState({
+      status: 'signedOut',
+      lastError: 'This account was deleted. Its data has been removed from this device.',
+      accountDeleted: true,
+    });
+  }
+
   // 1) PUSH
   private async stage1Push(): Promise<void> {
     for (const table of SYNC_TABLES) {
@@ -202,15 +309,21 @@ export class SyncEngine {
           return rest as Record<string, unknown>;
         });
 
-        await syncPush({ [table]: cleanRows });
+        const res = await syncPush({ [table]: cleanRows });
+        const winners = new Map<string, Record<string, unknown>>(
+          (res.serverRows?.[table] ?? []).map((r) => [String(r.id), r]),
+        );
 
-        // Compare-and-set Dexie transaction
+        // Compare-and-set: only rows unchanged since we read them are settled.
+        // A rejected (stale) row takes the server's winning copy, so this device
+        // converges instead of keeping its losing edit forever.
         await db.transaction('rw', targetTable, async () => {
           for (const row of dirtyRows) {
             const current = await targetTable.get(row.id);
-            if (current && current.updated_at === row.updated_at) {
-              await targetTable.update(row.id, { _dirty: 0 });
-            }
+            if (!current || current.updated_at !== row.updated_at) continue;
+            const winner = winners.get(String(row.id));
+            if (winner) await targetTable.put({ ...winner, _dirty: 0 });
+            else await targetTable.update(row.id, { _dirty: 0 });
           }
         });
 
@@ -220,87 +333,66 @@ export class SyncEngine {
   }
 
   // 2) FILES UP
-  private async stage2FilesUp(): Promise<void> {
-    const uploadedRow = await db.kv.get('uploaded_files');
-    const uploadedSet = new Set<string>(
-      Array.isArray(uploadedRow?.value) ? uploadedRow.value : [],
-    );
+  private async stage2FilesUp(state: SyncBookkeeping): Promise<void> {
+    const uploaded = new Set<string>(state.uploaded);
 
-    const pendingUploads: Array<{ hash: string; getBlob: () => Promise<Blob | null> }> = [];
+    // Periodically (and right after a reset) trust the server's actual file list
+    // over the local "already uploaded" memory, so a wiped or partly lost bucket
+    // is refilled from whichever devices still have the files.
+    if (Date.now() - state.lastFileCheck > FILE_RECONCILE_MS) {
+      const onServer = new Set((await listFiles()).map((f) => f.hash));
+      uploaded.clear();
+      for (const h of onServer) uploaded.add(h);
+      state.lastFileCheck = Date.now();
+    }
 
-    // Check books where file_hash is not uploaded and blob exists
-    const books = await db.books.toArray();
+    const pending: Array<{ hash: string; getBlob: () => Promise<Blob | null> }> = [];
+    const books = await db.books.filter((b) => !b.deleted_at).toArray();
     for (const book of books) {
-      if (book.file_hash && !uploadedSet.has(book.file_hash)) {
-        pendingUploads.push({
-          hash: book.file_hash,
-          getBlob: async () => {
-            const fileRow = await db.files.get(book.file_hash);
-            return fileRow?.blob || null;
-          },
-        });
+      if (book.file_hash && !uploaded.has(book.file_hash)) {
+        pending.push({ hash: book.file_hash, getBlob: async () => (await db.files.get(book.file_hash))?.blob ?? null });
       }
-      if (book.cover_hash && !uploadedSet.has(book.cover_hash)) {
-        pendingUploads.push({
-          hash: book.cover_hash,
-          getBlob: async () => {
-            const coverRow = await db.covers.get(book.cover_hash!);
-            return coverRow?.blob || null;
-          },
-        });
+      // Covers are stored under the book id; cover_hash is the hash of that image.
+      // (Looking them up by cover_hash found nothing, so covers never uploaded.)
+      if (book.cover_hash && !uploaded.has(book.cover_hash)) {
+        pending.push({ hash: book.cover_hash, getBlob: async () => (await db.covers.get(book.id))?.blob ?? null });
       }
     }
 
-    if (pendingUploads.length === 0) return;
-
-    useSyncStore.setState({
-      filesUploadingCount: 0,
-      filesUploadingTotal: pendingUploads.length,
-    });
-
-    // Concurrency limit 2
-    let index = 0;
-    let completed = 0;
-
-    const worker = async () => {
-      while (index < pendingUploads.length) {
-        const item = pendingUploads[index++];
-        if (!item) break;
-        try {
-          const blob = await item.getBlob();
-          if (blob) {
-            const exists = await headFile(item.hash);
-            if (!exists) {
-              await putFile(item.hash, blob);
+    if (pending.length > 0) {
+      useSyncStore.setState({ filesUploadingCount: 0, filesUploadingTotal: pending.length });
+      let index = 0;
+      let completed = 0;
+      const worker = async () => {
+        while (index < pending.length) {
+          const item = pending[index++];
+          if (!item) break;
+          try {
+            const blob = await item.getBlob();
+            if (blob) {
+              await putFile(item.hash, blob); // server answers "exists" if already stored
+              uploaded.add(item.hash);
             }
-            uploadedSet.add(item.hash);
+          } catch (err) {
+            if (err instanceof AccountDeletedError) throw err;
+            // Other per-file errors don't fail the sync; the file is retried next time.
+          } finally {
+            completed++;
+            useSyncStore.setState({ filesUploadingCount: completed });
           }
-        } catch {
-          // Individual upload errors do not fail the sync stage
-        } finally {
-          completed++;
-          useSyncStore.setState({ filesUploadingCount: completed });
         }
-      }
-    };
+      };
+      await Promise.all([worker(), worker()]);
+      useSyncStore.setState({ filesUploadingCount: 0, filesUploadingTotal: 0 });
+    }
 
-    await Promise.all([worker(), worker()]);
-
-    await db.kv.put({
-      key: 'uploaded_files',
-      value: Array.from(uploadedSet),
-    });
-
-    useSyncStore.setState({
-      filesUploadingCount: 0,
-      filesUploadingTotal: 0,
-    });
+    state.uploaded = Array.from(uploaded);
+    await writeSyncState(state);
   }
 
   // 3) PULL
-  private async stage3Pull(): Promise<void> {
-    const cursorRow = await db.kv.get('sync_cursor');
-    let cursor = typeof cursorRow?.value === 'number' ? cursorRow.value : 0;
+  private async stage3Pull(state: SyncBookkeeping): Promise<void> {
+    let cursor = state.cursor;
 
     while (true) {
       const page = await syncPull(cursor);
@@ -328,10 +420,12 @@ export class SyncEngine {
               }
             }
           }
-          await db.kv.put({ key: 'sync_cursor', value: page.cursor });
+          state.cursor = page.cursor;
+          await db.kv.put({ key: SYNC_STATE_KEY, value: state });
         });
       } else {
-        await db.kv.put({ key: 'sync_cursor', value: page.cursor });
+        state.cursor = page.cursor;
+        await writeSyncState(state);
       }
 
       cursor = page.cursor;
@@ -345,14 +439,20 @@ export class SyncEngine {
     const books = await db.books.filter((b) => !!b.cover_hash && !b.deleted_at).toArray();
     for (const book of books) {
       const coverHash = book.cover_hash!;
-      const existing = await db.covers.get(coverHash);
-      if (!existing) {
-        try {
-          const blob = await getFile(coverHash);
-          await db.covers.put({ id: coverHash, blob });
-        } catch {
-          // Skip on cover download error
-        }
+      // The UI reads covers by book id. Older versions saved downloads under the
+      // cover hash, where they were never shown: move those over.
+      if (await db.covers.get(book.id)) continue;
+      const misfiled = await db.covers.get(coverHash);
+      if (misfiled) {
+        await db.covers.put({ id: book.id, blob: misfiled.blob });
+        continue;
+      }
+      try {
+        const blob = await getFile(coverHash);
+        await db.covers.put({ id: book.id, blob });
+      } catch (err) {
+        if (err instanceof AccountDeletedError) throw err;
+        // Skip on cover download error; retried next sync.
       }
     }
 
@@ -360,7 +460,8 @@ export class SyncEngine {
     const settingsRow = await db.settings.get('sync');
     const syncSettings = settingsRow?.data as { download_all_books?: boolean } | undefined;
     if (syncSettings?.download_all_books) {
-      for (const book of books) {
+      const allBooks = await db.books.filter((b) => !b.deleted_at).toArray();
+      for (const book of allBooks) {
         const existing = await db.files.get(book.file_hash);
         if (!existing) {
           try {
@@ -405,7 +506,11 @@ export class SyncEngine {
       };
 
       this.eventSource = es;
-    } catch {
+    } catch (err) {
+      if (err instanceof AccountDeletedError) {
+        await this.handleAccountDeleted();
+        return;
+      }
       if (this.sseReconnectTimer) clearTimeout(this.sseReconnectTimer);
       this.sseReconnectTimer = setTimeout(() => {
         void this.connectSSE();

@@ -397,7 +397,9 @@ export class SuwayomiSource implements MangaSource {
         try {
           const errText = await res.text();
           if (errText) detail = errText.slice(0, 120);
-        } catch {}
+        } catch {
+          // Body unreadable: keep the status text as the detail.
+        }
         throw new Error(`Failed to load Suwayomi source: ${detail || res.statusText || 'Request failed'}`);
       }
     }

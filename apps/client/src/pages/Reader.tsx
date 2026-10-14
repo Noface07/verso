@@ -152,6 +152,10 @@ export default function Reader() {
   const [viewInstance, setViewInstance] = useState<FoliateView | null>(null)
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading')
   const [downloading, setDownloading] = useState(false)
+  // Bumped by the error screen's "Re-download" button to reload the book from the
+  // server, discarding the local copy (which may be what fails to open).
+  const [loadAttempt, setLoadAttempt] = useState(0)
+  const discardLocalCopyRef = useRef(false)
   const [error, setError] = useState('')
   const remoteProgress = useLiveQuery(() => db.progress.get(id), [id])
   const [conflict, setConflict] = useState<{
@@ -523,6 +527,10 @@ export default function Reader() {
       try {
         const row = await db.books.get(id)
         if (!row) throw new Error('This book is not in your library.')
+        if (discardLocalCopyRef.current) {
+          discardLocalCopyRef.current = false
+          await db.files.delete(row.file_hash)
+        }
         let stored = await db.files.get(row.file_hash)
         if (!stored) {
           const isOnline = typeof navigator !== 'undefined' ? navigator.onLine : true
@@ -546,23 +554,64 @@ export default function Reader() {
         }
         if (cancelled || !stageRef.current) return
 
-        const file = new File([stored.blob], row.meta.file_name || `book.${row.format.toLowerCase()}`, {
-          type: row.meta.mime || stored.blob.type,
-        })
-        view = document.createElement('foliate-view') as FoliateView
-        stageRef.current.append(view)
-        await view.open(file)
-        if (cancelled) return dispose()
+        // Every step is time-limited: a step that never settles used to leave the
+        // reader on "Opening book…" forever with no way out.
+        const withTimeout = <T,>(p: Promise<T>, ms: number, what: string) =>
+          Promise.race([
+            p,
+            new Promise<T>((_, reject) => setTimeout(() => reject(new Error(`${what} timed out`)), ms)),
+          ])
 
-        viewRef.current = view
-        setViewInstance(view)
-        setToc(view.book.toc ?? [])
-        applyLayout(view.renderer, settingsRef.current, customFontCSS)
-        view.addEventListener('relocate', onRelocate)
-        view.addEventListener('load', onLoad)
-        view.addEventListener('create-overlay', onCreateOverlay)
-        view.addEventListener('draw-annotation', onDraw)
-        view.addEventListener('show-annotation', onShowAnnotation)
+        const openBlob = async (blob: Blob) => {
+          const file = new File([blob], row.meta.file_name || `book.${row.format.toLowerCase()}`, {
+            type: row.meta.mime || blob.type,
+          })
+          view = document.createElement('foliate-view') as FoliateView
+          stageRef.current!.append(view)
+          await withTimeout(view.open(file), 45_000, 'Opening the book file')
+        }
+
+        try {
+          await openBlob(stored.blob)
+        } catch (openErr) {
+          dispose()
+          // A local copy that doesn't match its hash is damaged (interrupted
+          // download or import): discard it and fetch a fresh copy once.
+          const digest = await crypto.subtle.digest('SHA-256', await stored.blob.arrayBuffer())
+          const localHash = Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, '0')).join('')
+          const canDownload = navigator.onLine && !!(await getRefreshToken())
+          if (localHash === row.file_hash || !canDownload) {
+            throw new Error(
+              localHash === row.file_hash
+                ? `This book file can't be opened (${openErr instanceof Error ? openErr.message : 'unknown error'}).`
+                : 'The copy of this book on this device is damaged. Sign in and go online to download it again, or locate the file.',
+              { cause: openErr },
+            )
+          }
+          await db.files.delete(row.file_hash)
+          setDownloading(true)
+          try {
+            stored = { hash: row.file_hash, blob: await getFile(row.file_hash) }
+            await db.files.put(stored)
+          } finally {
+            setDownloading(false)
+          }
+          if (cancelled || !stageRef.current) return
+          await openBlob(stored.blob)
+        }
+        // view is assigned inside openBlob, which TypeScript can't follow.
+        const v = view as unknown as FoliateView | null
+        if (cancelled || !v) return dispose()
+
+        viewRef.current = v
+        setViewInstance(v)
+        setToc(v.book.toc ?? [])
+        applyLayout(v.renderer, settingsRef.current, customFontCSS)
+        v.addEventListener('relocate', onRelocate)
+        v.addEventListener('load', onLoad)
+        v.addEventListener('create-overlay', onCreateOverlay)
+        v.addEventListener('draw-annotation', onDraw)
+        v.addEventListener('show-annotation', onShowAnnotation)
 
         const onExternalLink = (e: Event) => {
           e.preventDefault()
@@ -603,16 +652,25 @@ export default function Reader() {
           }
         }
 
-        view.addEventListener('external-link', onExternalLink)
-        view.addEventListener('link', onInternalLink)
+        v.addEventListener('external-link', onExternalLink)
+        v.addEventListener('link', onInternalLink)
 
-        const tts = new ReadAloud(view)
+        const tts = new ReadAloud(v)
         tts.onState = setTtsState
         ttsRef.current = tts
 
         const saved = await db.progress.get(id)
         if (cancelled) return dispose()
-        await view.init({ lastLocation: jumpRef.current || saved?.cfi || undefined, showTextStart: true })
+        const lastLocation = jumpRef.current || saved?.cfi || undefined
+        try {
+          await withTimeout(v.init({ lastLocation, showTextStart: true }), 20_000, 'Restoring your reading position')
+        } catch (posErr) {
+          // A saved position from another device or edition that can't be
+          // resolved used to hang here. Open at the beginning instead.
+          if (!lastLocation) throw posErr
+          console.warn('Saved position could not be restored; opening at the start', posErr)
+          await withTimeout(v.init({ showTextStart: true }), 20_000, 'Opening the book')
+        }
         if (cancelled) return dispose()
 
         void db.books.update(id, { last_opened_at: Date.now(), ...dirty() })
@@ -636,7 +694,7 @@ export default function Reader() {
       drawn.current = new Map()
       dispose()
     }
-  }, [id])
+  }, [id, loadAttempt])
 
   const locRef = useRef<Loc | null>(null)
   useEffect(() => {
@@ -1236,6 +1294,17 @@ export default function Reader() {
               <div className="flex flex-wrap items-center justify-center gap-3">
                 <Button variant="standard" onClick={() => navigate('/library')}>
                   Back to library
+                </Button>
+                <Button
+                  variant="standard"
+                  onClick={() => {
+                    discardLocalCopyRef.current = true
+                    setError('')
+                    setStatus('loading')
+                    setLoadAttempt((n) => n + 1)
+                  }}
+                >
+                  Re-download from server
                 </Button>
                 <label className="cursor-pointer">
                   <input
