@@ -10,6 +10,8 @@ import { accountRoutes } from './account.js';
 import { pool, describeConnection } from './db.js';
 import { getNotifyHub } from './notify.js';
 import { runMigrations } from './migrate.js';
+import { userExists, wasDeleted } from './integrity.js';
+import { ACCOUNT_DELETED } from '@verso/shared';
 import './types.js';
 
 export async function createServer(): Promise<FastifyInstance> {
@@ -43,6 +45,15 @@ export async function createServer(): Promise<FastifyInstance> {
       await req.jwtVerify();
     } catch {
       return reply.code(401).send({ error: 'unauthorized' });
+    }
+    // Access tokens outlive account deletion by up to their TTL. Reject them, and
+    // tell the device the account is gone so it wipes its copy rather than
+    // pushing it back (which also failed on the users foreign key).
+    if (!(await userExists(req.user.sub))) {
+      const deleted = await wasDeleted(req.user.sub);
+      return reply
+        .code(401)
+        .send({ error: deleted ? 'account deleted' : 'unauthorized', code: deleted ? ACCOUNT_DELETED : undefined });
     }
   });
 

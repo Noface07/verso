@@ -2,6 +2,7 @@ import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import type { PoolClient } from 'pg';
 import { pool } from './db.js';
 import { getNotifyHub } from './notify.js';
+import { getInstanceId, lockUserWrites } from './integrity.js';
 import {
   SYNC_TABLES,
   type SyncTableName,
@@ -104,9 +105,11 @@ export const syncRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
       let stale = 0;
       let invalid = 0;
       const staleIds: Partial<Record<SyncTableName, string[]>> = {};
+      const serverRows: Partial<Record<SyncTableName, Record<string, unknown>[]>> = {};
 
       try {
         await client.query('begin');
+        await lockUserWrites(client, req.user.sub);
         for (const [tbl, rows] of Object.entries(changes)) {
           const table = tbl as SyncTableName;
           if (!SYNC_TABLES[table] || !Array.isArray(rows)) continue;
@@ -125,6 +128,15 @@ export const syncRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
                 staleIds[table] = [];
               }
               staleIds[table]!.push(row.id as string);
+              // Send back the winning copy so the client converges on it.
+              const current = await client.query<Record<string, unknown>>(
+                `select * from ${table} where user_id = $1 and id = $2`,
+                [req.user.sub, row.id],
+              );
+              if (current.rows[0]) {
+                const { user_id: _u, ...rest } = current.rows[0];
+                (serverRows[table] ??= []).push(rest);
+              }
             }
           }
         }
@@ -141,6 +153,7 @@ export const syncRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         stale,
         invalid,
         staleIds,
+        serverRows,
         serverTime: Date.now(),
       };
       return response;
@@ -192,6 +205,7 @@ export const syncRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         cursor,
         hasMore,
         serverTime: Date.now(),
+        instanceId: await getInstanceId(),
       };
     },
   );

@@ -20,5 +20,8 @@ COPY apps/server/migrations ./apps/server/migrations
 RUN mkdir -p /data/files && chown -R node:node /data/files
 USER node
 WORKDIR /app/apps/server
+# Apply pending database migrations (idempotent, lock-protected) before serving.
+# Without this, schema changes never reached the hosted database.
+ENV MIGRATE_ON_START=true
 EXPOSE 8080
 CMD ["node", "dist/server.js"]

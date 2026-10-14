@@ -186,40 +186,38 @@ class R2StorageDriver implements StorageDriver {
     );
   }
 
+  /** All object keys under a prefix. ListObjectsV2 returns at most 1000 per page. */
+  private async listAll(prefix: string): Promise<{ Key: string; Size: number }[]> {
+    const out: { Key: string; Size: number }[] = [];
+    let token: string | undefined;
+    do {
+      const res = await this.client.send(
+        new ListObjectsV2Command({ Bucket: this.bucket, Prefix: prefix, ContinuationToken: token }),
+      );
+      for (const obj of res.Contents || []) {
+        if (obj.Key) out.push({ Key: obj.Key, Size: obj.Size ?? 0 });
+      }
+      token = res.IsTruncated ? res.NextContinuationToken : undefined;
+    } while (token);
+    return out;
+  }
+
   async list(userId: string): Promise<FileItem[]> {
     const prefix = `${userId}/`;
-    const res = await this.client.send(
-      new ListObjectsV2Command({
-        Bucket: this.bucket,
-        Prefix: prefix,
-      }),
-    );
     const files: FileItem[] = [];
-    for (const obj of res.Contents || []) {
-      if (!obj.Key) continue;
+    for (const obj of await this.listAll(prefix)) {
       const hash = obj.Key.slice(prefix.length);
-      if (HASH_RE.test(hash)) {
-        files.push({ hash, size: obj.Size ?? 0 });
-      }
+      if (HASH_RE.test(hash)) files.push({ hash, size: obj.Size });
     }
     return files;
   }
 
   async deleteAll(userId: string): Promise<void> {
-    const prefix = `${userId}/`;
-    const listRes = await this.client.send(
-      new ListObjectsV2Command({
-        Bucket: this.bucket,
-        Prefix: prefix,
-      }),
-    );
-    const objects = (listRes.Contents || []).filter((o) => o.Key).map((o) => ({ Key: o.Key! }));
-    if (objects.length > 0) {
+    const keys = (await this.listAll(`${userId}/`)).map((o) => ({ Key: o.Key }));
+    // DeleteObjects accepts at most 1000 keys per request.
+    for (let i = 0; i < keys.length; i += 1000) {
       await this.client.send(
-        new DeleteObjectsCommand({
-          Bucket: this.bucket,
-          Delete: { Objects: objects },
-        }),
+        new DeleteObjectsCommand({ Bucket: this.bucket, Delete: { Objects: keys.slice(i, i + 1000) } }),
       );
     }
   }

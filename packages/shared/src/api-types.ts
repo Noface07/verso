@@ -59,6 +59,12 @@ export interface SyncPushResponse {
   stale: number;
   invalid: number;
   staleIds: Partial<Record<SyncTableName, string[]>>;
+  /**
+   * The server's current copy of each rejected (stale) row. The client applies
+   * these so a device whose edit lost the last-write-wins race converges on the
+   * winning value instead of keeping its own copy forever.
+   */
+  serverRows?: Partial<Record<SyncTableName, Record<string, unknown>[]>>;
   serverTime: number;
 }
 
@@ -67,7 +73,16 @@ export interface SyncPullResponse {
   cursor: number;
   hasMore: boolean;
   serverTime: number;
+  /**
+   * Identifies the server database. If it differs from the one a client's cursor
+   * was recorded against (database wiped, restored or replaced), the client
+   * resets its cursor and re-uploads everything.
+   */
+  instanceId?: string;
 }
+
+/** Error code in 401 bodies when the account no longer exists. */
+export const ACCOUNT_DELETED = 'account_deleted';
 
 export interface EventsTokenResponse {
   token: string;

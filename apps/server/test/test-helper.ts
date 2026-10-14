@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import fsp from 'node:fs/promises';
-import { newDb, type IMemoryDb } from 'pg-mem';
+import { newDb, DataType, type IMemoryDb } from 'pg-mem';
 import type { FastifyInstance } from 'fastify';
 import { setPool } from '../src/db.js';
 import { createServer } from '../src/server.js';
@@ -29,6 +29,26 @@ export async function setupTestApp(testId: string = 'default'): Promise<TestCont
 
   // Create sequence
   mem.public.query('create sequence sync_seq;');
+
+  // Migration 004 tables, and a no-op stand-in for pg_advisory_xact_lock (pg-mem
+  // doesn't implement advisory locks; tests run single-connection anyway).
+  mem.public.query(`
+    create table server_meta (id boolean primary key, instance_id text not null);
+    insert into server_meta values (true, '00000000-0000-4000-8000-000000000001');
+    create table deleted_users (id text primary key, deleted_at timestamptz default now());
+  `);
+  mem.public.registerFunction({
+    name: 'pg_advisory_xact_lock',
+    args: [DataType.bigint],
+    returns: DataType.text,
+    implementation: () => '',
+  });
+  mem.public.registerFunction({
+    name: 'pg_advisory_xact_lock',
+    args: [DataType.integer],
+    returns: DataType.text,
+    implementation: () => '',
+  });
 
   // Create tables with default nextval for server_seq
   mem.public.query(`

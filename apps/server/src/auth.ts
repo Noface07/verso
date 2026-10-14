@@ -2,6 +2,8 @@ import bcrypt from 'bcryptjs';
 import crypto from 'node:crypto';
 import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import { pool } from './db.js';
+import { wasDeleted } from './integrity.js';
+import { ACCOUNT_DELETED } from '@verso/shared';
 import type { AuthResponse } from '@verso/shared';
 import './types.js';
 
@@ -80,7 +82,7 @@ export const authRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     },
   );
 
-  app.post<{ Body: { refreshToken?: string } }>(
+  app.post<{ Body: { refreshToken?: string; userId?: string } }>(
     '/refresh',
     { config: strict },
     async (req, reply) => {
@@ -96,6 +98,13 @@ export const authRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         [sha256(token)],
       );
       if (!r.rowCount || !r.rows[0]) {
+        // Deleting an account removes its refresh tokens, so the token alone can't
+        // say whose it was. The client sends its stored user id as a hint; if that
+        // account was deleted, say so, and the device wipes its local copy.
+        const hint = req.body?.userId;
+        if (typeof hint === 'string' && /^[0-9a-f-]{36}$/i.test(hint) && (await wasDeleted(hint))) {
+          return reply.code(401).send({ error: 'account deleted', code: ACCOUNT_DELETED });
+        }
         return reply.code(401).send({ error: 'invalid refresh token' });
       }
       const { user_id, device_name } = r.rows[0];

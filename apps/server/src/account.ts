@@ -4,6 +4,7 @@ import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import { pool } from './db.js';
 import { SYNC_TABLES, type SyncTableName } from '@verso/shared';
 import { storage } from './storage.js';
+import { forgetUser } from './integrity.js';
 import './types.js';
 
 async function calculateStorageUsed(userId: string): Promise<number> {
@@ -166,11 +167,42 @@ export const accountRoutes: FastifyPluginAsync = async (app: FastifyInstance) =>
     { preHandler: app.auth },
     async (req) => {
       const userId = req.user.sub;
-      // Foreign keys in Postgres have ON DELETE CASCADE
-      await pool.query('delete from users where id = $1', [userId]);
+      // Tombstone + delete in one transaction (rows cascade via foreign keys).
+      const client = await pool.connect();
+      try {
+        await client.query('begin');
+        await client.query(
+          'insert into deleted_users (id) values ($1) on conflict (id) do nothing',
+          [userId],
+        );
+        await client.query('delete from users where id = $1', [userId]);
+        await client.query('commit');
+      } catch (e) {
+        await client.query('rollback');
+        throw e;
+      } finally {
+        client.release();
+      }
+      forgetUser(userId);
 
-      // Remove user storage (R2 or disk)
-      await storage.deleteAll(userId);
+      // Wake this user's other signed-in devices: their next sync gets
+      // "account deleted" and wipes their copy instead of re-uploading it.
+      await pool.query('select pg_notify($1, $2)', [`sync_${userId}`, '']).catch(() => {});
+
+      // The account is already gone; a storage hiccup must not make the client
+      // think deletion failed. Retry file removal in the background.
+      void (async () => {
+        for (let attempt = 0; attempt < 5; attempt++) {
+          try {
+            await storage.deleteAll(userId);
+            return;
+          } catch (err) {
+            req.log.warn({ err, attempt }, 'deleting account files failed; retrying');
+            await new Promise((r) => setTimeout(r, 2000 * 2 ** attempt));
+          }
+        }
+        req.log.error({ userId }, 'could not delete account files');
+      })();
 
       return { ok: true };
     },
