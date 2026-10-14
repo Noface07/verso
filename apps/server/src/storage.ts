@@ -108,6 +108,7 @@ class R2StorageDriver implements StorageDriver {
     this.client = new S3Client({
       region: config.region || 'auto',
       endpoint: config.endpoint,
+      forcePathStyle: true,
       credentials: {
         accessKeyId: config.accessKeyId,
         secretAccessKey: config.secretAccessKey,
