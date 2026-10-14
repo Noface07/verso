@@ -53,6 +53,9 @@ export default function SeriesDetail() {
   const [hideRead, setHideRead] = useState(false);
   const [sortAsc, setSortAsc] = useState(true);
   const [descExpanded, setDescExpanded] = useState(false);
+  // Phones get a compact header: smaller buttons and fewer tags until expanded.
+  const compact = typeof window !== 'undefined' && window.innerWidth < 640;
+  const tagLimit = compact ? 5 : 10;
   const [tagsExpanded, setTagsExpanded] = useState(false);
   // Chapters list, or every chapter's pages in one scrolling list. Browsing pages
   // does not touch reading progress or history; only opening one in the reader does.
@@ -364,7 +367,7 @@ export default function SeriesDetail() {
       onScroll={(e) => {
         scrollPos.current = e.currentTarget.scrollTop;
       }}
-      className="flex-1 flex flex-col h-full overflow-y-auto bg-[var(--bg-base)] select-none"
+      className="flex-1 flex flex-col h-full overflow-y-auto overflow-x-hidden bg-[var(--bg-base)] select-none"
     >
       {/* Top back navigation bar */}
       <div className="sticky top-0 z-30 shrink-0 px-4 sm:px-6 py-3 chrome-surface border-b border-[var(--stroke)] flex items-center justify-between">
@@ -383,7 +386,7 @@ export default function SeriesDetail() {
       {/* Hero Banner with Ambient blurred cover background */}
       {/* shrink-0: as a child of the scrolling flex column it used to shrink to the
           viewport and its overflow-hidden cut off the title and details. */}
-      <div className="relative shrink-0 p-4 sm:p-6 md:p-8 overflow-hidden border-b border-[var(--stroke)] bg-[var(--layer-1)]">
+      <div className="relative shrink-0 p-3 sm:p-6 md:p-8 overflow-hidden border-b border-[var(--stroke)] bg-[var(--layer-1)]">
         {entry.cover && (
           <div
             className="absolute inset-0 bg-cover bg-center blur-2xl opacity-15 pointer-events-none scale-110"
@@ -391,9 +394,9 @@ export default function SeriesDetail() {
           />
         )}
 
-        <div className="relative z-10 flex flex-col md:flex-row gap-6 max-w-5xl mx-auto">
+        <div className="relative z-10 flex flex-row flex-wrap md:flex-nowrap gap-4 md:gap-6 max-w-5xl mx-auto">
           {/* Cover image */}
-          <div className="w-40 md:w-52 aspect-[2/3] shrink-0 rounded-[var(--r-cover)] overflow-hidden shadow-[var(--shadow-cover)] mx-auto md:mx-0">
+          <div className="w-24 sm:w-36 md:w-52 aspect-[2/3] shrink-0 self-start rounded-[var(--r-cover)] overflow-hidden shadow-[var(--shadow-cover)]">
             {entry.cover ? (
               <img
                 src={entry.cover}
@@ -408,17 +411,17 @@ export default function SeriesDetail() {
           </div>
 
           {/* Series Metadata & Actions */}
-          <div className="flex-1 flex flex-col justify-between">
+          <div className="flex-1 min-w-0 flex flex-col justify-between">
             <div>
-              <h1 className="text-2xl md:text-3xl font-display font-bold text-[var(--text-1)] leading-tight [overflow-wrap:anywhere]">
+              <h1 className="text-lg sm:text-2xl md:text-3xl font-display font-bold text-[var(--text-1)] leading-tight [overflow-wrap:anywhere]">
                 {entry.title}
               </h1>
-              <p className="text-sm font-medium text-[var(--text-2)] mt-1.5">
+              <p className="text-xs sm:text-sm font-medium text-[var(--text-2)] mt-1 sm:mt-1.5 truncate">
                 {entry.authors.join(', ') || 'Unknown Author'}
               </p>
 
               {/* Facts row */}
-              <div className="flex flex-wrap items-center gap-1.5 mt-3 text-[11px] font-semibold">
+              <div className="flex flex-wrap items-center gap-1 sm:gap-1.5 mt-2 sm:mt-3 text-[10px] sm:text-[11px] font-semibold">
                 {isAdultRating(entry.contentRating) && (
                   <span className="px-2 py-0.5 rounded-[var(--r-sm)] bg-[var(--danger)] text-white">18+</span>
                 )}
@@ -452,7 +455,7 @@ export default function SeriesDetail() {
               {/* Tags */}
               {entry.tags && entry.tags.length > 0 && (
                 <div className="flex flex-wrap gap-1.5 mt-3">
-                  {(tagsExpanded ? entry.tags : entry.tags.slice(0, 10)).map((tag, i) => (
+                  {(tagsExpanded ? entry.tags : entry.tags.slice(0, tagLimit)).map((tag, i) => (
                     <span
                       key={i}
                       className="px-2.5 py-0.5 rounded-full text-xs font-medium bg-[var(--layer-3)] text-[var(--text-2)]"
@@ -460,13 +463,13 @@ export default function SeriesDetail() {
                       {tag}
                     </span>
                   ))}
-                  {entry.tags.length > 10 && (
+                  {entry.tags.length > tagLimit && (
                     <button
                       type="button"
                       onClick={() => setTagsExpanded((v) => !v)}
                       className="px-2.5 py-0.5 rounded-full text-xs font-medium text-[var(--accent)] hover:underline cursor-pointer"
                     >
-                      {tagsExpanded ? 'Show fewer' : `+${entry.tags.length - 10} more`}
+                      {tagsExpanded ? 'Show fewer' : `+${entry.tags.length - tagLimit} more`}
                     </button>
                   )}
                 </div>
@@ -477,7 +480,7 @@ export default function SeriesDetail() {
                 <div className="mt-4">
                   <div
                     className={`text-sm text-[var(--text-2)] leading-relaxed [overflow-wrap:anywhere] ${
-                      descExpanded ? '' : 'line-clamp-5'
+                      descExpanded ? '' : 'line-clamp-3 sm:line-clamp-5'
                     }`}
                   >
                     {safeHtml(entry.summary)}
@@ -496,9 +499,9 @@ export default function SeriesDetail() {
             </div>
 
             {/* Action buttons */}
-            <div className="flex flex-wrap items-center gap-3 mt-6 pt-4 border-t border-[var(--stroke)]">
+            <div className="flex flex-wrap items-center gap-2 sm:gap-3 mt-4 sm:mt-6 pt-3 sm:pt-4 border-t border-[var(--stroke)]">
               {firstUnreadChapter && (
-                <Button variant="accent" size="lg" onClick={handleStartReading}>
+                <Button variant="accent" size={compact ? "md" : "lg"} onClick={handleStartReading}>
                   <BookOpen className="w-5 h-5 mr-2" />
                   {chapters.some((c) => progressByChapterId.get(c.id)?.read)
                     ? 'Continue Reading'
@@ -508,7 +511,7 @@ export default function SeriesDetail() {
 
               <Button
                 variant={isFollowed ? 'standard' : 'subtle'}
-                size="lg"
+                size={compact ? 'md' : 'lg'}
                 title="Keeps this series in Library → Manga and checks it for new chapters (Updates)"
                 onClick={handleToggleFollow}
               >
@@ -576,7 +579,7 @@ export default function SeriesDetail() {
       <div className="max-w-5xl mx-auto w-full px-4 sm:px-6 py-6 flex-1 flex flex-col">
         {/* Controls: Search, Filter, Sort */}
         <div className="flex flex-wrap items-center justify-between gap-3 mb-4 pb-3 border-b border-[var(--stroke)]">
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-2 sm:gap-3 min-w-0">
             <div role="tablist" aria-label="Series view" className="flex items-center gap-1 p-0.5 rounded-[var(--r-md)] bg-[var(--layer-2)]">
               {(['chapters', 'pages'] as const).map((v) => (
                 <button

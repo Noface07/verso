@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Palette,
   BookOpen,
@@ -12,8 +12,11 @@ import {
   Download,
   Upload,
   Trash2,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react';
 import { useTheme, ACCENT_PRESETS } from '../design/theme';
+import { registerBackHandler } from '../lib/backStack';
 import { useReaderSettings } from '../lib/readerSettings';
 import { db } from '../db';
 import { Button } from '../design/components/Button';
@@ -40,6 +43,17 @@ type SettingsTab =
 
 export default function Settings() {
   const [activeTab, setActiveTab] = useState<SettingsTab>('appearance');
+  // Phones: a category list first; picking one opens it full screen with Back
+  // (the desktop sidebar squeezed into a scrolling strip didn't fit).
+  const [mobileDetail, setMobileDetail] = useState(false);
+  useEffect(() => {
+    if (!mobileDetail) return;
+    // Android back button returns to the category list first.
+    return registerBackHandler(() => {
+      setMobileDetail(false);
+      return true;
+    }, 30);
+  }, [mobileDetail]);
   const { settings, updateSettings } = useTheme();
   const [readerSettings, updateReaderSettings] = useReaderSettings();
 
@@ -129,8 +143,10 @@ export default function Settings() {
       )}
 
       {/* Side Navigation Rail */}
-      <div className="w-full md:w-60 border-b md:border-b-0 md:border-r border-[var(--border-subtle)] p-4 flex md:flex-col gap-1 overflow-x-auto md:overflow-y-auto shrink-0 bg-[var(--surface-subtle)]">
-        <h1 className="hidden md:block text-lg font-bold px-3 py-2 text-[var(--text-primary)]">
+      <div
+        className={`${mobileDetail ? 'hidden md:flex' : 'flex'} w-full md:w-60 flex-1 md:flex-none md:border-r border-[var(--border-subtle)] p-3 md:p-4 flex-col gap-1 overflow-y-auto shrink-0 bg-[var(--surface-subtle)]`}
+      >
+        <h1 className="text-xl md:text-lg font-bold px-3 py-2 text-[var(--text-primary)]">
           {t('settings.title')}
         </h1>
 
@@ -138,21 +154,32 @@ export default function Settings() {
           <button
             key={item.id}
             type="button"
-            onClick={() => setActiveTab(item.id)}
-            className={`flex items-center gap-2.5 px-3 py-2 rounded-[var(--r-md)] text-sm font-medium transition-all shrink-0 cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] ${
+            onClick={() => {
+              setActiveTab(item.id);
+              setMobileDetail(true);
+            }}
+            className={`flex items-center gap-3 md:gap-2.5 px-3 py-3 md:py-2 rounded-[var(--r-md)] text-base md:text-sm font-medium transition-all shrink-0 cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] ${
               activeTab === item.id
-                ? 'bg-[var(--accent-subtle)] text-[var(--accent)] font-semibold shadow-sm'
+                ? 'md:bg-[var(--accent-subtle)] md:text-[var(--accent)] md:font-semibold md:shadow-sm text-[var(--text-primary)]'
                 : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-overlay)]'
             }`}
           >
             {item.icon}
-            <span>{item.label}</span>
+            <span className="flex-1 text-left">{item.label}</span>
+            <ChevronRight className="w-4 h-4 text-[var(--text-muted)] md:hidden" />
           </button>
         ))}
       </div>
 
       {/* Content Area */}
-      <div className="flex-1 overflow-y-auto p-6 md:p-10 max-w-3xl">
+      <div className={`${mobileDetail ? 'block' : 'hidden md:block'} flex-1 overflow-y-auto p-4 sm:p-6 md:p-10 max-w-3xl`}>
+        <button
+          type="button"
+          onClick={() => setMobileDetail(false)}
+          className="md:hidden flex items-center gap-1 -ml-1 mb-4 text-sm font-semibold text-[var(--accent)] cursor-pointer"
+        >
+          <ChevronLeft className="w-4 h-4" /> {t('settings.title')}
+        </button>
         {/* Appearance Tab */}
         {activeTab === 'appearance' && (
           <div className="flex flex-col gap-8 animate-in fade-in-50 duration-150">

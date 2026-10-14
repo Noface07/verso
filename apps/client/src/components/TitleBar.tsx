@@ -7,12 +7,15 @@ import {
   isWindowMaximized,
   closeWindow,
   onWindowResized,
+  isAndroidDevice,
 } from '../lib/tauri';
 import { toggleAppFullscreen, useAppFullscreen } from '../lib/useAppFullscreen';
 
 export function TitleBar() {
   const [maximized, setMaximized] = useState(false);
-  const runningInTauri = isTauri();
+  // Desktop only: on Android the system draws the status bar; this custom
+  // window bar (minimise/maximise/close) was showing on phones too.
+  const runningInTauri = isTauri() && !isAndroidDevice();
 
   useEffect(() => {
     if (!runningInTauri) return;
