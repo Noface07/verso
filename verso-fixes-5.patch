@@ -1,0 +1,48 @@
+diff --git a/apps/server/migrations/005_bigint_sort_order.js b/apps/server/migrations/005_bigint_sort_order.js
+new file mode 100644
+--- /dev/null
++++ b/apps/server/migrations/005_bigint_sort_order.js
+@@ -0,0 +1,22 @@
++/**
++ * Migration 005: sort_order as bigint
++ *
++ * Clients set sort_order to Date.now() (milliseconds) when adding a custom source
++ * or collection. That overflows a 32-bit integer, so every push containing such a
++ * row failed with "out of range for type integer", which aborted the whole sync
++ * (and with it all file uploads) on that device.
++ */
++export const up = (pgm) => {
++  pgm.sql(`
++    alter table sources alter column sort_order type bigint;
++    alter table collections alter column sort_order type bigint;
++  `);
++};
++
++export const down = (pgm) => {
++  pgm.sql(`
++    alter table sources alter column sort_order type integer;
++    alter table collections alter column sort_order type integer;
++  `);
++};
+diff --git a/Dockerfile b/Dockerfile
+--- a/Dockerfile
++++ b/Dockerfile
+@@ -18,6 +18,9 @@
+ # Apply pending database migrations (idempotent, lock-protected) before serving.
+ # Without this, schema changes never reached the hosted database.
+ ENV MIGRATE_ON_START=true
++# Uploads are staged here before going to storage. Without it the server tried to
++# create ./data inside /app, which the node user can't write: every upload failed.
++ENV FILES_DIR=/data/files
+ EXPOSE 8080
+ CMD ["node", "dist/server.js"]
+diff --git a/apps/server/Dockerfile b/apps/server/Dockerfile
+--- a/apps/server/Dockerfile
++++ b/apps/server/Dockerfile
+@@ -18,4 +18,6 @@
+ USER node
+ WORKDIR /app/apps/server
++# Uploads are staged here before going to storage (see the root Dockerfile).
++ENV FILES_DIR=/data/files
+ EXPOSE 8080
+ CMD ["node", "dist/server.js"]

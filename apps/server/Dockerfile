@@ -20,5 +20,7 @@ COPY apps/server/migrations ./apps/server/migrations
 RUN mkdir -p /data/files && chown -R node:node /data/files
 USER node
 WORKDIR /app/apps/server
+# Uploads are staged here before going to storage (see the root Dockerfile).
+ENV FILES_DIR=/data/files
 EXPOSE 8080
 CMD ["node", "dist/server.js"]

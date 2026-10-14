@@ -23,5 +23,8 @@ WORKDIR /app/apps/server
 # Apply pending database migrations (idempotent, lock-protected) before serving.
 # Without this, schema changes never reached the hosted database.
 ENV MIGRATE_ON_START=true
+# Uploads are staged here before going to storage. Without it the server tried to
+# create ./data inside /app, which the node user can't write: every upload failed.
+ENV FILES_DIR=/data/files
 EXPOSE 8080
 CMD ["node", "dist/server.js"]
