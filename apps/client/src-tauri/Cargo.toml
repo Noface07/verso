@@ -38,8 +38,6 @@ tauri-plugin-window-state = "2"
 opt-level = 3
 
 [profile.release]
-codegen-units = 1
-lto = true
 opt-level = 3
 panic = "abort"
 strip = true
