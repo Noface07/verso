@@ -4,7 +4,7 @@ let memoryAccessToken: string | null = null;
 
 export const DEFAULT_SERVER_URL =
   import.meta.env.PROD
-    ? (import.meta.env.VITE_SERVER_URL || 'https://ffxasce.duckdns.org')
+    ? (import.meta.env.VITE_SERVER_URL || 'https://verso-6epp.onrender.com')
     : (import.meta.env.VITE_SERVER_URL || 'http://localhost:8080');
 
 export interface StoredUser {
@@ -69,6 +69,10 @@ export function normalizeServerUrl(input: string): { url: string } | { error: st
 export async function getServerUrl(): Promise<string> {
   const row = await db.kv.get('server_url');
   if (typeof row?.value !== 'string') return DEFAULT_SERVER_URL;
+  if (row.value.includes('duckdns.org')) {
+    await db.kv.delete('server_url');
+    return DEFAULT_SERVER_URL;
+  }
   // Ignore a previously saved unusable value (e.g. a database address).
   const checked = normalizeServerUrl(row.value);
   return 'url' in checked ? checked.url : DEFAULT_SERVER_URL;

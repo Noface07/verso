@@ -11,7 +11,7 @@ if not exist "D:\s3-data\verso-books" (
 )
 
 echo [1/2] Launching S3rver on port 9000...
-start "Verso S3rver (Port 9000)" cmd /k "npx s3rver --directory D:\s3-data --port 9000"
+start "Verso S3rver (Port 9000)" cmd /k "npx s3rver --directory D:\s3-data --port 9000 --no-vhost-buckets --allow-mismatched-signatures"
 
 timeout /t 2 /nobreak >nul
 
