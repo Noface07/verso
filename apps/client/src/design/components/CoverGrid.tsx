@@ -19,13 +19,15 @@ export const CoverGrid: React.FC<CoverGridProps> = ({
     <div
       className={twMerge(
         clsx(
-          'grid gap-5 py-4',
+          'grid gap-3 sm:gap-5 py-4',
           selectionMode && 'select-none',
           className,
         ),
       )}
       style={{
-        gridTemplateColumns: `repeat(auto-fill, minmax(${columnWidth}px, 1fr))`,
+        // Phones get three smaller covers per row instead of two huge ones
+        // (1.5rem = the two phone-width gaps).
+        gridTemplateColumns: `repeat(auto-fill, minmax(min(${columnWidth}px, calc((100% - 1.5rem) / 3)), 1fr))`,
       }}
     >
       {children}

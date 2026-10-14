@@ -582,7 +582,7 @@ export default function Store() {
     <div ref={rootRef} className="flex-1 flex flex-col h-full overflow-hidden bg-[var(--bg-base)]">
       {/* Top Header & Search Bar */}
       <header className="px-4 sm:px-6 py-3 sm:py-4 border-b border-[var(--stroke)] bg-[var(--layer-1)] flex flex-wrap items-center justify-between gap-3 sm:gap-4 shrink-0">
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 shrink-0">
           <ShoppingBag className="w-6 h-6 text-[var(--accent)]" />
           <h1 className="text-xl font-bold tracking-tight text-[var(--text-1)]">
             Store
@@ -600,9 +600,9 @@ export default function Store() {
         </div>
 
         {/* Right actions: Source selector & Downloads Flyout */}
-        <div className="flex items-center gap-2 order-2 sm:order-3">
+        <div className="flex items-center justify-end gap-2 order-2 sm:order-3 flex-1 sm:flex-none min-w-0">
           {/* Source Selector Dropdown */}
-          <div className="flex items-center gap-1.5 bg-[var(--layer-2)] border border-[var(--stroke)] rounded-[var(--r-md)] px-2 py-1">
+          <div className="flex items-center gap-1.5 bg-[var(--layer-2)] border border-[var(--stroke)] rounded-[var(--r-md)] px-2 py-1 min-w-0">
             <Layers className="w-4 h-4 text-[var(--text-3)] shrink-0" />
             <select
               id="source-select"
@@ -612,7 +612,7 @@ export default function Store() {
                 switchSource(e.target.value);
                 setSearchQuery('');
               }}
-              className="bg-transparent text-sm text-[var(--text-1)] outline-none cursor-pointer pr-1"
+              className="bg-transparent text-sm text-[var(--text-1)] outline-none cursor-pointer pr-1 min-w-0 w-full sm:w-auto truncate"
             >
               {sources.map((s) => (
                 <option
@@ -970,9 +970,10 @@ export default function Store() {
           onOpenChange={(open) => !open && setSelectedBook(null)}
           title={selectedBook.title}
         >
-          <div className="flex flex-row flex-wrap sm:flex-nowrap gap-4 sm:gap-5 p-1">
-            {/* Book Cover: beside the details on phones, not a full-width block */}
-            <div className="w-24 sm:w-36 md:w-44 shrink-0 self-start">
+          {/* Phones: a grid with the small cover beside author + tags, and the
+              summary and actions spanning the full width below. */}
+          <div className="grid grid-cols-[5.5rem_minmax(0,1fr)] gap-x-4 gap-y-3 sm:flex sm:gap-5 p-1">
+            <div className="row-span-2 w-full sm:w-36 md:w-44 shrink-0 self-start">
               {selectedBook.cover ? (
                 <img
                   src={selectedBook.cover}
@@ -987,8 +988,8 @@ export default function Store() {
             </div>
 
             {/* Book Details */}
-            <div className="flex-1 basis-40 flex flex-col gap-3 min-w-0">
-              <div>
+            <div className="contents sm:flex sm:flex-1 sm:flex-col sm:gap-3 sm:min-w-0">
+              <div className="min-w-0">
                 <h3 className="sr-only">
                   {selectedBook.title}
                 </h3>
@@ -1004,7 +1005,7 @@ export default function Store() {
 
               {/* Tags / Subjects */}
               {selectedBook.tags && selectedBook.tags.length > 0 && (
-                <div className="flex flex-wrap gap-1.5">
+                <div className="flex flex-wrap content-start gap-1.5 min-w-0">
                   {selectedBook.tags.slice(0, 6).map((tag, i) => (
                     <span
                       key={i}
@@ -1018,13 +1019,13 @@ export default function Store() {
 
               {/* Description / Summary rendered safely with DOMParser */}
               {selectedBook.summary && (
-                <div className="text-xs text-[var(--text-2)] leading-relaxed max-h-40 overflow-y-auto pr-2 border-t border-[var(--stroke)] pt-2">
+                <div className="col-span-2 text-xs text-[var(--text-2)] leading-relaxed max-h-40 overflow-y-auto pr-2 border-t border-[var(--stroke)] pt-2">
                   {safeHtml(selectedBook.summary)}
                 </div>
               )}
 
               {/* Action Buttons */}
-              <div className="mt-auto pt-3 border-t border-[var(--stroke)] flex flex-wrap items-center gap-3">
+              <div className="col-span-2 mt-auto pt-3 border-t border-[var(--stroke)] flex flex-wrap items-center gap-3">
                 {(() => {
                   const owned = getLibraryBook(selectedBook);
                   const dl = getDownloadStatus(selectedBook);
