@@ -5,12 +5,15 @@ import {
   syncPull,
   putFile,
   getFile,
+  headFile,
   listFiles,
   syncEventsToken,
   AccountDeletedError,
   StorageOfflineError,
 } from './api';
 import { getAuthUser, getRefreshToken, getServerUrl, clearAuth } from '../auth/storage';
+import { sha256 } from '../../lib/hash';
+import { backfillCover } from '../../lib/importBook';
 import type { SyncTableName } from '@verso/shared';
 
 /**
@@ -369,7 +372,7 @@ export class SyncEngine {
       state.lastFileCheck = Date.now();
     }
 
-    const pending: Array<{ hash: string; getBlob: () => Promise<Blob | null> }> = [];
+    const pending: Array<{ hash: string; coverOf?: string; getBlob: () => Promise<Blob | null> }> = [];
     let storageDown: StorageOfflineError | null = null;
     const books = await db.books.filter((b) => !b.deleted_at).toArray();
     for (const book of books) {
@@ -379,7 +382,7 @@ export class SyncEngine {
       // Covers are stored under the book id; cover_hash is the hash of that image.
       // (Looking them up by cover_hash found nothing, so covers never uploaded.)
       if (book.cover_hash && !uploaded.has(book.cover_hash)) {
-        pending.push({ hash: book.cover_hash, getBlob: async () => (await db.covers.get(book.id))?.blob ?? null });
+        pending.push({ hash: book.cover_hash, coverOf: book.id, getBlob: async () => (await db.covers.get(book.id))?.blob ?? null });
       }
     }
 
@@ -394,8 +397,24 @@ export class SyncEngine {
           try {
             const blob = await item.getBlob();
             if (blob) {
-              await putFile(item.hash, blob); // server answers "exists" if already stored
-              uploaded.add(item.hash);
+              let hash = item.hash;
+              if (item.coverOf) {
+                // cover_hash can disagree with this device's cover image (separate imports
+                // re-encode the JPEG differently). The server rejects those uploads as
+                // "hash mismatch", so the cover silently never reached other devices.
+                const actual = await sha256(await blob.arrayBuffer());
+                if (actual !== item.hash) {
+                  if (await headFile(item.hash)) {
+                    // Another device already uploaded the image the row points at.
+                    uploaded.add(item.hash);
+                    continue;
+                  }
+                  hash = actual;
+                  await db.books.update(item.coverOf, { cover_hash: actual, ...dirty() });
+                }
+              }
+              await putFile(hash, blob); // server answers "exists" if already stored
+              uploaded.add(hash);
             }
           } catch (err) {
             if (err instanceof AccountDeletedError) throw err;
@@ -482,7 +501,9 @@ export class SyncEngine {
         await db.covers.put({ id: book.id, blob });
       } catch (err) {
         if (err instanceof AccountDeletedError || err instanceof StorageOfflineError) throw err;
-        // Skip on cover download error; retried next sync.
+        // Not on the server: rebuild it from the book file if this device has it.
+        // Otherwise it is retried next sync.
+        await backfillCover(book.id).catch(() => false);
       }
     }
 

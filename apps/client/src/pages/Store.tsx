@@ -13,6 +13,8 @@ import {
   ShoppingBag,
   AlertCircle,
   ExternalLink,
+  SlidersHorizontal,
+  KeyRound,
 } from 'lucide-react';
 import { db, type Book, type DownloadItem } from '../db';
 import {
@@ -41,6 +43,8 @@ import { SearchBox } from '../design/components/SearchBox';
 import { ProgressBar, ProgressRing } from '../design/components/Progress';
 import { EmptyState } from '../design/components/EmptyState';
 import { PullToRefresh } from '../components/PullToRefresh';
+import { InfoBar } from '../design/components/InfoBar';
+import { openExternalUrl } from '../lib/tauri';
 
 // Snapshot of the Store kept while the app runs. Opening a title and pressing Back
 // unmounts the Store; without this, the source, section, search, filters, loaded
@@ -156,6 +160,12 @@ export default function Store() {
   const filtersKey = JSON.stringify(filters);
   // Book being fetched by "Read now" (downloads the small edition, then opens it).
   const [readingNow, setReadingNow] = useState<{ id: string; error?: string } | null>(null);
+  // Phones: filters collapse behind a button. sectionsNonce reloads sections after a sign-in.
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [sectionsNonce, setSectionsNonce] = useState(0);
+  const [signInOpen, setSignInOpen] = useState(false);
+  const [signInName, setSignInName] = useState('');
+  const sourceCred = useLiveQuery(() => db.source_credentials.get(activeSourceId), [activeSourceId]);
 
   // Suwayomi Extension Store state
   const [extStoreOpen, setExtStoreOpen] = useState(false);
@@ -316,7 +326,7 @@ export default function Store() {
     return () => {
       alive = false;
     };
-  }, [activeSource]);
+  }, [activeSource, sectionsNonce]);
 
   const displayedSections = useMemo(() => {
     if (!filters.lang) return sections;
@@ -352,7 +362,11 @@ export default function Store() {
       setLoadingMore(false);
       setError(null);
       try {
-        const page = query ? await source.search(query, undefined, f) : await source.browse(sectionId, undefined, f);
+        let page = query ? await source.search(query, undefined, f) : await source.browse(sectionId, undefined, f);
+        // Filters applied on the client can empty a page; look a few pages further.
+        for (let i = 0; i < 3 && page.items.length === 0 && page.next; i++) {
+          page = query ? await source.search(query, page.next, f) : await source.browse(sectionId, page.next, f);
+        }
         if (!isCurrent()) return;
         setItems(page.items);
         setNextCursor(page.next);
@@ -574,6 +588,8 @@ export default function Store() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const notice = activeSource?.notice;
+
   loadMoreRef.current = () => {
     if (!loading && !error) void handleLoadMore();
   };
@@ -581,16 +597,16 @@ export default function Store() {
   return (
     <div ref={rootRef} className="flex-1 flex flex-col h-full overflow-hidden bg-[var(--bg-base)]">
       {/* Top Header & Search Bar */}
-      <header className="px-4 sm:px-6 py-3 sm:py-4 border-b border-[var(--stroke)] bg-[var(--layer-1)] flex flex-wrap items-center justify-between gap-3 sm:gap-4 shrink-0">
-        <div className="flex items-center gap-3 shrink-0">
-          <ShoppingBag className="w-6 h-6 text-[var(--accent)]" />
-          <h1 className="text-xl font-bold tracking-tight text-[var(--text-1)]">
+      <header className="px-3 sm:px-6 py-2.5 sm:py-4 border-b border-[var(--stroke)] bg-[var(--layer-1)] flex flex-wrap items-center gap-2 sm:gap-4 shrink-0">
+        <div className="flex items-center gap-2 shrink-0">
+          <ShoppingBag className="w-5 h-5 sm:w-6 sm:h-6 text-[var(--accent)]" />
+          <h1 className="hidden sm:block text-xl font-bold tracking-tight text-[var(--text-1)]">
             Store
           </h1>
         </div>
 
-        {/* Search input */}
-        <div className="w-full sm:w-72 md:w-96 order-3 sm:order-2">
+        {/* Search input: its own full-width row on phones */}
+        <div className="basis-full order-last sm:order-none sm:basis-auto sm:w-72 md:w-96">
           <SearchBox
             value={searchQuery}
             onChange={setSearchQuery}
@@ -600,9 +616,9 @@ export default function Store() {
         </div>
 
         {/* Right actions: Source selector & Downloads Flyout */}
-        <div className="flex items-center justify-end gap-2 order-2 sm:order-3 flex-1 sm:flex-none min-w-0">
+        <div className="flex items-center justify-end gap-1.5 sm:gap-2 flex-1 min-w-0 sm:flex-none sm:ml-auto">
           {/* Source Selector Dropdown */}
-          <div className="flex items-center gap-1.5 bg-[var(--layer-2)] border border-[var(--stroke)] rounded-[var(--r-md)] px-2 py-1 min-w-0">
+          <div className="flex items-center gap-1.5 bg-[var(--layer-2)] border border-[var(--stroke)] rounded-[var(--r-md)] px-2 h-9 flex-1 min-w-0 sm:flex-none sm:w-60">
             <Layers className="w-4 h-4 text-[var(--text-3)] shrink-0" />
             <select
               id="source-select"
@@ -612,7 +628,8 @@ export default function Store() {
                 switchSource(e.target.value);
                 setSearchQuery('');
               }}
-              className="bg-transparent text-sm text-[var(--text-1)] outline-none cursor-pointer pr-1 min-w-0 w-full sm:w-auto truncate"
+              // w-0 + flex-1: the longest option name must not decide the row width.
+              className="flex-1 w-0 min-w-0 bg-transparent text-sm text-[var(--text-1)] outline-none cursor-pointer pr-1 truncate"
             >
               {sources.map((s) => (
                 <option
@@ -772,14 +789,39 @@ export default function Store() {
 
       {/* Sections Bar (only shown when not actively searching) */}
       {((!debouncedQuery && sections.length > 0) || (activeSource?.filters?.length ?? 0) > 0) && (
-        <div className="px-4 sm:px-6 py-2 border-b border-[var(--stroke)] bg-[var(--layer-1)] flex items-center gap-2 shrink-0 overflow-x-auto no-scrollbar">
+        <div className="px-3 sm:px-6 py-2 border-b border-[var(--stroke)] bg-[var(--layer-1)] flex flex-wrap sm:flex-nowrap items-center gap-2 shrink-0 sm:overflow-x-auto no-scrollbar">
+          {(activeSource?.filters?.length ?? 0) > 0 && (
+            <button
+              type="button"
+              onClick={() => setFiltersOpen((o) => !o)}
+              aria-expanded={filtersOpen}
+              className="sm:hidden h-7 px-2.5 rounded-[var(--r-md)] border border-[var(--stroke)] bg-[var(--layer-2)] text-xs text-[var(--text-2)] inline-flex items-center gap-1.5 shrink-0 cursor-pointer"
+            >
+              <SlidersHorizontal className="w-3.5 h-3.5" />
+              Filters{Object.values(filters).filter(Boolean).length ? ` (${Object.values(filters).filter(Boolean).length})` : ''}
+            </button>
+          )}
+          {activeSource?.signIn && (
+            <button
+              type="button"
+              onClick={() => {
+                setSignInName(sourceCred?.username ?? '');
+                setSignInOpen(true);
+              }}
+              className="h-7 px-2.5 rounded-[var(--r-md)] border border-[var(--stroke)] bg-[var(--layer-2)] text-xs text-[var(--text-2)] hover:text-[var(--text-1)] inline-flex items-center gap-1.5 shrink-0 cursor-pointer"
+            >
+              <KeyRound className="w-3.5 h-3.5" />
+              {sourceCred?.username ? `${activeSource.signIn.label} ✓` : `${activeSource.signIn.label} sign-in`}
+            </button>
+          )}
+          <div className={`${filtersOpen ? 'flex' : 'hidden'} sm:contents basis-full flex-wrap items-center gap-2`}>
           {activeSource?.filters?.map((f) => (
             <select
               key={f.id}
               aria-label={f.label}
               value={filters[f.id] ?? ''}
               onChange={(e) => setFilters((cur) => ({ ...cur, [f.id]: e.target.value }))}
-              className={`h-7 px-2 rounded-[var(--r-md)] border text-xs outline-none cursor-pointer bg-[var(--layer-2)] shrink-0 ${
+              className={`h-7 px-2 rounded-[var(--r-md)] border text-xs outline-none cursor-pointer bg-[var(--layer-2)] max-w-[calc(50%-0.25rem)] sm:max-w-none sm:shrink-0 ${
                 filters[f.id] ? 'border-[var(--accent)] text-[var(--accent)]' : 'border-[var(--stroke)] text-[var(--text-2)]'
               }`}
             >
@@ -799,12 +841,13 @@ export default function Store() {
               Clear filters
             </button>
           )}
+          </div>
           {!debouncedQuery && displayedSections.length > 0 && (activeSource?.filters?.length ?? 0) > 0 && (
             <span className="w-px h-5 bg-[var(--stroke)] mx-1 hidden sm:block shrink-0" aria-hidden="true" />
           )}
 
           {!debouncedQuery && displayedSections.length > 8 ? (
-            <div className="flex items-center gap-2 shrink-0 min-w-0">
+            <div className="basis-full sm:basis-auto flex items-center gap-2 sm:shrink-0 min-w-0">
               <select
                 aria-label="Select source or section"
                 value={activeSectionId}
@@ -817,7 +860,7 @@ export default function Store() {
                   </option>
                 ))}
               </select>
-              <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar">
+              <div className="hidden sm:flex items-center gap-1.5 overflow-x-auto no-scrollbar">
                 {displayedSections.slice(0, 8).map((sec) => (
                   <button
                     key={sec.id}
@@ -836,7 +879,7 @@ export default function Store() {
             </div>
           ) : (
             !debouncedQuery && (
-              <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar">
+              <div className="basis-full sm:basis-auto min-w-0 flex items-center gap-1.5 overflow-x-auto no-scrollbar [mask-image:linear-gradient(to_right,black_calc(100%-2rem),transparent)] sm:[mask-image:none]">
                 {displayedSections.map((sec) => (
                   <button
                     key={sec.id}
@@ -958,6 +1001,18 @@ export default function Store() {
                   </>
                 )}
               </div>
+            )}
+
+            {!nextCursor && !debouncedQuery && notice && (
+              <InfoBar
+                severity="info"
+                message={notice.text}
+                action={notice.url ? (
+                  <Button size="sm" variant="subtle" onClick={() => void openExternalUrl(notice.url ?? '')}>
+                    {notice.linkLabel ?? 'Learn more'}
+                  </Button>
+                ) : undefined}
+              />
             )}
           </div>
         )}
@@ -1169,6 +1224,56 @@ export default function Store() {
               </div>
             </div>
           </div>
+        </Dialog>
+      )}
+
+      {/* Source sign-in (e.g. Standard Ebooks Patrons Circle). Stored only on this device. */}
+      {activeSource?.signIn && (
+        <Dialog open={signInOpen} onOpenChange={setSignInOpen} title={activeSource.signIn.label}>
+          <form
+            className="flex flex-col gap-3"
+            onSubmit={async (e) => {
+              e.preventDefault();
+              const username = signInName.trim();
+              if (!username) return;
+              await db.source_credentials.put({ id: activeSource.id, username, password: '' });
+              setSignInOpen(false);
+              setSectionsNonce((n) => n + 1);
+              switchSource(activeSource.id);
+            }}
+          >
+            <p className="text-xs text-[var(--text-2)] leading-relaxed">{activeSource.signIn.help}</p>
+            <label htmlFor="source-signin-user" className="text-xs font-semibold text-[var(--text-2)]">
+              {activeSource.signIn.usernameLabel}
+            </label>
+            <input
+              id="source-signin-user"
+              type="email"
+              required
+              value={signInName}
+              onChange={(e) => setSignInName(e.target.value)}
+              className="w-full h-9 px-3 rounded-[var(--r-md)] bg-[var(--layer-2)] border border-[var(--stroke)] text-sm text-[var(--text-1)] outline-none focus:border-[var(--accent)]"
+            />
+            <div className="flex flex-wrap justify-end gap-2 pt-2">
+              {sourceCred?.username && (
+                <Button
+                  type="button"
+                  variant="subtle"
+                  onClick={async () => {
+                    await db.source_credentials.delete(activeSource.id);
+                    setSignInOpen(false);
+                    setSectionsNonce((n) => n + 1);
+                    switchSource(activeSource.id);
+                  }}
+                >
+                  Sign out
+                </Button>
+              )}
+              <Button type="submit" variant="accent">
+                Save
+              </Button>
+            </div>
+          </form>
         </Dialog>
       )}
 
@@ -1484,11 +1589,8 @@ export default function Store() {
                   <div className="min-w-0 flex items-center gap-2.5">
                     {ext.iconUrl ? (
                       <img
-                        src={
-                          activeSource instanceof SuwayomiSource
-                            ? `${activeSource.baseUrl}${ext.iconUrl.startsWith('/') ? '' : '/'}${ext.iconUrl}`
-                            : ext.iconUrl
-                        }
+                        // Already absolute (resolved in SuwayomiSource); prefixing the server again broke it.
+                        src={ext.iconUrl}
                         alt={ext.name}
                         className="w-8 h-8 rounded-[var(--r-sm)] object-contain bg-[var(--layer-3)] shrink-0"
                         onError={(e) => {

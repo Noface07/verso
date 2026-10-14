@@ -121,6 +121,8 @@ export async function importOne(
         if (rawCover) {
           const coverBlob = await shrinkCover(rawCover);
           await db.covers.put({ id: hash, blob: coverBlob });
+          // Keep cover_hash matching the stored image, or the cover can't sync.
+          await db.books.update(hash, { cover_hash: await sha256(await coverBlob.arrayBuffer()), ...dirty() });
         }
       } catch {
         // cover extraction is optional
@@ -224,6 +226,31 @@ export async function importOne(
 
   await db.books.put(row);
   enqueueWordCount(hash, book, row.format);
+  return true;
+}
+
+/**
+ * Stores a cover for a book that has none on this device, taken from the opened
+ * book or from the local file. Sets cover_hash to the new image so it syncs.
+ */
+export async function backfillCover(bookId: string, foliateBook?: FoliateBook): Promise<boolean> {
+  if (await db.covers.get(bookId)) return false;
+  let fb = foliateBook;
+  if (!fb) {
+    const row = await db.books.get(bookId);
+    const file = row ? await db.files.get(row.file_hash) : undefined;
+    if (!row || !file) return false;
+    fb = await makeBook(
+      new File([file.blob], row.meta.file_name || `book.${row.format.toLowerCase()}`, {
+        type: row.meta.mime || file.blob.type,
+      }),
+    );
+  }
+  const raw = await fb.getCover?.();
+  if (!raw) return false;
+  const blob = await shrinkCover(raw);
+  await db.covers.put({ id: bookId, blob });
+  await db.books.update(bookId, { cover_hash: await sha256(await blob.arrayBuffer()), ...dirty() });
   return true;
 }
 

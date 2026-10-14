@@ -112,6 +112,15 @@ async function gutendexJson<T>(url: string, errorPrefix: string): Promise<T> {
   ]).catch(() => cached.data);
 }
 
+// Extra Gutendex filters: sort order, copyright status and when the author lived.
+function applyGutendexFilters(params: URLSearchParams, f?: Record<string, string>): void {
+  if (f?.sort) params.set('sort', f.sort);
+  if (f?.copyright) params.set('copyright', f.copyright);
+  const [start, end] = (f?.era ?? '').split(':');
+  if (start) params.set('author_year_start', start);
+  if (end) params.set('author_year_end', end);
+}
+
 export class GutenbergSource implements CatalogSource {
   id = 'gutenberg';
   name = 'Project Gutenberg';
@@ -148,6 +157,35 @@ export class GutenbergSource implements CatalogSource {
         { value: 'la', label: 'Latin' },
       ],
     },
+    {
+      id: 'sort',
+      label: 'Sort',
+      options: [
+        { value: '', label: 'Section order' },
+        { value: 'popular', label: 'Most downloaded' },
+        { value: 'descending', label: 'Newest added' },
+        { value: 'ascending', label: 'Oldest added' },
+      ],
+    },
+    {
+      id: 'era',
+      label: 'Author era',
+      options: [
+        { value: '', label: 'Any era' },
+        { value: ':1600', label: 'Before 1600' },
+        { value: '1600:1800', label: '1600–1800' },
+        { value: '1800:1900', label: '1800s' },
+        { value: '1900:', label: '1900 onwards' },
+      ],
+    },
+    {
+      id: 'copyright',
+      label: 'Copyright',
+      options: [
+        { value: '', label: 'Any copyright' },
+        { value: 'false', label: 'Public domain only' },
+      ],
+    },
   ];
 
   async browse(sectionId: string, cursor?: string, filters?: Record<string, string>): Promise<CatalogPage> {
@@ -158,6 +196,7 @@ export class GutenbergSource implements CatalogSource {
       else if (sectionId === 'latest') params.set('sort', 'descending');
       else if (sectionId.startsWith('topic:')) params.set('topic', sectionId.slice(6));
       if (filters?.languages) params.set('languages', filters.languages);
+      applyGutendexFilters(params, filters);
       url = `https://gutendex.com/books?${params.toString()}`;
     }
 
@@ -180,6 +219,7 @@ export class GutenbergSource implements CatalogSource {
       if (query.trim()) params.set('search', query.trim());
       if (filters?.languages) params.set('languages', filters.languages);
       if (filters?.topic) params.set('topic', filters.topic);
+      applyGutendexFilters(params, filters);
       url = `https://gutendex.com/books?${params.toString()}`;
     }
 

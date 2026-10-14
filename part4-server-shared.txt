@@ -1,0 +1,4634 @@
+This file is a merged representation of a subset of the codebase, containing specifically included files, combined into a single document by Repomix.
+
+================================================================
+File Summary
+================================================================
+
+Purpose:
+--------
+This file contains a packed representation of a subset of the repository's contents that is considered the most important context.
+It is designed to be easily consumable by AI systems for analysis, code review,
+or other automated processes.
+
+File Format:
+------------
+The content is organized as follows:
+1. This summary section
+2. Repository information
+3. Directory structure
+4. Repository files (if enabled)
+5. Multiple file entries, each consisting of:
+  a. A separator line (================)
+  b. The file path (File: path/to/file)
+  c. Another separator line
+  d. The full contents of the file
+  e. A blank line
+
+Usage Guidelines:
+-----------------
+- This file should be treated as read-only. Any changes should be made to the
+  original repository files, not this packed version.
+- When processing this file, use the file path to distinguish
+  between different files in the repository.
+- Be aware that this file may contain sensitive information. Handle it with
+  the same level of security as you would the original repository.
+
+Notes:
+------
+- Some files may have been excluded based on .gitignore rules and Repomix's configuration
+- Binary files are not included in this packed representation. Please refer to the Repository Structure section for a complete list of file paths, including binary files
+- Only files matching these patterns are included: apps/server/**, packages/**
+- Files matching patterns in .gitignore are excluded
+- Files matching default ignore patterns are excluded
+- Files are sorted by Git change count (files with more changes are at the bottom)
+
+
+================================================================
+Directory Structure
+================================================================
+apps/
+  server/
+    migrations/
+      001_init.js
+      002_manga_sources_devices.js
+      003_lock_down_public_api.js
+      004_sync_integrity.js
+    src/
+      account.ts
+      auth.ts
+      db-check.ts
+      db.ts
+      files.ts
+      integrity.ts
+      migrate.ts
+      notify.ts
+      proxy.ts
+      server.ts
+      storage.ts
+      sync.ts
+      types.ts
+    test/
+      account.test.ts
+      auth.test.ts
+      db-config.test.ts
+      files.test.ts
+      notify.test.ts
+      proxy.test.ts
+      sse.test.ts
+      sync-integrity.test.ts
+      sync.test.ts
+      test-helper.ts
+    .env.example
+    Caddyfile
+    docker-compose.dev.yml
+    docker-compose.supabase.yml
+    docker-compose.yml
+    Dockerfile
+    eslint.config.js
+    package.json
+    tsconfig.json
+    vitest.config.ts
+packages/
+  shared/
+    src/
+      api-types.ts
+      index.ts
+      sync-schema.ts
+    test/
+      sync-schema.test.ts
+    eslint.config.js
+    package.json
+    tsconfig.json
+
+================================================================
+Files
+================================================================
+
+================
+File: apps/server/migrations/002_manga_sources_devices.js
+================
+/**
+ * Migration 002: Manga, sources, devices, and SSE sync notification triggers
+ */
+export const up = (pgm) => {
+  pgm.sql(`
+    -- Alter existing tables
+    alter table reading_sessions add column if not exists kind text not null default 'book';
+    alter table collections add column if not exists meta jsonb not null default '{}';
+
+    -- New synced tables
+    create table if not exists series (
+      user_id uuid not null references users(id) on delete cascade,
+      id text not null,
+      source text not null,
+      source_id text not null,
+      title text not null,
+      author text,
+      cover_url text,
+      status text,
+      meta jsonb not null default '{}',
+      added_at bigint,
+      last_read_at bigint,
+      last_checked_at bigint,
+      updated_at bigint not null,
+      deleted_at bigint,
+      server_seq bigint not null default 0,
+      primary key (user_id, id)
+    );
+
+    create table if not exists chapter_progress (
+      user_id uuid not null references users(id) on delete cascade,
+      id text not null,
+      series_id text not null,
+      source text not null,
+      chapter_id text not null,
+      chapter_number real,
+      title text,
+      page int,
+      total_pages int,
+      read boolean not null default false,
+      read_at bigint,
+      updated_at bigint not null,
+      deleted_at bigint,
+      server_seq bigint not null default 0,
+      primary key (user_id, id)
+    );
+
+    create table if not exists sources (
+      user_id uuid not null references users(id) on delete cascade,
+      id text not null,
+      kind text not null,
+      name text not null,
+      url text not null,
+      meta jsonb not null default '{}',
+      sort_order int not null default 0,
+      updated_at bigint not null,
+      deleted_at bigint,
+      server_seq bigint not null default 0,
+      primary key (user_id, id)
+    );
+
+    create table if not exists devices (
+      user_id uuid not null references users(id) on delete cascade,
+      id text not null,
+      name text not null,
+      platform text not null,
+      last_seen_at bigint,
+      updated_at bigint not null,
+      deleted_at bigint,
+      server_seq bigint not null default 0,
+      primary key (user_id, id)
+    );
+
+    -- Indexes and bump_seq triggers for new tables
+    do $$
+    declare t text;
+    begin
+      foreach t in array array['series','chapter_progress','sources','devices'] loop
+        execute format('create index if not exists %I on %I (user_id, server_seq)', t || '_user_seq_idx', t);
+        execute format('drop trigger if exists %I on %I', t || '_seq', t);
+        execute format('create trigger %I before insert or update on %I
+                        for each row execute function bump_seq()', t || '_seq', t);
+      end loop;
+    end $$;
+
+    create index if not exists chapter_progress_series_idx on chapter_progress (user_id, series_id);
+
+    -- SSE sync notification trigger
+    create or replace function notify_sync() returns trigger language plpgsql as $$
+    begin
+      perform pg_notify('sync_' || coalesce(new.user_id, old.user_id)::text, '');
+      return coalesce(new, old);
+    end $$;
+
+    -- Attach notify trigger to all 11 synced tables
+    do $$
+    declare t text;
+    begin
+      foreach t in array array[
+        'books','progress','annotations','collections','collection_books',
+        'reading_sessions','settings','series','chapter_progress','sources','devices'
+      ] loop
+        execute format('drop trigger if exists %I on %I', t || '_notify', t);
+        execute format('create trigger %I after insert or update on %I
+                        for each row execute function notify_sync()', t || '_notify', t);
+      end loop;
+    end $$;
+  `);
+};
+
+export const down = (pgm) => {
+  pgm.sql(`
+    do $$
+    declare t text;
+    begin
+      foreach t in array array[
+        'books','progress','annotations','collections','collection_books',
+        'reading_sessions','settings','series','chapter_progress','sources','devices'
+      ] loop
+        execute format('drop trigger if exists %I on %I', t || '_notify', t);
+      end loop;
+    end $$;
+
+    drop function if exists notify_sync cascade;
+    drop table if exists devices cascade;
+    drop table if exists sources cascade;
+    drop table if exists chapter_progress cascade;
+    drop table if exists series cascade;
+    alter table collections drop column if exists meta;
+    alter table reading_sessions drop column if exists kind;
+  `);
+};
+
+================
+File: apps/server/migrations/003_lock_down_public_api.js
+================
+/**
+ * Migration 003: Lock down tables for hosted Postgres (Supabase)
+ *
+ * Supabase publishes every table in `public` through its auto-generated REST API
+ * to the `anon` and `authenticated` roles, and the anon key is public by design.
+ * Without this, anyone holding a project's anon key could read `users` (password
+ * hashes) and every user's library. Folio never uses that API: the Fastify server
+ * is the only client. So we enable RLS with no policies (deny all) and revoke
+ * those roles' privileges, including on tables created by future migrations.
+ *
+ * The server connects as the tables' owner, which bypasses RLS, so this is a
+ * no-op for the app itself and for plain Postgres (Docker) deployments.
+ * New tables added later should also `enable row level security`.
+ */
+export const up = (pgm) => {
+  pgm.sql(`
+    do $$
+    declare
+      t text;
+      r text;
+    begin
+      for t in select tablename from pg_tables where schemaname = 'public' loop
+        execute format('alter table public.%I enable row level security', t);
+      end loop;
+
+      foreach r in array array['anon', 'authenticated'] loop
+        if exists (select 1 from pg_roles where rolname = r) then
+          execute format('revoke all on all tables in schema public from %I', r);
+          execute format('revoke all on all sequences in schema public from %I', r);
+          execute format('revoke all on all functions in schema public from %I', r);
+          execute format('alter default privileges in schema public revoke all on tables from %I', r);
+          execute format('alter default privileges in schema public revoke all on sequences from %I', r);
+          execute format('alter default privileges in schema public revoke all on functions from %I', r);
+        end if;
+      end loop;
+    end $$;
+  `);
+};
+
+export const down = (pgm) => {
+  pgm.sql(`
+    do $$
+    declare
+      t text;
+      r text;
+    begin
+      for t in select tablename from pg_tables where schemaname = 'public' loop
+        execute format('alter table public.%I disable row level security', t);
+      end loop;
+
+      -- Restore Supabase's default grants.
+      foreach r in array array['anon', 'authenticated'] loop
+        if exists (select 1 from pg_roles where rolname = r) then
+          execute format('grant all on all tables in schema public to %I', r);
+          execute format('grant all on all sequences in schema public to %I', r);
+          execute format('grant all on all functions in schema public to %I', r);
+          execute format('alter default privileges in schema public grant all on tables to %I', r);
+          execute format('alter default privileges in schema public grant all on sequences to %I', r);
+          execute format('alter default privileges in schema public grant all on functions to %I', r);
+        end if;
+      end loop;
+    end $$;
+  `);
+};
+
+================
+File: apps/server/migrations/004_sync_integrity.js
+================
+/**
+ * Migration 004: Sync integrity
+ *
+ * - server_meta.instance_id: a random id created with the database. Clients key
+ *   their sync cursor and uploaded-file cache by it, so restoring, wiping or
+ *   replacing the database (or pointing the app at a different server) makes
+ *   every client re-push and re-pull instead of silently skipping data because
+ *   its cursor is ahead of the new sequence.
+ * - deleted_users: tombstones for deleted accounts (id + time only, no personal
+ *   data) so other signed-in devices learn the account is gone and wipe their
+ *   copy instead of re-uploading it.
+ */
+export const up = (pgm) => {
+  pgm.sql(`
+    create table if not exists server_meta (
+      id          boolean primary key default true check (id),
+      instance_id uuid not null default gen_random_uuid(),
+      created_at  timestamptz not null default now()
+    );
+    insert into server_meta (id) values (true) on conflict (id) do nothing;
+
+    create table if not exists deleted_users (
+      id         uuid primary key,
+      deleted_at timestamptz not null default now()
+    );
+
+    alter table server_meta enable row level security;
+    alter table deleted_users enable row level security;
+  `);
+};
+
+export const down = (pgm) => {
+  pgm.sql(`
+    drop table if exists deleted_users;
+    drop table if exists server_meta;
+  `);
+};
+
+================
+File: apps/server/src/integrity.ts
+================
+import crypto from 'node:crypto';
+import type { PoolClient } from 'pg';
+import { pool } from './db.js';
+
+let instanceId: string | null = null;
+
+/** Random id of this server database (see migration 004). Cached after first read. */
+export async function getInstanceId(): Promise<string> {
+  if (instanceId) return instanceId;
+  try {
+    const r = await pool.query<{ instance_id: string }>('select instance_id from server_meta limit 1');
+    if (r.rows[0]?.instance_id) instanceId = String(r.rows[0].instance_id);
+  } catch {
+    // Table missing (migrations not applied yet): fall through.
+  }
+  // Without the table the id is per-process; clients then resync after a restart,
+  // which is safe (just redundant). Migrations normally create it.
+  instanceId ??= crypto.randomUUID();
+  return instanceId;
+}
+
+// Whether a user id still exists. Access tokens outlive account deletion by up
+// to their TTL, so authenticated routes check this (cached briefly).
+const existsCache = new Map<string, { exists: boolean; at: number }>();
+const EXISTS_TTL_MS = 30_000;
+
+export async function userExists(userId: string): Promise<boolean> {
+  const hit = existsCache.get(userId);
+  if (hit && Date.now() - hit.at < EXISTS_TTL_MS) return hit.exists;
+  const r = await pool.query('select 1 from users where id = $1', [userId]);
+  const exists = (r.rowCount ?? 0) > 0;
+  existsCache.set(userId, { exists, at: Date.now() });
+  return exists;
+}
+
+export function forgetUser(userId: string): void {
+  existsCache.set(userId, { exists: false, at: Date.now() });
+}
+
+/** True if this id belonged to an account that was deleted. */
+export async function wasDeleted(userId: string): Promise<boolean> {
+  try {
+    const r = await pool.query('select 1 from deleted_users where id = $1', [userId]);
+    return (r.rowCount ?? 0) > 0;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Serialises one user's sync writes for the rest of the transaction.
+ *
+ * server_seq values are taken from a sequence when a row is written, not when
+ * the transaction commits. With two devices pushing at once, a pull could see
+ * the later transaction's rows (higher seq) first, advance its cursor past the
+ * earlier transaction's still-uncommitted rows, and never receive them. Holding
+ * a per-user lock for the whole push makes one user's writes commit in seq order.
+ */
+export async function lockUserWrites(client: PoolClient, userId: string): Promise<void> {
+  // 48-bit key from the user id keeps us inside JS's safe-integer range.
+  const key = parseInt(crypto.createHash('sha256').update(userId).digest('hex').slice(0, 12), 16);
+  await client.query('select pg_advisory_xact_lock($1)', [key]);
+}
+
+================
+File: apps/server/src/migrate.ts
+================
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { runner } from 'node-pg-migrate';
+import { buildPoolConfig } from './db.js';
+
+const MIGRATIONS_DIR = fileURLToPath(new URL('../migrations', import.meta.url));
+
+/**
+ * Applies pending migrations using the same connection settings as the API
+ * (including Supabase SSL handling), so it works anywhere the server does.
+ */
+export async function runMigrations(direction: 'up' | 'down' = 'up', count?: number): Promise<void> {
+  const { connectionString, ssl } = buildPoolConfig();
+  if (!connectionString) throw new Error('DATABASE_URL is not set');
+  const applied = await runner({
+    databaseUrl: { connectionString, ssl },
+    dir: MIGRATIONS_DIR,
+    migrationsTable: 'pgmigrations',
+    direction,
+    count: count ?? (direction === 'up' ? Infinity : 1),
+    singleTransaction: true,
+    log: (msg) => console.log(msg),
+  });
+  console.log(
+    applied.length
+      ? `Migrations ${direction}: ${applied.map((m) => m.name).join(', ')}`
+      : 'Database schema is up to date.',
+  );
+}
+
+// `node dist/migrate.js [up|down] [count]`
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  const direction = process.argv[2] === 'down' ? 'down' : 'up';
+  const count = process.argv[3] ? Number(process.argv[3]) : undefined;
+  runMigrations(direction, count).catch((err) => {
+    console.error('Migration failed:', err instanceof Error ? err.message : err);
+    process.exit(1);
+  });
+}
+
+================
+File: apps/server/src/notify.ts
+================
+import pg from 'pg';
+import { buildPoolConfig } from './db.js';
+
+type Handler = () => void;
+
+const MAX_RETRY_MS = 30_000;
+
+function quoteIdent(name: string): string {
+  return `"${name.replace(/"/g, '""')}"`;
+}
+
+function defaultClient(): pg.Client {
+  const { connectionString, ssl, keepAlive, connectionTimeoutMillis } = buildPoolConfig();
+  return new pg.Client({ connectionString, ssl, keepAlive, connectionTimeoutMillis });
+}
+
+/**
+ * Multiplexes Postgres LISTEN/NOTIFY over a single dedicated connection.
+ *
+ * Each SSE stream used to check a client out of the pool and hold it for as long
+ * as the device stayed connected, so a handful of open devices exhausted the pool
+ * (and a hosted database's connection limit) and stalled every other request.
+ * Now every stream shares one connection; channels are LISTENed while at least
+ * one subscriber needs them. If the connection drops it is re-established with
+ * backoff, all channels are re-LISTENed, and every subscriber is pinged once so
+ * clients re-pull anything they missed while it was down.
+ */
+export class NotifyHub {
+  private client: pg.Client | null = null;
+  private connecting: Promise<pg.Client> | null = null;
+  private handlers = new Map<string, Set<Handler>>();
+  /** Channels LISTENed on the current connection (reset when it is replaced). */
+  private listening = new Set<string>();
+  private retryTimer: NodeJS.Timeout | null = null;
+  private retryMs = 1000;
+  private closed = false;
+
+  constructor(private readonly createClient: () => pg.Client = defaultClient) {}
+
+  /** Registers `handler` for `channel`. Resolves to an unsubscribe function. */
+  async subscribe(channel: string, handler: Handler): Promise<() => Promise<void>> {
+    let set = this.handlers.get(channel);
+    const firstForChannel = !set;
+    if (!set) {
+      set = new Set();
+      this.handlers.set(channel, set);
+    }
+    set.add(handler);
+
+    if (firstForChannel) {
+      try {
+        await this.listen(await this.ensureClient(), channel);
+      } catch (err) {
+        // The reconnect loop LISTENs on every registered channel once it's back.
+        console.error('LISTEN failed; will retry:', (err as Error).message);
+        this.scheduleReconnect();
+      }
+    }
+
+    return async () => {
+      const current = this.handlers.get(channel);
+      if (!current) return;
+      current.delete(handler);
+      if (current.size > 0) return;
+      this.handlers.delete(channel);
+      if (this.client && this.listening.delete(channel)) {
+        await this.client.query(`UNLISTEN ${quoteIdent(channel)}`).catch(() => {});
+      }
+    };
+  }
+
+  /** Number of channels currently listened to (for tests/diagnostics). */
+  get channelCount(): number {
+    return this.handlers.size;
+  }
+
+  async close(): Promise<void> {
+    this.closed = true;
+    if (this.retryTimer) clearTimeout(this.retryTimer);
+    this.handlers.clear();
+    const client = this.client;
+    this.client = null;
+    if (client) await client.end().catch(() => {});
+  }
+
+  private ensureClient(): Promise<pg.Client> {
+    if (this.client) return Promise.resolve(this.client);
+    if (!this.connecting) {
+      this.connecting = this.connect().finally(() => {
+        this.connecting = null;
+      });
+    }
+    return this.connecting;
+  }
+
+  private async connect(): Promise<pg.Client> {
+    const client = this.createClient();
+    client.on('notification', (msg) => {
+      this.handlers.get(msg.channel)?.forEach((h) => h());
+    });
+    const onLost = () => this.handleLost(client);
+    client.on('error', onLost);
+    client.on('end', onLost);
+
+    await client.connect();
+    if (this.closed) {
+      await client.end().catch(() => {});
+      throw new Error('NotifyHub closed');
+    }
+    this.listening = new Set();
+    for (const channel of this.handlers.keys()) {
+      await this.listen(client, channel);
+    }
+    this.client = client;
+    this.retryMs = 1000;
+    return client;
+  }
+
+  private async listen(client: pg.Client, channel: string): Promise<void> {
+    if (this.listening.has(channel)) return;
+    this.listening.add(channel);
+    try {
+      await client.query(`LISTEN ${quoteIdent(channel)}`);
+    } catch (err) {
+      this.listening.delete(channel);
+      throw err;
+    }
+  }
+
+  private handleLost(client: pg.Client): void {
+    if (this.client !== client) return;
+    this.client = null;
+    client.end().catch(() => {});
+    this.scheduleReconnect();
+  }
+
+  private scheduleReconnect(): void {
+    if (this.closed || this.retryTimer || this.handlers.size === 0) return;
+    const delay = this.retryMs;
+    this.retryMs = Math.min(this.retryMs * 2, MAX_RETRY_MS);
+    this.retryTimer = setTimeout(() => {
+      this.retryTimer = null;
+      if (this.closed || this.handlers.size === 0) return;
+      this.ensureClient()
+        .then(() => {
+          // Changes made while we were disconnected produced no notifications.
+          for (const set of this.handlers.values()) set.forEach((h) => h());
+        })
+        .catch((err) => {
+          console.error('Sync listener reconnect failed:', (err as Error).message);
+          this.scheduleReconnect();
+        });
+    }, delay);
+  }
+}
+
+let hub: NotifyHub | null = null;
+
+export function getNotifyHub(): NotifyHub {
+  if (!hub) hub = new NotifyHub();
+  return hub;
+}
+
+export function setNotifyHub(next: NotifyHub | null): void {
+  hub = next;
+}
+
+================
+File: apps/server/src/types.ts
+================
+import 'fastify';
+import '@fastify/jwt';
+
+declare module '@fastify/jwt' {
+  interface FastifyJWT {
+    payload: {
+      sub: string;
+      email?: string;
+      type?: string;
+    };
+    user: {
+      sub: string;
+      email: string;
+      type?: string;
+    };
+  }
+}
+
+declare module 'fastify' {
+  interface FastifyInstance {
+    auth: (req: import('fastify').FastifyRequest, reply: import('fastify').FastifyReply) => Promise<void>;
+  }
+}
+
+export interface AuthUser {
+  id: string;
+  email: string;
+}
+
+================
+File: apps/server/test/account.test.ts
+================
+import crypto from 'node:crypto';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { setupTestApp, type TestContext } from './test-helper.js';
+
+describe('Server Account API', () => {
+  let ctx: TestContext;
+  let token: string;
+  let refreshToken: string;
+
+  beforeEach(async () => {
+    ctx = await setupTestApp('account');
+
+    const reg = await ctx.app.inject({
+      method: 'POST',
+      url: '/auth/register',
+      payload: {
+        email: 'account@example.com',
+        password: 'password123',
+        deviceName: 'Workstation',
+      },
+    });
+    const body = reg.json();
+    token = body.accessToken;
+    refreshToken = body.refreshToken;
+  });
+
+  afterEach(async () => {
+    await ctx.cleanup();
+  });
+
+  it('retrieves account details with storage usage', async () => {
+    // Upload a sample file to check storage quota reporting
+    const content = Buffer.from('Testing storage quota');
+    const hash = crypto.createHash('sha256').update(content).digest('hex');
+    await ctx.app.inject({
+      method: 'PUT',
+      url: `/files/${hash}`,
+      headers: {
+        authorization: `Bearer ${token}`,
+        'content-type': 'application/octet-stream',
+      },
+      payload: content,
+    });
+
+    const res = await ctx.app.inject({
+      method: 'GET',
+      url: '/account',
+      headers: { authorization: `Bearer ${token}` },
+    });
+
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    expect(body.email).toBe('account@example.com');
+    expect(body.storageUsed).toBe(content.length);
+  });
+
+  it('updates password and rejects with wrong current password', async () => {
+    // 1. Wrong current password
+    const wrongRes = await ctx.app.inject({
+      method: 'PATCH',
+      url: '/account/password',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { currentPassword: 'wrong-pass', newPassword: 'newpassword123' },
+    });
+    expect(wrongRes.statusCode).toBe(401);
+
+    // 2. Correct update
+    const patchRes = await ctx.app.inject({
+      method: 'PATCH',
+      url: '/account/password',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { currentPassword: 'password123', newPassword: 'newpassword123' },
+    });
+    expect(patchRes.statusCode).toBe(200);
+    expect(patchRes.json().ok).toBe(true);
+
+    // 3. Login with new password
+    const loginRes = await ctx.app.inject({
+      method: 'POST',
+      url: '/auth/login',
+      payload: { email: 'account@example.com', password: 'newpassword123' },
+    });
+    expect(loginRes.statusCode).toBe(200);
+  });
+
+  it('lists active sessions and revokes a session', async () => {
+    const listRes = await ctx.app.inject({
+      method: 'GET',
+      url: '/account/sessions',
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(listRes.statusCode).toBe(200);
+    const sessions = listRes.json();
+    expect(sessions.length).toBeGreaterThan(0);
+    expect(sessions[0].device_name).toBe('Workstation');
+
+    // Revoke session
+    const tokenHash = sessions[0].token_hash;
+    const deleteRes = await ctx.app.inject({
+      method: 'DELETE',
+      url: `/account/sessions/${tokenHash}`,
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(deleteRes.statusCode).toBe(200);
+
+    // Refresh token should now fail
+    const refreshRes = await ctx.app.inject({
+      method: 'POST',
+      url: '/auth/refresh',
+      payload: { refreshToken },
+    });
+    expect(refreshRes.statusCode).toBe(401);
+  });
+
+  it('exports user data as a ZIP archive', async () => {
+    // Add some synced rows
+    await ctx.app.inject({
+      method: 'POST',
+      url: '/sync/push',
+      headers: { authorization: `Bearer ${token}` },
+      payload: {
+        changes: {
+          books: [{ id: 'export-book-1', title: 'Export Book', updated_at: 100 }],
+        },
+      },
+    });
+
+    const res = await ctx.app.inject({
+      method: 'GET',
+      url: '/account/export',
+      headers: { authorization: `Bearer ${token}` },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.headers['content-type']).toBe('application/zip');
+    expect(res.headers['content-disposition']).toContain('attachment; filename=');
+    // Verify payload is a ZIP (ZIP magic number PK\x03\x04 = 0x50 0x4b 0x03 0x04)
+    expect(res.rawPayload[0]).toBe(0x50);
+    expect(res.rawPayload[1]).toBe(0x4b);
+  });
+
+  it('deletes account and wipes data', async () => {
+    const res = await ctx.app.inject({
+      method: 'DELETE',
+      url: '/account',
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().ok).toBe(true);
+
+    // Subsequent login fails
+    const loginRes = await ctx.app.inject({
+      method: 'POST',
+      url: '/auth/login',
+      payload: { email: 'account@example.com', password: 'password123' },
+    });
+    expect(loginRes.statusCode).toBe(401);
+  });
+});
+
+================
+File: apps/server/test/auth.test.ts
+================
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { setupTestApp, type TestContext } from './test-helper.js';
+
+describe('Server Auth API', () => {
+  let ctx: TestContext;
+
+  beforeEach(async () => {
+    ctx = await setupTestApp('auth');
+  });
+
+  afterEach(async () => {
+    await ctx.cleanup();
+  });
+
+  it('registers a new user and issues tokens', async () => {
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: '/auth/register',
+      payload: {
+        email: 'reader@example.com',
+        password: 'password123',
+        deviceName: 'Test Laptop',
+      },
+    });
+
+    expect(res.statusCode).toBe(201);
+    const body = res.json();
+    expect(body.accessToken).toBeDefined();
+    expect(body.refreshToken).toBeDefined();
+    expect(body.user.email).toBe('reader@example.com');
+    expect(body.user.id).toBeDefined();
+  });
+
+  it('rejects duplicate email registration with 409', async () => {
+    await ctx.app.inject({
+      method: 'POST',
+      url: '/auth/register',
+      payload: { email: 'dup@example.com', password: 'password123' },
+    });
+
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: '/auth/register',
+      payload: { email: 'dup@example.com', password: 'password123' },
+    });
+
+    expect(res.statusCode).toBe(409);
+    expect(res.json().error).toBe('email already registered');
+  });
+
+  it('logs in an existing user with correct credentials', async () => {
+    await ctx.app.inject({
+      method: 'POST',
+      url: '/auth/register',
+      payload: { email: 'login@example.com', password: 'password123' },
+    });
+
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: '/auth/login',
+      payload: { email: 'login@example.com', password: 'password123' },
+    });
+
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    expect(body.accessToken).toBeDefined();
+    expect(body.refreshToken).toBeDefined();
+  });
+
+  it('rejects login with incorrect password with 401', async () => {
+    await ctx.app.inject({
+      method: 'POST',
+      url: '/auth/register',
+      payload: { email: 'wrong@example.com', password: 'password123' },
+    });
+
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: '/auth/login',
+      payload: { email: 'wrong@example.com', password: 'wrongpassword' },
+    });
+
+    expect(res.statusCode).toBe(401);
+  });
+
+  it('rotates refresh tokens and rejects reuse of old refresh token', async () => {
+    const regRes = await ctx.app.inject({
+      method: 'POST',
+      url: '/auth/register',
+      payload: { email: 'rotate@example.com', password: 'password123' },
+    });
+    const { refreshToken: token1 } = regRes.json();
+
+    // First rotation
+    const refreshRes = await ctx.app.inject({
+      method: 'POST',
+      url: '/auth/refresh',
+      payload: { refreshToken: token1 },
+    });
+
+    expect(refreshRes.statusCode).toBe(200);
+    const { refreshToken: token2, accessToken: access2 } = refreshRes.json();
+    expect(token2).toBeDefined();
+    expect(token2).not.toBe(token1);
+    expect(access2).toBeDefined();
+
+    // Old token reuse MUST be rejected
+    const reuseRes = await ctx.app.inject({
+      method: 'POST',
+      url: '/auth/refresh',
+      payload: { refreshToken: token1 },
+    });
+    expect(reuseRes.statusCode).toBe(401);
+
+    // New token must work
+    const secondRefresh = await ctx.app.inject({
+      method: 'POST',
+      url: '/auth/refresh',
+      payload: { refreshToken: token2 },
+    });
+    expect(secondRefresh.statusCode).toBe(200);
+  });
+
+  it('revokes refresh token on logout', async () => {
+    const regRes = await ctx.app.inject({
+      method: 'POST',
+      url: '/auth/register',
+      payload: { email: 'logout@example.com', password: 'password123' },
+    });
+    const { refreshToken } = regRes.json();
+
+    const logoutRes = await ctx.app.inject({
+      method: 'POST',
+      url: '/auth/logout',
+      payload: { refreshToken },
+    });
+    expect(logoutRes.statusCode).toBe(200);
+    expect(logoutRes.json().ok).toBe(true);
+
+    // Subsequent refresh must fail
+    const refreshRes = await ctx.app.inject({
+      method: 'POST',
+      url: '/auth/refresh',
+      payload: { refreshToken },
+    });
+    expect(refreshRes.statusCode).toBe(401);
+  });
+});
+
+================
+File: apps/server/test/db-config.test.ts
+================
+import { describe, it, expect } from 'vitest';
+import { buildPoolConfig, describeConnection } from '../src/db.js';
+
+const SUPABASE_SESSION =
+  'postgres://postgres.abcdefgh:secret@aws-0-eu-central-1.pooler.supabase.com:5432/postgres';
+
+describe('buildPoolConfig', () => {
+  it('leaves SSL off for local Postgres', () => {
+    const cfg = buildPoolConfig({ DATABASE_URL: 'postgres://reader:pw@localhost:5432/reader' });
+    expect(cfg.ssl).toBe(false);
+    expect(cfg.connectionString).toBe('postgres://reader:pw@localhost:5432/reader');
+  });
+
+  it('enables encrypted SSL automatically for Supabase hosts', () => {
+    const cfg = buildPoolConfig({ DATABASE_URL: SUPABASE_SESSION });
+    expect(cfg.ssl).toEqual({ rejectUnauthorized: false });
+  });
+
+  it('also recognises direct db.<ref>.supabase.co hosts', () => {
+    const cfg = buildPoolConfig({
+      DATABASE_URL: 'postgresql://postgres:pw@db.abcdefgh.supabase.co:5432/postgres',
+    });
+    expect(cfg.ssl).toEqual({ rejectUnauthorized: false });
+  });
+
+  it('strips sslmode from the URL so it cannot override the ssl object', () => {
+    const cfg = buildPoolConfig({ DATABASE_URL: `${SUPABASE_SESSION}?sslmode=require&application_name=folio` });
+    expect(cfg.connectionString).not.toContain('sslmode');
+    expect(cfg.connectionString).toContain('application_name=folio');
+    expect(cfg.ssl).toEqual({ rejectUnauthorized: false });
+  });
+
+  it('verifies the certificate when a CA is supplied', () => {
+    const pem = '-----BEGIN CERTIFICATE-----\\nAAAA\\n-----END CERTIFICATE-----';
+    const cfg = buildPoolConfig({ DATABASE_URL: SUPABASE_SESSION, DATABASE_CA_CERT: pem });
+    expect(cfg.ssl).toEqual({
+      rejectUnauthorized: true,
+      ca: '-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----',
+    });
+  });
+
+  it('honours an explicit DATABASE_SSL=disable', () => {
+    const cfg = buildPoolConfig({ DATABASE_URL: SUPABASE_SESSION, DATABASE_SSL: 'disable' });
+    expect(cfg.ssl).toBe(false);
+  });
+
+  it('reads the pool size from DATABASE_POOL_MAX', () => {
+    expect(buildPoolConfig({ DATABASE_URL: SUPABASE_SESSION, DATABASE_POOL_MAX: '4' }).max).toBe(4);
+    expect(buildPoolConfig({ DATABASE_URL: SUPABASE_SESSION }).max).toBe(10);
+  });
+});
+
+describe('describeConnection', () => {
+  it('warns about the Supabase transaction pooler', () => {
+    const url = SUPABASE_SESSION.replace(':5432/', ':6543/');
+    expect(describeConnection({ DATABASE_URL: url })).toHaveLength(1);
+  });
+
+  it('is quiet for the session pooler', () => {
+    expect(describeConnection({ DATABASE_URL: SUPABASE_SESSION })).toEqual([]);
+  });
+});
+
+================
+File: apps/server/test/files.test.ts
+================
+import crypto from 'node:crypto';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { setupTestApp, type TestContext } from './test-helper.js';
+
+describe('Server Files API', () => {
+  let ctx: TestContext;
+  let tokenA: string;
+  let tokenB: string;
+
+  beforeEach(async () => {
+    ctx = await setupTestApp('files');
+
+    const regA = await ctx.app.inject({
+      method: 'POST',
+      url: '/auth/register',
+      payload: { email: 'filesA@example.com', password: 'password123' },
+    });
+    tokenA = regA.json().accessToken;
+
+    const regB = await ctx.app.inject({
+      method: 'POST',
+      url: '/auth/register',
+      payload: { email: 'filesB@example.com', password: 'password123' },
+    });
+    tokenB = regB.json().accessToken;
+  });
+
+  afterEach(async () => {
+    await ctx.cleanup();
+  });
+
+  it('rejects upload when sha256 hash does not match payload', async () => {
+    const fakeHash = 'a'.repeat(64);
+    const content = Buffer.from('hello world content');
+
+    const res = await ctx.app.inject({
+      method: 'PUT',
+      url: `/files/${fakeHash}`,
+      headers: {
+        authorization: `Bearer ${tokenA}`,
+        'content-type': 'application/octet-stream',
+      },
+      payload: content,
+    });
+
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error).toBe('hash mismatch');
+  });
+
+  it('accepts upload with correct sha256 hash and allows download', async () => {
+    const content = Buffer.from('The quick brown fox jumps over the lazy dog');
+    const actualHash = crypto.createHash('sha256').update(content).digest('hex');
+
+    // 1. Upload
+    const putRes = await ctx.app.inject({
+      method: 'PUT',
+      url: `/files/${actualHash}`,
+      headers: {
+        authorization: `Bearer ${tokenA}`,
+        'content-type': 'application/octet-stream',
+      },
+      payload: content,
+    });
+
+    expect(putRes.statusCode).toBe(201);
+    expect(putRes.json().stored).toBe(true);
+    expect(putRes.json().size).toBe(content.length);
+
+    // 2. Download
+    const getRes = await ctx.app.inject({
+      method: 'GET',
+      url: `/files/${actualHash}`,
+      headers: { authorization: `Bearer ${tokenA}` },
+    });
+
+    expect(getRes.statusCode).toBe(200);
+    expect(getRes.rawPayload).toEqual(content);
+    expect(getRes.headers['content-length']).toBe(String(content.length));
+
+    // 3. List
+    const listRes = await ctx.app.inject({
+      method: 'GET',
+      url: '/files',
+      headers: { authorization: `Bearer ${tokenA}` },
+    });
+    expect(listRes.statusCode).toBe(200);
+    const files = listRes.json();
+    expect(files).toHaveLength(1);
+    expect(files[0].hash).toBe(actualHash);
+    expect(files[0].size).toBe(content.length);
+
+    // 4. Duplicate upload returns exists: true
+    const dupRes = await ctx.app.inject({
+      method: 'PUT',
+      url: `/files/${actualHash}`,
+      headers: {
+        authorization: `Bearer ${tokenA}`,
+        'content-type': 'application/octet-stream',
+      },
+      payload: content,
+    });
+    expect(dupRes.statusCode).toBe(200);
+    expect(dupRes.json().exists).toBe(true);
+  });
+
+  it('enforces tenant isolation: User B cannot access User A files', async () => {
+    const content = Buffer.from('User A Private Secret File');
+    const actualHash = crypto.createHash('sha256').update(content).digest('hex');
+
+    await ctx.app.inject({
+      method: 'PUT',
+      url: `/files/${actualHash}`,
+      headers: {
+        authorization: `Bearer ${tokenA}`,
+        'content-type': 'application/octet-stream',
+      },
+      payload: content,
+    });
+
+    // User B tries to read User A's file
+    const getB = await ctx.app.inject({
+      method: 'GET',
+      url: `/files/${actualHash}`,
+      headers: { authorization: `Bearer ${tokenB}` },
+    });
+    expect(getB.statusCode).toBe(404);
+
+    // User B lists files
+    const listB = await ctx.app.inject({
+      method: 'GET',
+      url: '/files',
+      headers: { authorization: `Bearer ${tokenB}` },
+    });
+    expect(listB.json()).toHaveLength(0);
+  });
+});
+
+================
+File: apps/server/test/notify.test.ts
+================
+import { EventEmitter } from 'node:events';
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import type pg from 'pg';
+import { NotifyHub } from '../src/notify.js';
+
+class FakeClient extends EventEmitter {
+  queries: string[] = [];
+  connected = false;
+  async connect() {
+    this.connected = true;
+  }
+  async query(sql: string) {
+    this.queries.push(sql);
+    return { rows: [] };
+  }
+  async end() {
+    this.connected = false;
+  }
+  notify(channel: string) {
+    this.emit('notification', { channel, processId: 1, payload: '' });
+  }
+}
+
+function makeHub() {
+  const clients: FakeClient[] = [];
+  const hub = new NotifyHub(() => {
+    const c = new FakeClient();
+    clients.push(c);
+    return c as unknown as pg.Client;
+  });
+  return { hub, clients };
+}
+
+describe('NotifyHub', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('shares one connection and LISTENs once per channel', async () => {
+    const { hub, clients } = makeHub();
+    const a = vi.fn();
+    const b = vi.fn();
+    await hub.subscribe('sync_u1', a);
+    await hub.subscribe('sync_u1', b);
+    await hub.subscribe('sync_u2', vi.fn());
+
+    expect(clients).toHaveLength(1);
+    expect(clients[0].queries).toEqual(['LISTEN "sync_u1"', 'LISTEN "sync_u2"']);
+
+    clients[0].notify('sync_u1');
+    expect(a).toHaveBeenCalledTimes(1);
+    expect(b).toHaveBeenCalledTimes(1);
+    await hub.close();
+  });
+
+  it('only UNLISTENs when the last subscriber leaves', async () => {
+    const { hub, clients } = makeHub();
+    const offA = await hub.subscribe('sync_u1', vi.fn());
+    const offB = await hub.subscribe('sync_u1', vi.fn());
+
+    await offA();
+    expect(clients[0].queries).not.toContain('UNLISTEN "sync_u1"');
+    await offB();
+    expect(clients[0].queries).toContain('UNLISTEN "sync_u1"');
+    expect(hub.channelCount).toBe(0);
+    await hub.close();
+  });
+
+  it('does not deliver notifications for other channels', async () => {
+    const { hub, clients } = makeHub();
+    const handler = vi.fn();
+    await hub.subscribe('sync_u1', handler);
+    clients[0].notify('sync_u2');
+    expect(handler).not.toHaveBeenCalled();
+    await hub.close();
+  });
+
+  it('reconnects, re-LISTENs and pings subscribers after the connection drops', async () => {
+    vi.useFakeTimers();
+    const { hub, clients } = makeHub();
+    const handler = vi.fn();
+    await hub.subscribe('sync_u1', handler);
+
+    clients[0].emit('error', new Error('connection terminated'));
+    await vi.advanceTimersByTimeAsync(1000);
+
+    expect(clients).toHaveLength(2);
+    expect(clients[1].queries).toEqual(['LISTEN "sync_u1"']);
+    // Subscribers re-pull, since changes during the outage produced no NOTIFY.
+    expect(handler).toHaveBeenCalledTimes(1);
+
+    clients[1].notify('sync_u1');
+    expect(handler).toHaveBeenCalledTimes(2);
+    await hub.close();
+  });
+
+  it('quotes channel names safely', async () => {
+    const { hub, clients } = makeHub();
+    await hub.subscribe('sync_a"b', vi.fn());
+    expect(clients[0].queries).toEqual(['LISTEN "sync_a""b"']);
+    await hub.close();
+  });
+});
+
+================
+File: apps/server/test/proxy.test.ts
+================
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { setupTestApp, type TestContext } from './test-helper.js';
+
+describe('Server Proxy API', () => {
+  let ctx: TestContext;
+  let token: string;
+
+  beforeEach(async () => {
+    ctx = await setupTestApp('proxy');
+
+    const reg = await ctx.app.inject({
+      method: 'POST',
+      url: '/auth/register',
+      payload: { email: 'proxy@example.com', password: 'password123' },
+    });
+    token = reg.json().accessToken;
+  });
+
+  afterEach(async () => {
+    vi.restoreAllMocks();
+    await ctx.cleanup();
+  });
+
+  it('rejects unauthorized/non-allowlisted hosts with 403', async () => {
+    const res = await ctx.app.inject({
+      method: 'GET',
+      url: '/proxy?url=https://evil-unauthorized-site.com/data',
+      headers: { authorization: `Bearer ${token}` },
+    });
+
+    expect(res.statusCode).toBe(403);
+    expect(res.json().error).toContain('host not allowed');
+  });
+
+  it('allows allowlisted static host (e.g. gutendex.com)', async () => {
+    // Mock global fetch for upstream call
+    const mockFetch = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response(JSON.stringify({ results: [{ id: 1, title: 'Frankenstein' }] }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }),
+    );
+
+    const res = await ctx.app.inject({
+      method: 'GET',
+      url: '/proxy?url=https://gutendex.com/books?search=Frankenstein',
+      headers: { authorization: `Bearer ${token}` },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json().results[0].title).toBe('Frankenstein');
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    const calledUrl = mockFetch.mock.calls[0][0];
+    expect(calledUrl).toBe('https://gutendex.com/books?search=Frankenstein');
+  });
+
+  it('allows user-configured custom source from sources table and forwards auth', async () => {
+    // 1. Add user OPDS / Komga source to sources table
+    await ctx.app.inject({
+      method: 'POST',
+      url: '/sync/push',
+      headers: { authorization: `Bearer ${token}` },
+      payload: {
+        changes: {
+          sources: [
+            {
+              id: 'my-custom-calibre',
+              kind: 'opds1',
+              name: 'My Calibre Server',
+              url: 'https://my-private-calibre.net/opds',
+              updated_at: Date.now(),
+            },
+          ],
+        },
+      },
+    });
+
+    const mockFetch = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response('<feed xmlns="http://www.w3.org/2005/Atom"><title>Calibre</title></feed>', {
+        status: 200,
+        headers: { 'content-type': 'application/atom+xml' },
+      }),
+    );
+
+    const res = await ctx.app.inject({
+      method: 'GET',
+      url: '/proxy?url=https://my-private-calibre.net/opds/catalog',
+      headers: {
+        authorization: `Bearer ${token}`,
+      },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toContain('<title>Calibre</title>');
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+});
+
+================
+File: apps/server/test/sse.test.ts
+================
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { setupTestApp, type TestContext } from './test-helper.js';
+
+describe('Server SSE Events API', () => {
+  let ctx: TestContext;
+  let token: string;
+
+  beforeEach(async () => {
+    ctx = await setupTestApp('sse');
+
+    const reg = await ctx.app.inject({
+      method: 'POST',
+      url: '/auth/register',
+      payload: { email: 'sse@example.com', password: 'password123' },
+    });
+    token = reg.json().accessToken;
+  });
+
+  afterEach(async () => {
+    await ctx.cleanup();
+  });
+
+  it('issues short-lived events token', async () => {
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: '/sync/events-token',
+      headers: { authorization: `Bearer ${token}` },
+    });
+
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    expect(body.token).toBeDefined();
+    expect(body.expiresIn).toBe(300);
+  });
+
+  it('rejects events stream request without valid token', async () => {
+    const missingRes = await ctx.app.inject({
+      method: 'GET',
+      url: '/sync/events',
+    });
+    expect(missingRes.statusCode).toBe(401);
+
+    const invalidRes = await ctx.app.inject({
+      method: 'GET',
+      url: '/sync/events?token=invalid.jwt.token',
+    });
+    expect(invalidRes.statusCode).toBe(401);
+  });
+});
+
+================
+File: apps/server/test/sync.test.ts
+================
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { setupTestApp, type TestContext } from './test-helper.js';
+
+describe('Server Sync API', () => {
+  let ctx: TestContext;
+  let tokenA: string;
+  let tokenB: string;
+
+  beforeEach(async () => {
+    ctx = await setupTestApp('sync');
+
+    const regA = await ctx.app.inject({
+      method: 'POST',
+      url: '/auth/register',
+      payload: { email: 'userA@example.com', password: 'password123' },
+    });
+    tokenA = regA.json().accessToken;
+
+    const regB = await ctx.app.inject({
+      method: 'POST',
+      url: '/auth/register',
+      payload: { email: 'userB@example.com', password: 'password123' },
+    });
+    tokenB = regB.json().accessToken;
+  });
+
+  afterEach(async () => {
+    await ctx.cleanup();
+  });
+
+  it('implements Last-Write-Wins conflict resolution on push', async () => {
+    const bookId = 'book-1';
+
+    // 1. Initial push at updated_at = 1000
+    const push1 = await ctx.app.inject({
+      method: 'POST',
+      url: '/sync/push',
+      headers: { authorization: `Bearer ${tokenA}` },
+      payload: {
+        changes: {
+          books: [
+            {
+              id: bookId,
+              title: 'Original Title',
+              author: 'Author A',
+              format: 'epub',
+              updated_at: 1000,
+              deleted_at: null,
+            },
+          ],
+        },
+      },
+    });
+
+    expect(push1.statusCode).toBe(200);
+    const body1 = push1.json();
+    expect(body1.accepted).toBe(1);
+    expect(body1.stale).toBe(0);
+    expect(body1.serverTime).toBeGreaterThan(0);
+
+    // 2. Out-of-order push with older updated_at = 500
+    const pushOlder = await ctx.app.inject({
+      method: 'POST',
+      url: '/sync/push',
+      headers: { authorization: `Bearer ${tokenA}` },
+      payload: {
+        changes: {
+          books: [
+            {
+              id: bookId,
+              title: 'Stale Title',
+              author: 'Author A',
+              format: 'epub',
+              updated_at: 500,
+              deleted_at: null,
+            },
+          ],
+        },
+      },
+    });
+
+    const bodyOlder = pushOlder.json();
+    expect(bodyOlder.accepted).toBe(0);
+    expect(bodyOlder.stale).toBe(1);
+    expect(bodyOlder.staleIds.books).toContain(bookId);
+
+    // 3. Equal updated_at = 1000 (server version wins)
+    const pushEqual = await ctx.app.inject({
+      method: 'POST',
+      url: '/sync/push',
+      headers: { authorization: `Bearer ${tokenA}` },
+      payload: {
+        changes: {
+          books: [
+            {
+              id: bookId,
+              title: 'Equal Title',
+              author: 'Author A',
+              format: 'epub',
+              updated_at: 1000,
+              deleted_at: null,
+            },
+          ],
+        },
+      },
+    });
+
+    const bodyEqual = pushEqual.json();
+    expect(bodyEqual.accepted).toBe(0);
+    expect(bodyEqual.stale).toBe(1);
+    expect(bodyEqual.staleIds.books).toContain(bookId);
+
+    // 4. Newer push at updated_at = 2000
+    const pushNewer = await ctx.app.inject({
+      method: 'POST',
+      url: '/sync/push',
+      headers: { authorization: `Bearer ${tokenA}` },
+      payload: {
+        changes: {
+          books: [
+            {
+              id: bookId,
+              title: 'Newest Title',
+              author: 'Author A',
+              format: 'epub',
+              updated_at: 2000,
+              deleted_at: null,
+            },
+          ],
+        },
+      },
+    });
+
+    const bodyNewer = pushNewer.json();
+    expect(bodyNewer.accepted).toBe(1);
+    expect(bodyNewer.stale).toBe(0);
+
+    // Verify pull returns newest title
+    const pull = await ctx.app.inject({
+      method: 'GET',
+      url: '/sync/pull?since=0',
+      headers: { authorization: `Bearer ${tokenA}` },
+    });
+    expect(pull.statusCode).toBe(200);
+    const pullBody = pull.json();
+    expect(pullBody.changes.books).toHaveLength(1);
+    expect(pullBody.changes.books[0].title).toBe('Newest Title');
+  });
+
+  it('pull returns changes and cursor, and separates user tenants', async () => {
+    // User A pushes data
+    await ctx.app.inject({
+      method: 'POST',
+      url: '/sync/push',
+      headers: { authorization: `Bearer ${tokenA}` },
+      payload: {
+        changes: {
+          books: [{ id: 'userA-book', title: 'User A Secret Book', updated_at: 100 }],
+          settings: [{ id: 'default', data: { theme: 'dark' }, updated_at: 100 }],
+        },
+      },
+    });
+
+    // User B pulls -> MUST NOT see User A's data
+    const pullB = await ctx.app.inject({
+      method: 'GET',
+      url: '/sync/pull?since=0',
+      headers: { authorization: `Bearer ${tokenB}` },
+    });
+    const bodyB = pullB.json();
+    expect(bodyB.changes.books || []).toHaveLength(0);
+    expect(bodyB.changes.settings || []).toHaveLength(0);
+
+    // User A pulls -> sees their data and advancing cursor
+    const pullA = await ctx.app.inject({
+      method: 'GET',
+      url: '/sync/pull?since=0',
+      headers: { authorization: `Bearer ${tokenA}` },
+    });
+    const bodyA = pullA.json();
+    expect(bodyA.changes.books).toHaveLength(1);
+    expect(bodyA.changes.books[0].id).toBe('userA-book');
+    expect(bodyA.cursor).toBeGreaterThan(0);
+    expect(bodyA.serverTime).toBeGreaterThan(0);
+
+    // Subsequent pull since cursor -> returns empty changes
+    const nextPullA = await ctx.app.inject({
+      method: 'GET',
+      url: `/sync/pull?since=${bodyA.cursor}`,
+      headers: { authorization: `Bearer ${tokenA}` },
+    });
+    const nextBodyA = nextPullA.json();
+    expect(nextBodyA.changes.books || []).toHaveLength(0);
+  });
+
+  it('validates rows and increments invalid counter for malformed items', async () => {
+    const res = await ctx.app.inject({
+      method: 'POST',
+      url: '/sync/push',
+      headers: { authorization: `Bearer ${tokenA}` },
+      payload: {
+        changes: {
+          books: [
+            { id: '', updated_at: 100 }, // invalid empty id
+            { id: 'valid-book', updated_at: 100, title: 'Valid' },
+            { id: 'bad-timestamp', updated_at: 'not-a-number' }, // invalid timestamp
+          ],
+        },
+      },
+    });
+
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    expect(body.accepted).toBe(1);
+    expect(body.invalid).toBe(2);
+  });
+});
+
+================
+File: apps/server/Caddyfile
+================
+{$DOMAIN} {
+	encode gzip
+	request_body {
+		max_size 300MB
+	}
+	reverse_proxy api:8080
+}
+
+================
+File: apps/server/eslint.config.js
+================
+import js from '@eslint/js';
+import tseslint from 'typescript-eslint';
+import { defineConfig, globalIgnores } from 'eslint/config';
+
+export default defineConfig([
+  globalIgnores(['dist/**', 'node_modules/**', 'migrations/**']),
+  {
+    files: ['**/*.ts'],
+    extends: [
+      js.configs.recommended,
+      tseslint.configs.recommended,
+    ],
+    rules: {
+      '@typescript-eslint/no-unused-vars': [
+        'error',
+        { argsIgnorePattern: '^_', varsIgnorePattern: '^_' },
+      ],
+    },
+  },
+]);
+
+================
+File: apps/server/tsconfig.json
+================
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "composite": true,
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "outDir": "./dist",
+    "rootDir": "./src"
+  },
+  "include": ["src/**/*"],
+  "references": [
+    { "path": "../../packages/shared" }
+  ]
+}
+
+================
+File: apps/server/vitest.config.ts
+================
+import { defineConfig } from 'vitest/config';
+
+export default defineConfig({
+  test: {
+    fileParallelism: false,
+  },
+});
+
+================
+File: packages/shared/src/index.ts
+================
+export * from './sync-schema.js';
+export * from './api-types.js';
+
+================
+File: packages/shared/src/sync-schema.ts
+================
+import { z } from 'zod';
+
+/**
+ * Single source of truth for synced tables and their synced column names.
+ * Defined in Folio Build Plan v2 section 3.1.
+ */
+export const SYNC_TABLES = {
+  books: [
+    'title',
+    'author',
+    'format',
+    'file_hash',
+    'file_size',
+    'cover_hash',
+    'meta',
+    'added_at',
+    'last_opened_at',
+  ],
+  progress: ['cfi', 'percent', 'chapter', 'device_id'],
+  annotations: [
+    'book_id',
+    'type',
+    'cfi',
+    'text',
+    'note',
+    'color',
+    'style',
+    'chapter',
+    'created_at',
+  ],
+  collections: ['name', 'sort_order', 'meta'],
+  collection_books: ['collection_id', 'book_id'],
+  reading_sessions: [
+    'book_id',
+    'started_at',
+    'ended_at',
+    'duration_sec',
+    'start_percent',
+    'end_percent',
+    'words_read',
+    'device_id',
+    'kind',
+  ],
+  settings: ['data'],
+  // New in Phase 3:
+  series: [
+    'source',
+    'source_id',
+    'title',
+    'author',
+    'cover_url',
+    'status',
+    'meta',
+    'added_at',
+    'last_read_at',
+    'last_checked_at',
+  ],
+  chapter_progress: [
+    'series_id',
+    'source',
+    'chapter_id',
+    'chapter_number',
+    'title',
+    'page',
+    'total_pages',
+    'read',
+    'read_at',
+  ],
+  sources: ['kind', 'name', 'url', 'meta', 'sort_order'],
+  devices: ['name', 'platform', 'last_seen_at'],
+} as const;
+
+export type SyncTableName = keyof typeof SYNC_TABLES;
+
+/**
+ * Base columns present on every synced row.
+ */
+export const syncableSchema = z.object({
+  id: z.string().min(1).max(128),
+  updated_at: z.number().int(),
+  deleted_at: z.number().int().nullable().default(null),
+  _dirty: z.union([z.literal(0), z.literal(1)]).optional(),
+  server_seq: z.number().int().optional(),
+});
+export type Syncable = z.infer<typeof syncableSchema>;
+
+// Books
+export const bookMetaSchema = z.object({
+  file_name: z.string().optional(),
+  mime: z.string().optional(),
+  language: z.string().optional(),
+  publisher: z.string().optional(),
+  description: z.string().optional(),
+  series: z.string().optional(),
+  word_count: z.number().optional(),
+  paragraph_count: z.number().optional(),
+  accent: z.string().optional(),
+  tags: z.array(z.string()).optional(),
+  rating: z.number().min(0).max(5).optional(),
+  finished_at: z.number().nullable().optional(),
+  source: z
+    .object({
+      kind: z.string(),
+      id: z.string(),
+      url: z.string().optional(),
+    })
+    .optional(),
+  kind: z.enum(['book', 'comic']).optional(),
+}).passthrough();
+export type BookMeta = z.infer<typeof bookMetaSchema>;
+
+export const bookSchema = syncableSchema.extend({
+  title: z.string(),
+  author: z.string(),
+  format: z.string(),
+  file_hash: z.string(),
+  file_size: z.number().int(),
+  cover_hash: z.string().nullable().default(null),
+  meta: bookMetaSchema.default({}),
+  added_at: z.number().int(),
+  last_opened_at: z.number().int().nullable().default(null),
+});
+export type Book = z.infer<typeof bookSchema>;
+
+// Progress
+export const progressSchema = syncableSchema.extend({
+  cfi: z.string(),
+  percent: z.number(),
+  chapter: z.string().nullable().default(null),
+  device_id: z.string(),
+});
+export type Progress = z.infer<typeof progressSchema>;
+
+// Annotations
+export const annotationTypeSchema = z.enum(['highlight', 'note', 'bookmark']);
+export type AnnotationType = z.infer<typeof annotationTypeSchema>;
+
+export const highlightStyleSchema = z.enum(['highlight', 'underline', 'strikethrough', 'squiggly']);
+export type HighlightStyle = z.infer<typeof highlightStyleSchema>;
+
+export const annotationSchema = syncableSchema.extend({
+  book_id: z.string(),
+  type: annotationTypeSchema,
+  cfi: z.string(),
+  text: z.string().default(''),
+  note: z.string().default(''),
+  color: z.string().default('#ffd43b'),
+  style: highlightStyleSchema.default('highlight'),
+  chapter: z.string().default(''),
+  created_at: z.number().int(),
+});
+export type Annotation = z.infer<typeof annotationSchema>;
+
+// Collections
+export const collectionMetaSchema = z.object({
+  icon: z.string().optional(),
+  color: z.string().optional(),
+  smart: z.record(z.unknown()).optional(),
+}).passthrough();
+export type CollectionMeta = z.infer<typeof collectionMetaSchema>;
+
+export const collectionSchema = syncableSchema.extend({
+  name: z.string(),
+  sort_order: z.number().int().default(0),
+  meta: collectionMetaSchema.default({}),
+});
+export type Collection = z.infer<typeof collectionSchema>;
+
+// Collection Books
+export const collectionBookSchema = syncableSchema.extend({
+  collection_id: z.string(),
+  book_id: z.string(),
+});
+export type CollectionBook = z.infer<typeof collectionBookSchema>;
+
+// Reading Sessions
+export const sessionKindSchema = z.enum(['book', 'manga']);
+export type SessionKind = z.infer<typeof sessionKindSchema>;
+
+export const readingSessionSchema = syncableSchema.extend({
+  book_id: z.string(),
+  started_at: z.number().int(),
+  ended_at: z.number().int(),
+  duration_sec: z.number().int(),
+  start_percent: z.number(),
+  end_percent: z.number(),
+  words_read: z.number().int().default(0),
+  device_id: z.string(),
+  kind: sessionKindSchema.default('book'),
+});
+export type ReadingSession = z.infer<typeof readingSessionSchema>;
+
+// Settings
+export const settingsRowSchema = syncableSchema.extend({
+  data: z.record(z.unknown()).default({}),
+});
+export type SettingsRow = z.infer<typeof settingsRowSchema>;
+
+// Series (Manga / Comics)
+export const seriesMetaSchema = z.object({
+  description: z.string().optional(),
+  tags: z.array(z.string()).optional(),
+  contentRating: z.string().optional(),
+  lang: z.string().optional(),
+  readingMode: z.string().optional(),
+  unreadCount: z.number().optional(),
+  latestChapterAt: z.number().optional(),
+  groupPrefs: z.array(z.string()).optional(),
+}).passthrough();
+export type SeriesMeta = z.infer<typeof seriesMetaSchema>;
+
+export const seriesSchema = syncableSchema.extend({
+  source: z.string(),
+  source_id: z.string(),
+  title: z.string(),
+  author: z.string().default(''),
+  cover_url: z.string().nullable().default(null),
+  status: z.string().nullable().default(null),
+  meta: seriesMetaSchema.default({}),
+  added_at: z.number().int(),
+  last_read_at: z.number().int().nullable().default(null),
+  last_checked_at: z.number().int().nullable().default(null),
+});
+export type Series = z.infer<typeof seriesSchema>;
+
+// Chapter Progress
+export const chapterProgressSchema = syncableSchema.extend({
+  series_id: z.string(),
+  source: z.string(),
+  chapter_id: z.string(),
+  chapter_number: z.number(),
+  title: z.string().nullable().default(null),
+  page: z.number().int().default(0),
+  total_pages: z.number().int().default(0),
+  read: z.boolean().default(false),
+  read_at: z.number().int().nullable().default(null),
+});
+export type ChapterProgress = z.infer<typeof chapterProgressSchema>;
+
+// Sources (OPDS / Komga / Kavita catalogs)
+export const sourceMetaSchema = z.object({
+  type: z.enum(['opds1', 'opds2', 'komga', 'kavita']).optional(),
+  authKind: z.enum(['none', 'basic', 'apikey']).optional(),
+}).passthrough();
+export type SourceMeta = z.infer<typeof sourceMetaSchema>;
+
+export const sourceSchema = syncableSchema.extend({
+  kind: z.string(),
+  name: z.string(),
+  url: z.string(),
+  meta: sourceMetaSchema.default({}),
+  sort_order: z.number().int().default(0),
+});
+export type Source = z.infer<typeof sourceSchema>;
+
+// Devices
+export const deviceSchema = syncableSchema.extend({
+  name: z.string(),
+  platform: z.string(),
+  last_seen_at: z.number().int(),
+});
+export type Device = z.infer<typeof deviceSchema>;
+
+/**
+ * Mapping of each table name to its row schema.
+ */
+export const TABLE_SCHEMAS = {
+  books: bookSchema,
+  progress: progressSchema,
+  annotations: annotationSchema,
+  collections: collectionSchema,
+  collection_books: collectionBookSchema,
+  reading_sessions: readingSessionSchema,
+  settings: settingsRowSchema,
+  series: seriesSchema,
+  chapter_progress: chapterProgressSchema,
+  sources: sourceSchema,
+  devices: deviceSchema,
+} as const;
+
+export type TableRowMap = {
+  books: Book;
+  progress: Progress;
+  annotations: Annotation;
+  collections: Collection;
+  collection_books: CollectionBook;
+  reading_sessions: ReadingSession;
+  settings: SettingsRow;
+  series: Series;
+  chapter_progress: ChapterProgress;
+  sources: Source;
+  devices: Device;
+};
+
+/**
+ * Validates that row conforms to the table schema.
+ */
+export function validateRow<T extends SyncTableName>(table: T, data: unknown): TableRowMap[T] {
+  const schema = TABLE_SCHEMAS[table];
+  return schema.parse(data) as TableRowMap[T];
+}
+
+================
+File: packages/shared/test/sync-schema.test.ts
+================
+import { describe, it, expect } from 'vitest';
+import { SYNC_TABLES, validateRow } from '../src/sync-schema.js';
+
+describe('SYNC_TABLES registry', () => {
+  it('defines all required tables from Build Plan v2', () => {
+    expect(SYNC_TABLES).toHaveProperty('books');
+    expect(SYNC_TABLES).toHaveProperty('progress');
+    expect(SYNC_TABLES).toHaveProperty('annotations');
+    expect(SYNC_TABLES).toHaveProperty('collections');
+    expect(SYNC_TABLES).toHaveProperty('collection_books');
+    expect(SYNC_TABLES).toHaveProperty('reading_sessions');
+    expect(SYNC_TABLES).toHaveProperty('settings');
+    expect(SYNC_TABLES).toHaveProperty('series');
+    expect(SYNC_TABLES).toHaveProperty('chapter_progress');
+    expect(SYNC_TABLES).toHaveProperty('sources');
+    expect(SYNC_TABLES).toHaveProperty('devices');
+  });
+
+  it('validates a valid book row', () => {
+    const rawBook = {
+      id: 'book-123',
+      title: 'Moby Dick',
+      author: 'Herman Melville',
+      format: 'epub',
+      file_hash: 'abc123hash',
+      file_size: 102400,
+      cover_hash: null,
+      meta: {
+        file_name: 'mobydick.epub',
+        mime: 'application/epub+zip',
+        word_count: 200000,
+      },
+      added_at: 1700000000000,
+      last_opened_at: null,
+      updated_at: 1700000000000,
+      deleted_at: null,
+      _dirty: 0,
+    };
+
+    const book = validateRow('books', rawBook);
+    expect(book.id).toBe('book-123');
+    expect(book.title).toBe('Moby Dick');
+  });
+
+  it('rejects invalid row data', () => {
+    expect(() => validateRow('books', { id: '' })).toThrow();
+  });
+});
+
+================
+File: packages/shared/eslint.config.js
+================
+import js from '@eslint/js';
+import tseslint from 'typescript-eslint';
+import { defineConfig, globalIgnores } from 'eslint/config';
+
+export default defineConfig([
+  globalIgnores(['dist/**', 'node_modules/**']),
+  {
+    files: ['**/*.ts'],
+    extends: [
+      js.configs.recommended,
+      tseslint.configs.recommended,
+    ],
+    rules: {
+      '@typescript-eslint/no-unused-vars': [
+        'error',
+        { argsIgnorePattern: '^_', varsIgnorePattern: '^_' },
+      ],
+    },
+  },
+]);
+
+================
+File: packages/shared/tsconfig.json
+================
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "composite": true,
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "outDir": "./dist",
+    "rootDir": "./src"
+  },
+  "include": ["src/**/*"]
+}
+
+================
+File: apps/server/migrations/001_init.js
+================
+/**
+ * Migration 001: Initial schema
+ * (Formerly also shipped as db/init.sql; migrations are now the only schema source.)
+ */
+export const up = (pgm) => {
+  pgm.sql(`
+    create extension if not exists citext;
+    create sequence if not exists sync_seq;
+
+    create table if not exists users (
+      id            uuid primary key default gen_random_uuid(),
+      email         citext unique not null,
+      password_hash text not null,
+      created_at    timestamptz not null default now()
+    );
+
+    create table if not exists refresh_tokens (
+      token_hash  text primary key,
+      user_id     uuid not null references users(id) on delete cascade,
+      device_name text,
+      expires_at  timestamptz not null,
+      created_at  timestamptz not null default now()
+    );
+
+    create or replace function bump_seq() returns trigger language plpgsql as $$
+    begin
+      new.server_seq := nextval('sync_seq');
+      return new;
+    end $$;
+
+    create table if not exists books (
+      user_id uuid not null references users(id) on delete cascade,
+      id text not null,
+      title text, author text, format text,
+      file_hash text, file_size bigint, cover_hash text,
+      meta jsonb not null default '{}',
+      added_at bigint, last_opened_at bigint,
+      updated_at bigint not null, deleted_at bigint,
+      server_seq bigint not null default 0,
+      primary key (user_id, id)
+    );
+
+    create table if not exists progress (
+      user_id uuid not null references users(id) on delete cascade,
+      id text not null,
+      cfi text, percent real, chapter text, device_id text,
+      updated_at bigint not null, deleted_at bigint,
+      server_seq bigint not null default 0,
+      primary key (user_id, id)
+    );
+
+    create table if not exists annotations (
+      user_id uuid not null references users(id) on delete cascade,
+      id text not null,
+      book_id text not null,
+      type text not null check (type in ('highlight','note','bookmark')),
+      cfi text not null,
+      text text, note text,
+      color text,
+      style text,
+      chapter text, created_at bigint,
+      updated_at bigint not null, deleted_at bigint,
+      server_seq bigint not null default 0,
+      primary key (user_id, id)
+    );
+
+    create table if not exists collections (
+      user_id uuid not null references users(id) on delete cascade,
+      id text not null,
+      name text not null, sort_order int not null default 0,
+      updated_at bigint not null, deleted_at bigint,
+      server_seq bigint not null default 0,
+      primary key (user_id, id)
+    );
+
+    create table if not exists collection_books (
+      user_id uuid not null references users(id) on delete cascade,
+      id text not null,
+      collection_id text not null, book_id text not null,
+      updated_at bigint not null, deleted_at bigint,
+      server_seq bigint not null default 0,
+      primary key (user_id, id)
+    );
+
+    create table if not exists reading_sessions (
+      user_id uuid not null references users(id) on delete cascade,
+      id text not null,
+      book_id text not null,
+      started_at bigint, ended_at bigint, duration_sec int,
+      start_percent real, end_percent real, words_read int, device_id text,
+      updated_at bigint not null, deleted_at bigint,
+      server_seq bigint not null default 0,
+      primary key (user_id, id)
+    );
+
+    create table if not exists settings (
+      user_id uuid not null references users(id) on delete cascade,
+      id text not null,
+      data jsonb not null default '{}',
+      updated_at bigint not null, deleted_at bigint,
+      server_seq bigint not null default 0,
+      primary key (user_id, id)
+    );
+
+    do $$
+    declare t text;
+    begin
+      foreach t in array array['books','progress','annotations','collections',
+                               'collection_books','reading_sessions','settings'] loop
+        execute format('create index if not exists %I on %I (user_id, server_seq)', t || '_user_seq_idx', t);
+        execute format('drop trigger if exists %I on %I', t || '_seq', t);
+        execute format('create trigger %I before insert or update on %I
+                        for each row execute function bump_seq()', t || '_seq', t);
+      end loop;
+    end $$;
+
+    create index if not exists annotations_user_book_idx on annotations (user_id, book_id);
+  `);
+};
+
+export const down = (pgm) => {
+  pgm.sql(`
+    drop table if exists settings cascade;
+    drop table if exists reading_sessions cascade;
+    drop table if exists collection_books cascade;
+    drop table if exists collections cascade;
+    drop table if exists annotations cascade;
+    drop table if exists progress cascade;
+    drop table if exists books cascade;
+    drop table if exists refresh_tokens cascade;
+    drop table if exists users cascade;
+    drop function if exists bump_seq cascade;
+    drop sequence if exists sync_seq;
+  `);
+};
+
+================
+File: apps/server/src/db.ts
+================
+import 'dotenv/config';
+import fs from 'node:fs';
+import pg from 'pg';
+
+// Return BIGINT columns as JS numbers (ms timestamps and seqs fit safely within Number.MAX_SAFE_INTEGER)
+pg.types.setTypeParser(20, (v: string) => Number(v));
+
+type SslMode = 'disable' | 'require' | 'verify-full';
+
+/** Hosted Postgres providers that only accept TLS connections. */
+function isHostedRequiringTls(host: string): boolean {
+  return /(^|\.)supabase\.(co|com)$/i.test(host);
+}
+
+function readCa(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  if (value.includes('-----BEGIN CERTIFICATE-----')) return value.replace(/\\n/g, '\n');
+  return fs.readFileSync(value, 'utf8');
+}
+
+/**
+ * Builds the pg connection config from env.
+ *
+ * - DATABASE_URL       postgres://user:pass@host:port/db (required outside tests)
+ * - DATABASE_SSL       disable | require | verify-full. Default: `require` for Supabase
+ *                      hosts or when the URL asks for sslmode, otherwise `disable`.
+ * - DATABASE_CA_CERT   CA bundle (file path or PEM). With it, `require` upgrades to
+ *                      full verification. Supabase's CA is downloadable from
+ *                      Project Settings → Database → SSL Configuration.
+ * - DATABASE_POOL_MAX  pool size (default 10). Keep it below the provider's limit
+ *                      minus one: the sync event listener holds one extra connection.
+ */
+export function buildPoolConfig(env: NodeJS.ProcessEnv = process.env): pg.PoolConfig {
+  const raw = env.DATABASE_URL;
+  const max = Number(env.DATABASE_POOL_MAX) || 10;
+  const base: pg.PoolConfig = {
+    max,
+    idleTimeoutMillis: 30_000,
+    connectionTimeoutMillis: 10_000,
+    // Hosted poolers drop silent TCP connections; keepalives stop that killing idle clients.
+    keepAlive: true,
+  };
+  if (!raw) return base;
+
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    return { ...base, connectionString: raw };
+  }
+
+  // sslmode in the URL would override the `ssl` object below (pg lets the connection
+  // string win), and pg treats `require` as full verification, which fails against
+  // Supabase's private CA. Resolve it here and strip it from the URL.
+  const urlMode = url.searchParams.get('sslmode');
+  for (const p of ['sslmode', 'sslrootcert', 'sslcert', 'sslkey', 'uselibpqcompat']) {
+    url.searchParams.delete(p);
+  }
+
+  const explicit = env.DATABASE_SSL as SslMode | undefined;
+  const ca = readCa(env.DATABASE_CA_CERT);
+  let mode: SslMode;
+  if (explicit) mode = explicit;
+  else if (urlMode === 'disable') mode = 'disable';
+  else if (urlMode === 'verify-full' || urlMode === 'verify-ca') mode = 'verify-full';
+  else if (urlMode || isHostedRequiringTls(url.hostname)) mode = 'require';
+  else mode = 'disable';
+
+  let ssl: pg.PoolConfig['ssl'] = false;
+  if (mode === 'verify-full' || (mode === 'require' && ca)) {
+    ssl = { rejectUnauthorized: true, ...(ca ? { ca } : {}) };
+  } else if (mode === 'require') {
+    // Encrypted, but the server certificate isn't verified against a CA.
+    ssl = { rejectUnauthorized: false };
+  }
+
+  return { ...base, connectionString: url.toString(), ssl };
+}
+
+/**
+ * Supabase's transaction pooler (port 6543) multiplexes clients per transaction,
+ * so LISTEN/NOTIFY (used for live sync) silently never fires. Session mode works.
+ */
+export function describeConnection(env: NodeJS.ProcessEnv = process.env): string[] {
+  const warnings: string[] = [];
+  try {
+    const url = new URL(env.DATABASE_URL ?? '');
+    if (isHostedRequiringTls(url.hostname) && url.port === '6543') {
+      warnings.push(
+        'DATABASE_URL points at the Supabase transaction pooler (port 6543). Live sync uses ' +
+          'LISTEN/NOTIFY, which needs a session connection: use the session pooler URI (port 5432).',
+      );
+    }
+  } catch {
+    // Unparseable URL: pg will report it on first connect.
+  }
+  return warnings;
+}
+
+function createPool(): pg.Pool {
+  const p = new pg.Pool(buildPoolConfig());
+  // An idle client can be dropped by the server or a pooler at any time (restarts,
+  // maintenance). Without a listener, pg re-throws that as an uncaught error and
+  // the whole API process exits.
+  p.on('error', (err) => {
+    console.error('Postgres idle client error:', err.message);
+  });
+  return p;
+}
+
+export let pool: pg.Pool = createPool();
+
+export function setPool(newPool: pg.Pool): void {
+  pool = newPool;
+}
+
+================
+File: apps/server/src/files.ts
+================
+import fs from 'node:fs';
+import fsp from 'node:fs/promises';
+import path from 'node:path';
+import crypto from 'node:crypto';
+import { Transform } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
+import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
+import { storage, HASH_RE, type FileItem } from './storage.js';
+import './types.js';
+
+const TMP_DIR = path.join(process.env.FILES_DIR || './data/files', '.tmp');
+const MAX_BYTES = (Number(process.env.MAX_FILE_MB) || 300) * 1024 * 1024;
+
+export { type FileItem };
+
+export const fileRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
+  // Pass raw upload stream to route instead of buffering in memory
+  app.addContentTypeParser('application/octet-stream', (_req, payload, done) => {
+    done(null, payload);
+  });
+
+  // List all files stored for the authenticated user
+  app.get(
+    '/',
+    { preHandler: app.auth },
+    async (req): Promise<FileItem[]> => {
+      return storage.list(req.user.sub);
+    },
+  );
+
+  app.put<{ Params: { hash: string } }>(
+    '/:hash',
+    { preHandler: app.auth },
+    async (req, reply) => {
+      const { hash } = req.params;
+      if (!HASH_RE.test(hash)) {
+        return reply.code(400).send({ error: 'invalid hash' });
+      }
+
+      const bodyStream = req.body as NodeJS.ReadableStream | undefined;
+      if (!bodyStream || typeof (bodyStream as NodeJS.ReadableStream).pipe !== 'function') {
+        return reply.code(415).send({ error: 'send body as application/octet-stream' });
+      }
+
+      if (await storage.has(req.user.sub, hash)) {
+        (bodyStream as NodeJS.ReadableStream & { resume?: () => void }).resume?.();
+        return { stored: false, exists: true };
+      }
+
+      await fsp.mkdir(TMP_DIR, { recursive: true });
+      const tmp = path.join(TMP_DIR, `${req.user.sub}_${hash}_${crypto.randomUUID()}.part`);
+      const hasher = crypto.createHash('sha256');
+      let size = 0;
+      const meter = new Transform({
+        transform(chunk: Buffer, _enc, cb) {
+          size += chunk.length;
+          if (size > MAX_BYTES) {
+            return cb(new Error('FILE_TOO_LARGE'));
+          }
+          hasher.update(chunk);
+          cb(null, chunk);
+        },
+      });
+
+      try {
+        await pipeline(bodyStream, meter, fs.createWriteStream(tmp));
+      } catch (e: unknown) {
+        await fsp.rm(tmp, { force: true });
+        const err = e as Error;
+        if (err.message === 'FILE_TOO_LARGE') {
+          return reply.code(413).send({ error: 'file too large' });
+        }
+        throw e;
+      }
+
+      if (hasher.digest('hex') !== hash) {
+        await fsp.rm(tmp, { force: true });
+        return reply.code(400).send({ error: 'hash mismatch' });
+      }
+
+      await storage.put(req.user.sub, hash, tmp, size);
+      return reply.code(201).send({ stored: true, size });
+    },
+  );
+
+  app.get<{ Params: { hash: string } }>(
+    '/:hash',
+    { preHandler: app.auth },
+    async (req, reply) => {
+      const { hash } = req.params;
+      if (!HASH_RE.test(hash)) {
+        return reply.code(400).send({ error: 'invalid hash' });
+      }
+
+      const item = await storage.get(req.user.sub, hash);
+      if (!item) {
+        return reply.code(404).send({ error: 'not found' });
+      }
+
+      reply
+        .header('content-length', item.size)
+        .header('cache-control', 'private, max-age=31536000, immutable')
+        .type('application/octet-stream');
+
+      return reply.send(item.stream);
+    },
+  );
+
+  app.delete<{ Params: { hash: string } }>(
+    '/:hash',
+    { preHandler: app.auth },
+    async (req, reply) => {
+      const { hash } = req.params;
+      if (!HASH_RE.test(hash)) {
+        return reply.code(400).send({ error: 'invalid hash' });
+      }
+
+      await storage.delete(req.user.sub, hash);
+      return { ok: true };
+    },
+  );
+};
+
+export default fileRoutes;
+
+================
+File: apps/server/test/sync-integrity.test.ts
+================
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { vi } from 'vitest';
+import { setupTestApp, type TestContext } from './test-helper.js';
+import { storage, StorageOfflineError } from '../src/storage.js';
+
+const book = (id: string, title: string, updated_at: number) => ({
+  id,
+  title,
+  author: 'A',
+  format: 'epub',
+  file_hash: 'a'.repeat(64),
+  file_size: 1,
+  updated_at,
+  deleted_at: null,
+});
+
+describe('Sync integrity', () => {
+  let ctx: TestContext;
+  let access: string;
+  let refresh: string;
+  let userId: string;
+
+  beforeEach(async () => {
+    ctx = await setupTestApp('integrity');
+    const reg = await ctx.app.inject({
+      method: 'POST',
+      url: '/auth/register',
+      payload: { email: 'integrity@example.com', password: 'password123' },
+    });
+    ({ accessToken: access, refreshToken: refresh } = reg.json());
+    userId = reg.json().user.id;
+  });
+
+  afterEach(async () => {
+    await ctx.cleanup();
+  });
+
+  const push = (rows: unknown[]) =>
+    ctx.app.inject({
+      method: 'POST',
+      url: '/sync/push',
+      headers: { authorization: `Bearer ${access}` },
+      payload: { changes: { books: rows } },
+    });
+
+  it('returns the winning row for a stale push so the losing device converges', async () => {
+    await push([book('b1', 'Newer title', 2000)]);
+    const res = await push([book('b1', 'Older title', 1000)]);
+    const body = res.json();
+    expect(body.stale).toBe(1);
+    expect(body.staleIds.books).toEqual(['b1']);
+    expect(body.serverRows.books).toHaveLength(1);
+    expect(body.serverRows.books[0]).toMatchObject({ id: 'b1', title: 'Newer title' });
+    expect(body.serverRows.books[0].user_id).toBeUndefined();
+  });
+
+  it('reports the server instance id on pull', async () => {
+    const res = await ctx.app.inject({
+      method: 'GET',
+      url: '/sync/pull?since=0',
+      headers: { authorization: `Bearer ${access}` },
+    });
+    expect(res.json().instanceId).toBe('00000000-0000-4000-8000-000000000001');
+  });
+
+  it('rejects a deleted account’s still-valid access token with account_deleted', async () => {
+    const del = await ctx.app.inject({
+      method: 'DELETE',
+      url: '/account',
+      headers: { authorization: `Bearer ${access}` },
+    });
+    expect(del.statusCode).toBe(200);
+
+    const after = await push([book('b2', 'Ghost write', 3000)]);
+    expect(after.statusCode).toBe(401);
+    expect(after.json().code).toBe('account_deleted');
+  });
+
+  it('tells a device refreshing after deletion that the account is gone', async () => {
+    await ctx.app.inject({ method: 'DELETE', url: '/account', headers: { authorization: `Bearer ${access}` } });
+
+    const withHint = await ctx.app.inject({
+      method: 'POST',
+      url: '/auth/refresh',
+      payload: { refreshToken: refresh, userId },
+    });
+    expect(withHint.statusCode).toBe(401);
+    expect(withHint.json().code).toBe('account_deleted');
+
+    // Without the hint it is an ordinary invalid token.
+    const noHint = await ctx.app.inject({ method: 'POST', url: '/auth/refresh', payload: { refreshToken: refresh } });
+    expect(noHint.statusCode).toBe(401);
+    expect(noHint.json().code).toBeUndefined();
+  });
+
+  it('lets the same email register again after deletion, with no old data', async () => {
+    await push([book('b3', 'Old data', 1000)]);
+    await ctx.app.inject({ method: 'DELETE', url: '/account', headers: { authorization: `Bearer ${access}` } });
+
+    const again = await ctx.app.inject({
+      method: 'POST',
+      url: '/auth/register',
+      payload: { email: 'integrity@example.com', password: 'password123' },
+    });
+    expect(again.statusCode).toBe(201);
+    const pull = await ctx.app.inject({
+      method: 'GET',
+      url: '/sync/pull?since=0',
+      headers: { authorization: `Bearer ${again.json().accessToken}` },
+    });
+    expect(pull.json().changes.books ?? []).toHaveLength(0);
+  });
+
+  it('answers 503 storage_offline (not 404) when the book storage is unreachable', async () => {
+    const spy = vi.spyOn(storage, 'get').mockRejectedValue(new StorageOfflineError());
+    const res = await ctx.app.inject({
+      method: 'GET',
+      url: `/files/${'a'.repeat(64)}`,
+      headers: { authorization: `Bearer ${access}` },
+    });
+    expect(res.statusCode).toBe(503);
+    expect(res.json().code).toBe('storage_offline');
+    spy.mockRestore();
+  });
+
+  it('reports storage health', async () => {
+    const ok = await ctx.app.inject({ method: 'GET', url: '/health/storage' });
+    expect(ok.statusCode).toBe(200);
+    const spy = vi.spyOn(storage, 'ping').mockRejectedValue(new StorageOfflineError());
+    const down = await ctx.app.inject({ method: 'GET', url: '/health/storage' });
+    expect(down.statusCode).toBe(503);
+    spy.mockRestore();
+  });
+});
+
+================
+File: apps/server/test/test-helper.ts
+================
+import crypto from 'node:crypto';
+import fsp from 'node:fs/promises';
+import { newDb, DataType, type IMemoryDb } from 'pg-mem';
+import type { FastifyInstance } from 'fastify';
+import { setPool } from '../src/db.js';
+import { createServer } from '../src/server.js';
+
+export interface TestContext {
+  app: FastifyInstance;
+  mem: IMemoryDb;
+  cleanup: () => Promise<void>;
+}
+
+export async function setupTestApp(testId: string = 'default'): Promise<TestContext> {
+  const testDir = `./data/test_files_${testId}_${Date.now()}`;
+  process.env.FILES_DIR = testDir;
+  process.env.JWT_SECRET = 'test_secret_must_be_at_least_32_characters_long_for_hs256';
+  process.env.ALLOW_SIGNUP = 'true';
+  process.env.NODE_ENV = 'test';
+
+  const mem = newDb();
+
+  // Register functions
+  mem.public.registerFunction({
+    name: 'gen_random_uuid',
+    impure: true,
+    implementation: () => crypto.randomUUID(),
+  });
+
+  // Create sequence
+  mem.public.query('create sequence sync_seq;');
+
+  // Migration 004 tables, and a no-op stand-in for pg_advisory_xact_lock (pg-mem
+  // doesn't implement advisory locks; tests run single-connection anyway).
+  mem.public.query(`
+    create table server_meta (id boolean primary key, instance_id text not null);
+    insert into server_meta values (true, '00000000-0000-4000-8000-000000000001');
+    create table deleted_users (id text primary key, deleted_at timestamptz default now());
+  `);
+  mem.public.registerFunction({
+    name: 'pg_advisory_xact_lock',
+    args: [DataType.bigint],
+    returns: DataType.text,
+    implementation: () => '',
+  });
+  mem.public.registerFunction({
+    name: 'pg_advisory_xact_lock',
+    args: [DataType.integer],
+    returns: DataType.text,
+    implementation: () => '',
+  });
+
+  // Create tables with default nextval for server_seq
+  mem.public.query(`
+    create table users (
+      id text primary key default gen_random_uuid(),
+      email text unique not null,
+      password_hash text not null,
+      created_at timestamptz default now()
+    );
+
+    create table refresh_tokens (
+      token_hash text primary key,
+      user_id text not null references users(id) on delete cascade,
+      device_name text,
+      expires_at timestamptz not null,
+      created_at timestamptz default now()
+    );
+
+    create table books (
+      user_id text not null references users(id) on delete cascade,
+      id text not null,
+      title text, author text, format text,
+      file_hash text, file_size bigint, cover_hash text,
+      meta jsonb not null default '{}',
+      added_at bigint, last_opened_at bigint,
+      updated_at bigint not null, deleted_at bigint,
+      server_seq bigint not null default nextval('sync_seq'),
+      primary key (user_id, id)
+    );
+
+    create table progress (
+      user_id text not null references users(id) on delete cascade,
+      id text not null,
+      cfi text, percent real, chapter text, device_id text,
+      updated_at bigint not null, deleted_at bigint,
+      server_seq bigint not null default nextval('sync_seq'),
+      primary key (user_id, id)
+    );
+
+    create table annotations (
+      user_id text not null references users(id) on delete cascade,
+      id text not null,
+      book_id text not null,
+      type text not null,
+      cfi text not null,
+      text text, note text, color text, style text, chapter text, created_at bigint,
+      updated_at bigint not null, deleted_at bigint,
+      server_seq bigint not null default nextval('sync_seq'),
+      primary key (user_id, id)
+    );
+
+    create table collections (
+      user_id text not null references users(id) on delete cascade,
+      id text not null,
+      name text not null, sort_order int not null default 0,
+      meta jsonb not null default '{}',
+      updated_at bigint not null, deleted_at bigint,
+      server_seq bigint not null default nextval('sync_seq'),
+      primary key (user_id, id)
+    );
+
+    create table collection_books (
+      user_id text not null references users(id) on delete cascade,
+      id text not null,
+      collection_id text not null, book_id text not null,
+      updated_at bigint not null, deleted_at bigint,
+      server_seq bigint not null default nextval('sync_seq'),
+      primary key (user_id, id)
+    );
+
+    create table reading_sessions (
+      user_id text not null references users(id) on delete cascade,
+      id text not null,
+      book_id text not null,
+      started_at bigint, ended_at bigint, duration_sec int,
+      start_percent real, end_percent real, words_read int, device_id text,
+      kind text not null default 'book',
+      updated_at bigint not null, deleted_at bigint,
+      server_seq bigint not null default nextval('sync_seq'),
+      primary key (user_id, id)
+    );
+
+    create table settings (
+      user_id text not null references users(id) on delete cascade,
+      id text not null,
+      data jsonb not null default '{}',
+      updated_at bigint not null, deleted_at bigint,
+      server_seq bigint not null default nextval('sync_seq'),
+      primary key (user_id, id)
+    );
+
+    create table series (
+      user_id text not null references users(id) on delete cascade,
+      id text not null,
+      source text not null, source_id text not null, title text not null,
+      author text, cover_url text, status text,
+      meta jsonb not null default '{}',
+      added_at bigint, last_read_at bigint, last_checked_at bigint,
+      updated_at bigint not null, deleted_at bigint,
+      server_seq bigint not null default nextval('sync_seq'),
+      primary key (user_id, id)
+    );
+
+    create table chapter_progress (
+      user_id text not null references users(id) on delete cascade,
+      id text not null,
+      series_id text not null, source text not null, chapter_id text not null,
+      chapter_number real, title text, page int, total_pages int,
+      read boolean not null default false, read_at bigint,
+      updated_at bigint not null, deleted_at bigint,
+      server_seq bigint not null default nextval('sync_seq'),
+      primary key (user_id, id)
+    );
+
+    create table sources (
+      user_id text not null references users(id) on delete cascade,
+      id text not null,
+      kind text not null, name text not null, url text not null,
+      meta jsonb not null default '{}', sort_order int not null default 0,
+      updated_at bigint not null, deleted_at bigint,
+      server_seq bigint not null default nextval('sync_seq'),
+      primary key (user_id, id)
+    );
+
+    create table devices (
+      user_id text not null references users(id) on delete cascade,
+      id text not null,
+      name text not null, platform text not null, last_seen_at bigint,
+      updated_at bigint not null, deleted_at bigint,
+      server_seq bigint not null default nextval('sync_seq'),
+      primary key (user_id, id)
+    );
+  `);
+
+  const pgAdapter = mem.adapters.createPg();
+  const pool = new pgAdapter.Pool();
+  setPool(pool as unknown as import('pg').Pool);
+
+  const app = await createServer();
+  await app.ready();
+
+  const cleanup = async () => {
+    await app.close();
+    await pool.end();
+    await fsp.rm(testDir, { recursive: true, force: true });
+  };
+
+  return { app, mem, cleanup };
+}
+
+================
+File: apps/server/docker-compose.dev.yml
+================
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: reader
+      POSTGRES_USER: reader
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-reader}
+    volumes:
+      - pgdata_dev:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U reader -d reader"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build:
+      context: ../..
+      dockerfile: apps/server/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      DATABASE_URL: postgres://reader:${DB_PASSWORD:-reader}@db:5432/reader
+      MIGRATE_ON_START: "true"
+      JWT_SECRET: ${JWT_SECRET:-dev_secret_must_be_at_least_32_characters_long_for_hs256}
+      ALLOW_SIGNUP: "true"
+      CORS_ORIGINS: "http://localhost:5173,http://tauri.localhost,tauri://localhost"
+      FILES_DIR: /data/files
+      MAX_FILE_MB: "300"
+      PORT: "8080"
+      HOST: "0.0.0.0"
+    volumes:
+      - files_dev:/data/files
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  pgdata_dev:
+  files_dev:
+
+================
+File: apps/server/src/auth.ts
+================
+import bcrypt from 'bcryptjs';
+import crypto from 'node:crypto';
+import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
+import { pool } from './db.js';
+import { wasDeleted } from './integrity.js';
+import { ACCOUNT_DELETED } from '@verso/shared';
+import type { AuthResponse } from '@verso/shared';
+import './types.js';
+
+const ACCESS_TTL = '1h';
+const REFRESH_DAYS = 90;
+const sha256 = (s: string) => crypto.createHash('sha256').update(s).digest('hex');
+const strict = process.env.NODE_ENV === 'test' ? {} : { rateLimit: { max: 10, timeWindow: '1 minute' } };
+
+const credSchema = {
+  body: {
+    type: 'object',
+    required: ['email', 'password'],
+    properties: {
+      email: { type: 'string', format: 'email', maxLength: 254 },
+      password: { type: 'string', minLength: 8, maxLength: 200 },
+      deviceName: { type: 'string', maxLength: 100 },
+    },
+  },
+};
+
+export const authRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
+  async function issueTokens(userId: string, email: string, deviceName?: string | null): Promise<AuthResponse> {
+    const accessToken = app.jwt.sign({ sub: userId, email }, { expiresIn: ACCESS_TTL });
+    const refreshToken = crypto.randomBytes(48).toString('base64url');
+    const expiresAt = new Date(Date.now() + REFRESH_DAYS * 24 * 60 * 60 * 1000);
+    await pool.query(
+      `insert into refresh_tokens (token_hash, user_id, device_name, expires_at)
+       values ($1, $2, $3, $4)`,
+      [sha256(refreshToken), userId, deviceName ?? null, expiresAt],
+    );
+    return { accessToken, refreshToken, user: { id: userId, email } };
+  }
+
+  app.post<{ Body: { email: string; password: string; deviceName?: string } }>(
+    '/register',
+    { schema: credSchema, config: strict },
+    async (req, reply) => {
+      if (process.env.ALLOW_SIGNUP === 'false') {
+        return reply.code(403).send({ error: 'signups disabled' });
+      }
+      const { email, password, deviceName } = req.body;
+      const hash = await bcrypt.hash(password, 12);
+      try {
+        const r = await pool.query<{ id: string; email: string }>(
+          'insert into users (email, password_hash) values ($1, $2) returning id, email',
+          [email, hash],
+        );
+        const user = r.rows[0];
+        const tokens = await issueTokens(user.id, user.email, deviceName);
+        return reply.code(201).send(tokens);
+      } catch (err: unknown) {
+        const pgErr = err as { code?: string };
+        if (pgErr.code === '23505') {
+          return reply.code(409).send({ error: 'email already registered' });
+        }
+        throw err;
+      }
+    },
+  );
+
+  app.post<{ Body: { email: string; password: string; deviceName?: string } }>(
+    '/login',
+    { schema: credSchema, config: strict },
+    async (req, reply) => {
+      const { email, password, deviceName } = req.body;
+      const r = await pool.query<{ id: string; email: string; password_hash: string }>(
+        'select id, email, password_hash from users where email = $1',
+        [email],
+      );
+      const user = r.rows[0];
+      const ok = user && (await bcrypt.compare(password, user.password_hash));
+      if (!ok) {
+        return reply.code(401).send({ error: 'invalid email or password' });
+      }
+      return issueTokens(user.id, user.email, deviceName);
+    },
+  );
+
+  app.post<{ Body: { refreshToken?: string; userId?: string } }>(
+    '/refresh',
+    { config: strict },
+    async (req, reply) => {
+      const token = req.body?.refreshToken;
+      if (typeof token !== 'string') {
+        return reply.code(400).send({ error: 'refreshToken required' });
+      }
+      // Rotation: old token is deleted atomically
+      const r = await pool.query<{ user_id: string; device_name: string | null }>(
+        `delete from refresh_tokens
+         where token_hash = $1 and expires_at > now()
+         returning user_id, device_name`,
+        [sha256(token)],
+      );
+      if (!r.rowCount || !r.rows[0]) {
+        // Deleting an account removes its refresh tokens, so the token alone can't
+        // say whose it was. The client sends its stored user id as a hint; if that
+        // account was deleted, say so, and the device wipes its local copy.
+        const hint = req.body?.userId;
+        if (typeof hint === 'string' && /^[0-9a-f-]{36}$/i.test(hint) && (await wasDeleted(hint))) {
+          return reply.code(401).send({ error: 'account deleted', code: ACCOUNT_DELETED });
+        }
+        return reply.code(401).send({ error: 'invalid refresh token' });
+      }
+      const { user_id, device_name } = r.rows[0];
+      const userRes = await pool.query<{ id: string; email: string }>(
+        'select id, email from users where id = $1',
+        [user_id],
+      );
+      if (!userRes.rowCount || !userRes.rows[0]) {
+        return reply.code(401).send({ error: 'user not found' });
+      }
+      const { id, email } = userRes.rows[0];
+      return issueTokens(id, email, device_name);
+    },
+  );
+
+  app.post<{ Body: { refreshToken?: string } }>(
+    '/logout',
+    async (req) => {
+      const token = req.body?.refreshToken;
+      if (typeof token === 'string') {
+        await pool.query('delete from refresh_tokens where token_hash = $1', [sha256(token)]);
+      }
+      return { ok: true };
+    },
+  );
+};
+
+export default authRoutes;
+
+================
+File: apps/server/src/db-check.ts
+================
+/**
+ * `pnpm --filter server db:check` — verifies the configured database is usable
+ * by Verso: connection + TLS, schema migrations, Supabase API lockdown (RLS),
+ * and a LISTEN/NOTIFY round trip (what live sync depends on).
+ */
+import { randomUUID } from 'node:crypto';
+import { pool, describeConnection } from './db.js';
+import { NotifyHub } from './notify.js';
+
+const EXPECTED_TABLES = [
+  'users',
+  'refresh_tokens',
+  'books',
+  'progress',
+  'annotations',
+  'collections',
+  'collection_books',
+  'reading_sessions',
+  'settings',
+  'series',
+  'chapter_progress',
+  'sources',
+  'devices',
+];
+
+let failed = false;
+const ok = (msg: string) => console.log(`  ✔ ${msg}`);
+const bad = (msg: string) => {
+  failed = true;
+  console.log(`  ✖ ${msg}`);
+};
+
+async function main() {
+  for (const warning of describeConnection()) console.log(`  ! ${warning}`);
+
+  const client = await pool.connect();
+  let version: string;
+  let user: string;
+  let tls: string | null;
+  try {
+    const info = await client.query<{ version: string; user: string }>(
+      'select version() as version, current_user as user',
+    );
+    ({ version, user } = info.rows[0]);
+    // Inspect our own socket: through a pooler, pg_stat_ssl describes the
+    // pooler -> Postgres hop rather than this app's connection.
+    const stream = (client as unknown as { connection: { stream: { encrypted?: boolean; getProtocol?: () => string | null } } })
+      .connection.stream;
+    tls = stream.encrypted ? (stream.getProtocol?.() ?? 'TLS') : null;
+  } finally {
+    client.release();
+  }
+  ok(`connected as ${user} — ${version.split(' on ')[0]}`);
+  if (tls) ok(`connection is encrypted (${tls})`);
+  else console.log('  ! connection is not encrypted (fine for local Docker, not for a hosted DB)');
+
+  const tables = await pool.query<{ tablename: string; rowsecurity: boolean }>(
+    `select tablename, rowsecurity from pg_tables where schemaname = 'public'`,
+  );
+  const present = new Map(tables.rows.map((r) => [r.tablename, r.rowsecurity]));
+  const missing = EXPECTED_TABLES.filter((t) => !present.has(t));
+  if (missing.length) bad(`missing tables: ${missing.join(', ')} — run \`pnpm --filter server db:migrate\``);
+  else ok(`schema present (${EXPECTED_TABLES.length} core tables)`);
+
+  const migrations = await pool
+    .query<{ name: string }>('select name from pgmigrations order by run_on')
+    .catch(() => ({ rows: [] as { name: string }[] }));
+  if (migrations.rows.length) ok(`migrations applied: ${migrations.rows.map((m) => m.name).join(', ')}`);
+  else bad('no migrations recorded — run `pnpm --filter server db:migrate`');
+
+  const hasApiRoles = await pool.query(`select 1 from pg_roles where rolname = 'anon'`);
+  if (hasApiRoles.rowCount) {
+    const open = [...present].filter(([, rls]) => !rls).map(([t]) => t);
+    if (open.length) bad(`RLS disabled (exposed via Supabase REST API): ${open.join(', ')}`);
+    else ok('all public tables have RLS enabled (Supabase REST API cannot read them)');
+    const grants = await pool.query<{ table_name: string }>(
+      `select distinct table_name from information_schema.role_table_grants
+        where table_schema = 'public' and grantee in ('anon', 'authenticated')`,
+    );
+    if (grants.rowCount) bad(`anon/authenticated still have grants on: ${grants.rows.map((g) => g.table_name).join(', ')}`);
+    else ok('anon/authenticated roles have no table privileges');
+  }
+
+  // LISTEN/NOTIFY round trip over the same path the SSE endpoint uses.
+  const hub = new NotifyHub();
+  const channel = `folio_check_${randomUUID()}`;
+  try {
+    let resolveReceived!: () => void;
+    const received = new Promise<void>((resolve) => (resolveReceived = resolve));
+    // Wait until LISTEN is in place, then NOTIFY from a different connection,
+    // exactly as a sync push from another device would.
+    await hub.subscribe(channel, () => resolveReceived());
+    await pool.query('select pg_notify($1, $2)', [channel, '']);
+    await Promise.race([
+      received,
+      new Promise((_, reject) => setTimeout(() => reject(new Error('timed out after 10s')), 10_000)),
+    ]);
+    ok('LISTEN/NOTIFY works (live sync between devices)');
+  } catch (err) {
+    bad(
+      `LISTEN/NOTIFY failed (${(err as Error).message}). On Supabase use the session pooler ` +
+        '(port 5432) or the direct connection, not the transaction pooler (port 6543).',
+    );
+  } finally {
+    await hub.close();
+  }
+}
+
+main()
+  .catch((err) => {
+    bad(`could not connect: ${err instanceof Error ? err.message : String(err)}`);
+  })
+  .finally(async () => {
+    await pool.end().catch(() => {});
+    console.log(failed ? '\nDatabase check FAILED' : '\nDatabase check passed');
+    process.exit(failed ? 1 : 0);
+  });
+
+================
+File: apps/server/docker-compose.yml
+================
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: reader
+      POSTGRES_USER: reader
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U reader -d reader"]
+      interval: 5s
+      retries: 10
+
+  api:
+    build: .
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgres://reader:${DB_PASSWORD}@db:5432/reader
+      MIGRATE_ON_START: "true"
+      JWT_SECRET: ${JWT_SECRET}
+      ALLOW_SIGNUP: ${ALLOW_SIGNUP:-true}
+      CORS_ORIGINS: ${CORS_ORIGINS:-*}
+      FILES_DIR: /data/files
+      MAX_FILE_MB: ${MAX_FILE_MB:-300}
+    volumes:
+      - files:/data/files
+    depends_on:
+      db:
+        condition: service_healthy
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN:-ffxasce.duckdns.org}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - api
+
+  duckdns:
+    image: lscr.io/linuxserver/duckdns:latest
+    restart: unless-stopped
+    environment:
+      SUBDOMAINS: ${DUCKDNS_SUBDOMAINS:-ffxasce}
+      TOKEN: ${DUCKDNS_TOKEN:-}
+      LOG_FILE: "false"
+
+volumes:
+  pgdata:
+  files:
+  caddy_data:
+  caddy_config:
+
+================
+File: packages/shared/src/api-types.ts
+================
+import { z } from 'zod';
+import type { TableRowMap, SyncTableName } from './sync-schema.js';
+
+// Auth Request / Response Schemas
+export const registerRequestSchema = z.object({
+  email: z.string().email(),
+  password: z.string().min(8),
+  deviceName: z.string().min(1).default('Browser'),
+});
+export type RegisterRequest = z.infer<typeof registerRequestSchema>;
+
+export const loginRequestSchema = z.object({
+  email: z.string().email(),
+  password: z.string().min(1),
+  deviceName: z.string().min(1).default('Browser'),
+});
+export type LoginRequest = z.infer<typeof loginRequestSchema>;
+
+export const refreshRequestSchema = z.object({
+  refreshToken: z.string().min(1),
+});
+export type RefreshRequest = z.infer<typeof refreshRequestSchema>;
+
+export const authResponseSchema = z.object({
+  accessToken: z.string(),
+  refreshToken: z.string(),
+  user: z.object({
+    id: z.string(),
+    email: z.string(),
+  }),
+});
+export type AuthResponse = z.infer<typeof authResponseSchema>;
+
+// Sync Push / Pull Contracts
+export interface SyncChanges {
+  books?: TableRowMap['books'][];
+  progress?: TableRowMap['progress'][];
+  annotations?: TableRowMap['annotations'][];
+  collections?: TableRowMap['collections'][];
+  collection_books?: TableRowMap['collection_books'][];
+  reading_sessions?: TableRowMap['reading_sessions'][];
+  settings?: TableRowMap['settings'][];
+  series?: TableRowMap['series'][];
+  chapter_progress?: TableRowMap['chapter_progress'][];
+  sources?: TableRowMap['sources'][];
+  devices?: TableRowMap['devices'][];
+  [key: string]: unknown[] | undefined;
+}
+
+export const syncPushRequestSchema = z.object({
+  changes: z.record(z.array(z.record(z.unknown()))),
+});
+export type SyncPushRequest = {
+  changes: Partial<Record<SyncTableName, Record<string, unknown>[]>>;
+};
+
+export interface SyncPushResponse {
+  accepted: number;
+  stale: number;
+  invalid: number;
+  staleIds: Partial<Record<SyncTableName, string[]>>;
+  /**
+   * The server's current copy of each rejected (stale) row. The client applies
+   * these so a device whose edit lost the last-write-wins race converges on the
+   * winning value instead of keeping its own copy forever.
+   */
+  serverRows?: Partial<Record<SyncTableName, Record<string, unknown>[]>>;
+  serverTime: number;
+}
+
+export interface SyncPullResponse {
+  changes: Partial<Record<SyncTableName, Record<string, unknown>[]>>;
+  cursor: number;
+  hasMore: boolean;
+  serverTime: number;
+  /**
+   * Identifies the server database. If it differs from the one a client's cursor
+   * was recorded against (database wiped, restored or replaced), the client
+   * resets its cursor and re-uploads everything.
+   */
+  instanceId?: string;
+}
+
+/** Error code in 401 bodies when the account no longer exists. */
+export const ACCOUNT_DELETED = 'account_deleted';
+
+/** Error code in 503 bodies when the book file storage can't be reached. */
+export const STORAGE_OFFLINE = 'storage_offline';
+
+export interface EventsTokenResponse {
+  token: string;
+  expiresIn: number;
+}
+
+================
+File: packages/shared/package.json
+================
+{
+  "name": "@verso/shared",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck": "tsc -b",
+    "lint": "eslint .",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.10.0",
+    "typescript": "~5.8.2",
+    "typescript-eslint": "^8.69.0",
+    "vitest": "^3.2.1"
+  }
+}
+
+================
+File: apps/server/src/account.ts
+================
+import bcrypt from 'bcryptjs';
+import archiver from 'archiver';
+import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
+import { pool } from './db.js';
+import { SYNC_TABLES, type SyncTableName } from '@verso/shared';
+import { storage } from './storage.js';
+import { forgetUser } from './integrity.js';
+import './types.js';
+
+async function calculateStorageUsed(userId: string): Promise<number> {
+  const files = await storage.list(userId);
+  return files.reduce((acc, f) => acc + f.size, 0);
+}
+
+export const accountRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
+  // Get account info
+  app.get(
+    '/',
+    { preHandler: app.auth },
+    async (req, reply) => {
+      const r = await pool.query<{ id: string; email: string; created_at: string }>(
+        'select id, email, created_at from users where id = $1',
+        [req.user.sub],
+      );
+      const user = r.rows[0];
+      if (!user) {
+        return reply.code(404).send({ error: 'user not found' });
+      }
+
+      const storageUsed = await calculateStorageUsed(user.id);
+      return {
+        id: user.id,
+        email: user.email,
+        storageUsed,
+        createdAt: user.created_at,
+      };
+    },
+  );
+
+  // Change password
+  app.patch<{ Body: { currentPassword?: string; newPassword?: string } }>(
+    '/password',
+    { preHandler: app.auth },
+    async (req, reply) => {
+      const { currentPassword, newPassword } = req.body || {};
+      if (!currentPassword || !newPassword) {
+        return reply.code(400).send({ error: 'currentPassword and newPassword required' });
+      }
+      if (newPassword.length < 8) {
+        return reply.code(400).send({ error: 'newPassword must be at least 8 characters' });
+      }
+
+      const r = await pool.query<{ password_hash: string }>(
+        'select password_hash from users where id = $1',
+        [req.user.sub],
+      );
+      const user = r.rows[0];
+      if (!user) {
+        return reply.code(404).send({ error: 'user not found' });
+      }
+
+      const match = await bcrypt.compare(currentPassword, user.password_hash);
+      if (!match) {
+        return reply.code(401).send({ error: 'incorrect current password' });
+      }
+
+      const newHash = await bcrypt.hash(newPassword, 12);
+      await pool.query('update users set password_hash = $1 where id = $2', [newHash, req.user.sub]);
+
+      return { ok: true };
+    },
+  );
+
+  // List active sessions
+  app.get(
+    '/sessions',
+    { preHandler: app.auth },
+    async (req) => {
+      const r = await pool.query<{
+        token_hash: string;
+        device_name: string | null;
+        created_at: string;
+        expires_at: string;
+      }>(
+        `select token_hash, device_name, created_at, expires_at
+         from refresh_tokens
+         where user_id = $1 and expires_at > now()
+         order by created_at desc`,
+        [req.user.sub],
+      );
+      return r.rows;
+    },
+  );
+
+  // Revoke a specific session
+  app.delete<{ Params: { tokenHash: string } }>(
+    '/sessions/:tokenHash',
+    { preHandler: app.auth },
+    async (req) => {
+      await pool.query(
+        'delete from refresh_tokens where user_id = $1 and token_hash = $2',
+        [req.user.sub, req.params.tokenHash],
+      );
+      return { ok: true };
+    },
+  );
+
+  // Export all user data as a ZIP archive
+  app.get(
+    '/export',
+    { preHandler: app.auth },
+    async (req, reply) => {
+      const userId = req.user.sub;
+      const exportData: Record<string, unknown[]> = {};
+
+      for (const table of Object.keys(SYNC_TABLES) as SyncTableName[]) {
+        const r = await pool.query(
+          `select * from ${table} where user_id = $1 and deleted_at is null order by updated_at desc`,
+          [userId],
+        );
+        exportData[table] = r.rows.map(({ user_id: _, ...rest }) => rest);
+      }
+
+      // Collect file manifest
+      const filesManifest = await storage.list(userId);
+
+      reply.raw.writeHead(200, {
+        'Content-Type': 'application/zip',
+        'Content-Disposition': `attachment; filename="verso-export-${Date.now()}.zip"`,
+        'Cache-Control': 'no-cache',
+      });
+
+      const archive = archiver('zip', { zlib: { level: 6 } });
+      archive.pipe(reply.raw);
+
+      // Append metadata
+      archive.append(
+        JSON.stringify(
+          {
+            userId,
+            email: req.user.email,
+            exportedAt: new Date().toISOString(),
+            tables: Object.keys(exportData),
+            fileCount: filesManifest.length,
+          },
+          null,
+          2,
+        ),
+        { name: 'manifest.json' },
+      );
+
+      // Append table JSONs
+      for (const [table, rows] of Object.entries(exportData)) {
+        archive.append(JSON.stringify(rows, null, 2), { name: `tables/${table}.json` });
+      }
+
+      // Append files list
+      archive.append(JSON.stringify(filesManifest, null, 2), { name: 'files.json' });
+
+      await archive.finalize();
+    },
+  );
+
+  // Delete account cascade
+  app.delete(
+    '/',
+    { preHandler: app.auth },
+    async (req) => {
+      const userId = req.user.sub;
+      // Tombstone + delete in one transaction (rows cascade via foreign keys).
+      const client = await pool.connect();
+      try {
+        await client.query('begin');
+        await client.query(
+          'insert into deleted_users (id) values ($1) on conflict (id) do nothing',
+          [userId],
+        );
+        await client.query('delete from users where id = $1', [userId]);
+        await client.query('commit');
+      } catch (e) {
+        await client.query('rollback');
+        throw e;
+      } finally {
+        client.release();
+      }
+      forgetUser(userId);
+
+      // Wake this user's other signed-in devices: their next sync gets
+      // "account deleted" and wipes their copy instead of re-uploading it.
+      await pool.query('select pg_notify($1, $2)', [`sync_${userId}`, '']).catch(() => {});
+
+      // The account is already gone; a storage hiccup must not make the client
+      // think deletion failed. Retry file removal in the background.
+      void (async () => {
+        for (let attempt = 0; attempt < 5; attempt++) {
+          try {
+            await storage.deleteAll(userId);
+            return;
+          } catch (err) {
+            req.log.warn({ err, attempt }, 'deleting account files failed; retrying');
+            await new Promise((r) => setTimeout(r, 2000 * 2 ** attempt));
+          }
+        }
+        req.log.error({ userId }, 'could not delete account files');
+      })();
+
+      return { ok: true };
+    },
+  );
+};
+
+export default accountRoutes;
+
+================
+File: apps/server/src/storage.ts
+================
+import fs from 'node:fs';
+import fsp from 'node:fs/promises';
+import path from 'node:path';
+import {
+  S3Client,
+  PutObjectCommand,
+  GetObjectCommand,
+  HeadObjectCommand,
+  HeadBucketCommand,
+  DeleteObjectCommand,
+  DeleteObjectsCommand,
+  ListObjectsV2Command,
+} from '@aws-sdk/client-s3';
+
+export const HASH_RE = /^[a-f0-9]{64}$/;
+
+/**
+ * The storage service can't be reached (e.g. the PC running s3rver is off or the
+ * ngrok tunnel is closed). Routes answer 503 "storage_offline" for this instead
+ * of claiming the file doesn't exist.
+ */
+export class StorageOfflineError extends Error {
+  constructor(cause?: unknown) {
+    super('Book storage is offline', { cause });
+    this.name = 'StorageOfflineError';
+  }
+}
+
+type AwsError = { name?: string; code?: string; message?: string; $metadata?: { httpStatusCode?: number } };
+
+/** Network-level failure or a gateway/tunnel error rather than an S3 answer. */
+function isUnreachable(err: unknown): boolean {
+  const e = err as AwsError;
+  const status = e.$metadata?.httpStatusCode;
+  if (status === 502 || status === 503 || status === 504) return true;
+  const text = `${e.name ?? ''} ${e.code ?? ''} ${e.message ?? ''}`;
+  return /ECONNREFUSED|ENOTFOUND|ETIMEDOUT|ECONNRESET|EAI_AGAIN|socket hang up|TimeoutError|ERR_NGROK|Unexpected end|Deserialization|char '<'/i.test(text);
+}
+
+export interface FileItem {
+  hash: string;
+  size: number;
+}
+
+export interface StorageDriver {
+  has(userId: string, hash: string): Promise<boolean>;
+  get(userId: string, hash: string): Promise<{ stream: NodeJS.ReadableStream; size: number } | null>;
+  put(userId: string, hash: string, localFilePath: string, size: number): Promise<void>;
+  delete(userId: string, hash: string): Promise<void>;
+  list(userId: string): Promise<FileItem[]>;
+  deleteAll(userId: string): Promise<void>;
+  /** Throws StorageOfflineError if the backing store can't be reached. */
+  ping(): Promise<void>;
+}
+
+class LocalStorageDriver implements StorageDriver {
+  private root: string;
+
+  constructor(root = process.env.FILES_DIR || './data/files') {
+    this.root = root;
+  }
+
+  private userDir(userId: string): string {
+    return path.join(this.root, userId);
+  }
+
+  private filePath(userId: string, hash: string): string {
+    return path.join(this.userDir(userId), hash);
+  }
+
+  async has(userId: string, hash: string): Promise<boolean> {
+    try {
+      await fsp.access(this.filePath(userId, hash));
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async get(userId: string, hash: string): Promise<{ stream: NodeJS.ReadableStream; size: number } | null> {
+    const p = this.filePath(userId, hash);
+    try {
+      const stat = await fsp.stat(p);
+      return {
+        stream: fs.createReadStream(p),
+        size: stat.size,
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  async put(userId: string, hash: string, localFilePath: string): Promise<void> {
+    const dir = this.userDir(userId);
+    await fsp.mkdir(dir, { recursive: true });
+    const final = this.filePath(userId, hash);
+    if (localFilePath !== final) {
+      await fsp.rename(localFilePath, final);
+    }
+  }
+
+  async delete(userId: string, hash: string): Promise<void> {
+    await fsp.rm(this.filePath(userId, hash), { force: true });
+  }
+
+  async list(userId: string): Promise<FileItem[]> {
+    const dir = this.userDir(userId);
+    try {
+      const entries = await fsp.readdir(dir, { withFileTypes: true });
+      const files: FileItem[] = [];
+      for (const entry of entries) {
+        if (entry.isFile() && HASH_RE.test(entry.name)) {
+          const stat = await fsp.stat(path.join(dir, entry.name));
+          files.push({ hash: entry.name, size: stat.size });
+        }
+      }
+      return files;
+    } catch {
+      return [];
+    }
+  }
+
+  async deleteAll(userId: string): Promise<void> {
+    await fsp.rm(this.userDir(userId), { recursive: true, force: true });
+  }
+
+  async ping(): Promise<void> {
+    await fsp.mkdir(this.root, { recursive: true });
+  }
+}
+
+class R2StorageDriver implements StorageDriver {
+  private client: S3Client;
+  private bucket: string;
+
+  constructor(config: { endpoint: string; accessKeyId: string; secretAccessKey: string; bucket: string; region?: string }) {
+    this.bucket = config.bucket;
+    this.client = new S3Client({
+      region: config.region || 'auto',
+      endpoint: config.endpoint,
+      forcePathStyle: true,
+      credentials: {
+        accessKeyId: config.accessKeyId,
+        secretAccessKey: config.secretAccessKey,
+      },
+    });
+  }
+
+  private key(userId: string, hash: string): string {
+    return `${userId}/${hash}`;
+  }
+
+  private reachableUntil = 0;
+
+  /**
+   * Confirms the bucket answers. A tunnel that's down (ngrok) replies 404 to
+   * every request, which on its own looks exactly like "file not found", so a
+   * not-found result is only trusted once the bucket itself is reachable.
+   */
+  async ping(): Promise<void> {
+    if (Date.now() < this.reachableUntil) return;
+    try {
+      await this.client.send(new HeadBucketCommand({ Bucket: this.bucket }));
+      this.reachableUntil = Date.now() + 30_000;
+    } catch (err) {
+      throw new StorageOfflineError(err);
+    }
+  }
+
+  private async rethrow(err: unknown): Promise<never> {
+    if (isUnreachable(err)) throw new StorageOfflineError(err);
+    throw err;
+  }
+
+  async has(userId: string, hash: string): Promise<boolean> {
+    try {
+      await this.client.send(
+        new HeadObjectCommand({
+          Bucket: this.bucket,
+          Key: this.key(userId, hash),
+        }),
+      );
+      return true;
+    } catch (err: unknown) {
+      const e = err as AwsError;
+      if (e.name === 'NotFound' || e.name === 'NoSuchKey' || e.$metadata?.httpStatusCode === 404) {
+        await this.ping();
+        return false;
+      }
+      return this.rethrow(err);
+    }
+  }
+
+  async get(userId: string, hash: string): Promise<{ stream: NodeJS.ReadableStream; size: number } | null> {
+    try {
+      const res = await this.client.send(
+        new GetObjectCommand({
+          Bucket: this.bucket,
+          Key: this.key(userId, hash),
+        }),
+      );
+      if (!res.Body) return null;
+      return {
+        stream: res.Body as NodeJS.ReadableStream,
+        size: res.ContentLength ?? 0,
+      };
+    } catch (err: unknown) {
+      const e = err as AwsError;
+      if (e.name === 'NotFound' || e.name === 'NoSuchKey' || e.$metadata?.httpStatusCode === 404) {
+        await this.ping();
+        return null;
+      }
+      return this.rethrow(err);
+    }
+  }
+
+  async put(userId: string, hash: string, localFilePath: string, size: number): Promise<void> {
+    const fileStream = fs.createReadStream(localFilePath);
+    try {
+      await this.client.send(
+        new PutObjectCommand({
+          Bucket: this.bucket,
+          Key: this.key(userId, hash),
+          Body: fileStream,
+          ContentLength: size,
+          ContentType: 'application/octet-stream',
+        }),
+      );
+    } catch (err) {
+      await this.rethrow(err);
+    } finally {
+      await fsp.rm(localFilePath, { force: true });
+    }
+  }
+
+  async delete(userId: string, hash: string): Promise<void> {
+    await this.client
+      .send(new DeleteObjectCommand({ Bucket: this.bucket, Key: this.key(userId, hash) }))
+      .catch((err) => this.rethrow(err));
+  }
+
+  /** All object keys under a prefix. ListObjectsV2 returns at most 1000 per page. */
+  private async listAll(prefix: string): Promise<{ Key: string; Size: number }[]> {
+    const out: { Key: string; Size: number }[] = [];
+    let token: string | undefined;
+    do {
+      const res = await this.client
+        .send(new ListObjectsV2Command({ Bucket: this.bucket, Prefix: prefix, ContinuationToken: token }))
+        .catch(async (err) => {
+          // A 404 for the whole listing is a closed tunnel (or a missing bucket).
+          if ((err as AwsError).$metadata?.httpStatusCode === 404) await this.ping();
+          return this.rethrow(err);
+        });
+      for (const obj of res.Contents || []) {
+        if (obj.Key) out.push({ Key: obj.Key, Size: obj.Size ?? 0 });
+      }
+      token = res.IsTruncated ? res.NextContinuationToken : undefined;
+    } while (token);
+    return out;
+  }
+
+  async list(userId: string): Promise<FileItem[]> {
+    const prefix = `${userId}/`;
+    const files: FileItem[] = [];
+    for (const obj of await this.listAll(prefix)) {
+      const hash = obj.Key.slice(prefix.length);
+      if (HASH_RE.test(hash)) files.push({ hash, size: obj.Size });
+    }
+    return files;
+  }
+
+  async deleteAll(userId: string): Promise<void> {
+    const keys = (await this.listAll(`${userId}/`)).map((o) => ({ Key: o.Key }));
+    // DeleteObjects accepts at most 1000 keys per request.
+    for (let i = 0; i < keys.length; i += 1000) {
+      await this.client.send(
+        new DeleteObjectsCommand({ Bucket: this.bucket, Delete: { Objects: keys.slice(i, i + 1000) } }),
+      );
+    }
+  }
+}
+
+function createStorageDriver(): StorageDriver {
+  const endpoint =
+    process.env.R2_ENDPOINT ||
+    (process.env.R2_ACCOUNT_ID ? `https://${process.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com` : undefined);
+  const accessKeyId = process.env.R2_ACCESS_KEY_ID;
+  const secretAccessKey = process.env.R2_SECRET_ACCESS_KEY;
+  const bucket = process.env.R2_BUCKET_NAME;
+
+  if (endpoint && accessKeyId && secretAccessKey && bucket) {
+    return new R2StorageDriver({
+      endpoint,
+      accessKeyId,
+      secretAccessKey,
+      bucket,
+      region: process.env.R2_REGION,
+    });
+  }
+
+  return new LocalStorageDriver();
+}
+
+export const storage: StorageDriver = createStorageDriver();
+
+================
+File: apps/server/src/sync.ts
+================
+import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
+import type { PoolClient } from 'pg';
+import { pool } from './db.js';
+import { getNotifyHub } from './notify.js';
+import { getInstanceId, lockUserWrites } from './integrity.js';
+import {
+  SYNC_TABLES,
+  type SyncTableName,
+  type SyncPushResponse,
+  type SyncPullResponse,
+  type EventsTokenResponse,
+} from '@verso/shared';
+import './types.js';
+
+const JSON_COLS = new Set(['meta', 'data']);
+const MAX_PUSH_ROWS = 5000;
+const PULL_LIMIT = 1000;
+
+function validRow(row: unknown): row is { id: string; updated_at: number; deleted_at?: number | null; [key: string]: unknown } {
+  if (!row || typeof row !== 'object') return false;
+  const r = row as Record<string, unknown>;
+  return (
+    typeof r.id === 'string' &&
+    r.id.length > 0 &&
+    r.id.length <= 128 &&
+    Number.isFinite(Number(r.updated_at))
+  );
+}
+
+async function upsert(
+  client: PoolClient,
+  table: SyncTableName,
+  userId: string,
+  row: Record<string, unknown>,
+): Promise<boolean> {
+  const incomingUpdated = Number(row.updated_at);
+  const existing = await client.query<{ updated_at: number }>(
+    `select updated_at from ${table} where user_id = $1 and id = $2`,
+    [userId, row.id],
+  );
+
+  if (existing.rowCount && existing.rows[0]) {
+    if (incomingUpdated <= Number(existing.rows[0].updated_at)) {
+      return false;
+    }
+  }
+
+  const fields = SYNC_TABLES[table];
+  const cols = ['user_id', 'id', 'updated_at', 'deleted_at', ...fields];
+  const vals: unknown[] = [
+    userId,
+    row.id,
+    incomingUpdated,
+    row.deleted_at == null ? null : Number(row.deleted_at),
+  ];
+
+  for (const field of fields) {
+    const val = row[field];
+    if (JSON_COLS.has(field)) {
+      vals.push(val != null ? JSON.stringify(val) : '{}');
+    } else if (field === 'read') {
+      vals.push(val != null ? Boolean(val) : false);
+    } else if (field === 'sort_order') {
+      vals.push(val != null ? Number(val) : 0);
+    } else {
+      vals.push(val ?? null);
+    }
+  }
+
+  const ph = vals.map((_, i) => `$${i + 1}`).join(',');
+  const setCols = cols.slice(2).map((c) => `${c} = excluded.${c}`);
+  setCols.push("server_seq = nextval('sync_seq')");
+  const set = setCols.join(',');
+  const query = `
+    insert into ${table} (${cols.join(',')}) values (${ph})
+    on conflict (user_id, id) do update set ${set}
+    where ${table}.updated_at < excluded.updated_at
+  `;
+
+  await client.query(query, vals);
+  return true;
+}
+
+export const syncRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
+  // Push changes from client
+  app.post<{ Body: { changes?: Record<string, unknown[]> } }>(
+    '/push',
+    { preHandler: app.auth },
+    async (req, reply) => {
+      const changes = req.body?.changes;
+      if (!changes || typeof changes !== 'object') {
+        return reply.code(400).send({ error: 'changes object required' });
+      }
+
+      const total = Object.values(changes).reduce(
+        (n, r) => n + (Array.isArray(r) ? r.length : 0),
+        0,
+      );
+      if (total > MAX_PUSH_ROWS) {
+        return reply.code(413).send({ error: `max ${MAX_PUSH_ROWS} rows per push` });
+      }
+
+      const client = await pool.connect();
+      let accepted = 0;
+      let stale = 0;
+      let invalid = 0;
+      const staleIds: Partial<Record<SyncTableName, string[]>> = {};
+      const serverRows: Partial<Record<SyncTableName, Record<string, unknown>[]>> = {};
+
+      try {
+        await client.query('begin');
+        await lockUserWrites(client, req.user.sub);
+        for (const [tbl, rows] of Object.entries(changes)) {
+          const table = tbl as SyncTableName;
+          if (!SYNC_TABLES[table] || !Array.isArray(rows)) continue;
+
+          for (const row of rows) {
+            if (!validRow(row)) {
+              invalid++;
+              continue;
+            }
+            const isAccepted = await upsert(client, table, req.user.sub, row);
+            if (isAccepted) {
+              accepted++;
+            } else {
+              stale++;
+              if (!staleIds[table]) {
+                staleIds[table] = [];
+              }
+              staleIds[table]!.push(row.id as string);
+              // Send back the winning copy so the client converges on it.
+              const current = await client.query<Record<string, unknown>>(
+                `select * from ${table} where user_id = $1 and id = $2`,
+                [req.user.sub, row.id],
+              );
+              if (current.rows[0]) {
+                const { user_id: _u, ...rest } = current.rows[0];
+                (serverRows[table] ??= []).push(rest);
+              }
+            }
+          }
+        }
+        await client.query('commit');
+      } catch (e) {
+        await client.query('rollback');
+        throw e;
+      } finally {
+        client.release();
+      }
+
+      const response: SyncPushResponse = {
+        accepted,
+        stale,
+        invalid,
+        staleIds,
+        serverRows,
+        serverTime: Date.now(),
+      };
+      return response;
+    },
+  );
+
+  // Pull changes from server since seq
+  app.get<{ Querystring: { since?: string } }>(
+    '/pull',
+    { preHandler: app.auth },
+    async (req): Promise<SyncPullResponse> => {
+      const since = Math.max(0, Number(req.query.since) || 0);
+      const fetched: Partial<Record<SyncTableName, Record<string, unknown>[]>> = {};
+      let ceiling = Infinity;
+
+      for (const table of Object.keys(SYNC_TABLES) as SyncTableName[]) {
+        const r = await pool.query<Record<string, unknown>>(
+          `select * from ${table} where user_id = $1 and server_seq > $2
+           order by server_seq limit $3`,
+          [req.user.sub, since, PULL_LIMIT],
+        );
+        fetched[table] = r.rows;
+        if (r.rows.length === PULL_LIMIT) {
+          const lastSeq = Number(r.rows[r.rows.length - 1].server_seq);
+          ceiling = Math.min(ceiling, lastSeq);
+        }
+      }
+
+      const hasMore = ceiling !== Infinity;
+      const changes: Partial<Record<SyncTableName, Record<string, unknown>[]>> = {};
+      let cursor = since;
+
+      for (const [tbl, rows] of Object.entries(fetched)) {
+        const table = tbl as SyncTableName;
+        if (!rows) continue;
+        changes[table] = rows
+          .filter((r) => Number(r.server_seq) <= ceiling)
+          .map(({ user_id: _, ...rest }) => rest);
+
+        for (const r of changes[table]!) {
+          cursor = Math.max(cursor, Number(r.server_seq));
+        }
+      }
+
+      if (hasMore) cursor = ceiling;
+
+      return {
+        changes,
+        cursor,
+        hasMore,
+        serverTime: Date.now(),
+        instanceId: await getInstanceId(),
+      };
+    },
+  );
+
+  // Issue 5-minute SSE token
+  app.post(
+    '/events-token',
+    { preHandler: app.auth },
+    async (req): Promise<EventsTokenResponse> => {
+      const token = app.jwt.sign(
+        { sub: req.user.sub, email: req.user.email, type: 'events' },
+        { expiresIn: '5m' },
+      );
+      return { token, expiresIn: 300 };
+    },
+  );
+
+  // Server-Sent Events stream for live updates
+  app.get<{ Querystring: { token?: string } }>(
+    '/events',
+    async (req, reply) => {
+      const token = req.query?.token;
+      if (!token || typeof token !== 'string') {
+        return reply.code(401).send({ error: 'token required' });
+      }
+
+      let userId: string;
+      try {
+        const decoded = app.jwt.verify<{ sub: string; type?: string }>(token);
+        if (decoded.type !== 'events' || !decoded.sub) {
+          return reply.code(401).send({ error: 'invalid events token' });
+        }
+        userId = decoded.sub;
+      } catch {
+        return reply.code(401).send({ error: 'invalid or expired events token' });
+      }
+
+      reply.raw.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache, no-transform',
+        Connection: 'keep-alive',
+        'X-Accel-Buffering': 'no',
+      });
+      reply.raw.flushHeaders?.();
+
+      // Send initial comment to establish stream
+      reply.raw.write(': stream opened\n\n');
+
+      const channel = `sync_${userId}`;
+
+      let debounceTimer: NodeJS.Timeout | null = null;
+      const onNotification = () => {
+        if (debounceTimer) clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(() => {
+          if (!reply.raw.writableEnded) {
+            reply.raw.write('event: changed\ndata: {}\n\n');
+          }
+        }, 500);
+      };
+
+      // All streams share one LISTEN connection instead of each holding a pooled client.
+      const unsubscribe = await getNotifyHub().subscribe(channel, onNotification);
+
+      // Heartbeat comment every 25s
+      const heartbeat = setInterval(() => {
+        if (!reply.raw.writableEnded) {
+          reply.raw.write(': keep-alive\n\n');
+        }
+      }, 25000);
+
+      req.raw.on('close', () => {
+        if (debounceTimer) clearTimeout(debounceTimer);
+        clearInterval(heartbeat);
+        void unsubscribe();
+      });
+    },
+  );
+};
+
+export default syncRoutes;
+
+================
+File: apps/server/Dockerfile
+================
+FROM node:22-alpine AS builder
+WORKDIR /app
+RUN corepack enable && corepack prepare pnpm@10.28.1 --activate
+COPY package.json pnpm-lock.yaml* pnpm-workspace.yaml tsconfig*.json ./
+COPY packages/shared ./packages/shared
+COPY apps/server ./apps/server
+RUN pnpm install --frozen-lockfile
+RUN pnpm --filter @verso/shared build && pnpm --filter server build
+
+FROM node:22-alpine
+WORKDIR /app
+RUN corepack enable && corepack prepare pnpm@10.28.1 --activate
+COPY package.json pnpm-lock.yaml* pnpm-workspace.yaml ./
+COPY packages/shared ./packages/shared
+COPY apps/server/package.json ./apps/server/
+RUN pnpm install --prod
+COPY --from=builder /app/packages/shared/dist ./packages/shared/dist
+COPY --from=builder /app/apps/server/dist ./apps/server/dist
+COPY apps/server/migrations ./apps/server/migrations
+RUN mkdir -p /data/files && chown -R node:node /data/files
+USER node
+WORKDIR /app/apps/server
+EXPOSE 8080
+CMD ["node", "dist/server.js"]
+
+================
+File: apps/server/src/server.ts
+================
+import Fastify, { type FastifyInstance } from 'fastify';
+import jwt from '@fastify/jwt';
+import cors from '@fastify/cors';
+import rateLimit from '@fastify/rate-limit';
+import { authRoutes } from './auth.js';
+import { syncRoutes } from './sync.js';
+import { fileRoutes } from './files.js';
+import { proxyRoutes } from './proxy.js';
+import { accountRoutes } from './account.js';
+import { pool, describeConnection } from './db.js';
+import { getNotifyHub } from './notify.js';
+import { runMigrations } from './migrate.js';
+import { userExists, wasDeleted } from './integrity.js';
+import { ACCOUNT_DELETED, STORAGE_OFFLINE } from '@verso/shared';
+import { storage, StorageOfflineError } from './storage.js';
+import './types.js';
+
+export async function createServer(): Promise<FastifyInstance> {
+  const jwtSecret = process.env.JWT_SECRET || 'dev_secret_must_be_at_least_32_characters_long_for_hs256';
+
+  const app = Fastify({
+    logger: process.env.NODE_ENV !== 'test',
+    bodyLimit: 20 * 1024 * 1024,
+    trustProxy: true,
+  });
+
+  const origins = process.env.CORS_ORIGINS || '*';
+  await app.register(cors, {
+    origin: origins === '*' ? true : origins.split(',').map((s) => s.trim()),
+    methods: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE'],
+  });
+
+  if (process.env.NODE_ENV !== 'test') {
+    await app.register(rateLimit, {
+      max: 300,
+      timeWindow: '1 minute',
+    });
+  }
+
+  await app.register(jwt, {
+    secret: jwtSecret,
+  });
+
+  app.decorate('auth', async (req, reply) => {
+    try {
+      await req.jwtVerify();
+    } catch {
+      return reply.code(401).send({ error: 'unauthorized' });
+    }
+    // Access tokens outlive account deletion by up to their TTL. Reject them, and
+    // tell the device the account is gone so it wipes its copy rather than
+    // pushing it back (which also failed on the users foreign key).
+    if (!(await userExists(req.user.sub))) {
+      const deleted = await wasDeleted(req.user.sub);
+      return reply
+        .code(401)
+        .send({ error: deleted ? 'account deleted' : 'unauthorized', code: deleted ? ACCOUNT_DELETED : undefined });
+    }
+  });
+
+  // Storage offline (PC with s3rver off / tunnel closed): a clear 503 instead of a
+  // generic 500, or "not found" for files that do exist.
+  app.setErrorHandler((err, _req, reply) => {
+    if (err instanceof StorageOfflineError) {
+      return reply.code(503).send({ error: 'book storage is offline', code: STORAGE_OFFLINE });
+    }
+    return reply.send(err);
+  });
+
+  // Health endpoint checks database connectivity
+  app.get('/health', async () => {
+    await pool.query('select 1');
+    return { ok: true };
+  });
+
+  // Is the book file storage reachable? (open in a browser to check your tunnel)
+  app.get('/health/storage', async (_req, reply) => {
+    try {
+      await storage.ping();
+      return { ok: true };
+    } catch {
+      return reply.code(503).send({ ok: false, code: STORAGE_OFFLINE });
+    }
+  });
+
+  // Me endpoint
+  app.get('/me', { preHandler: app.auth }, async (req) => ({
+    id: req.user.sub,
+    email: req.user.email,
+  }));
+
+  // Feature routes
+  await app.register(authRoutes, { prefix: '/auth' });
+  await app.register(syncRoutes, { prefix: '/sync' });
+  await app.register(fileRoutes, { prefix: '/files' });
+  await app.register(proxyRoutes, { prefix: '/proxy' });
+  await app.register(accountRoutes, { prefix: '/account' });
+
+  return app;
+}
+
+// Start standalone server when executed directly
+if (process.env.NODE_ENV !== 'test') {
+  const port = Number(process.env.PORT) || 8080;
+  const host = process.env.HOST || '0.0.0.0';
+
+  const start = async () => {
+    try {
+      for (const warning of describeConnection()) console.warn(`WARNING: ${warning}`);
+      if (process.env.MIGRATE_ON_START === 'true') {
+        await runMigrations();
+      }
+
+      const server = await createServer();
+
+      const shutdown = async () => {
+        await server.close();
+        await getNotifyHub().close();
+        await pool.end();
+        process.exit(0);
+      };
+      process.on('SIGTERM', shutdown);
+      process.on('SIGINT', shutdown);
+
+      await server.listen({ host, port });
+      console.log(`Verso server listening on http://${host}:${port}`);
+    } catch (err) {
+      console.error('Failed to start server:', err);
+      process.exit(1);
+    }
+  };
+
+  start();
+}
+
+================
+File: apps/server/package.json
+================
+{
+  "name": "server",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "main": "dist/server.js",
+  "scripts": {
+    "start": "node dist/server.js",
+    "dev": "tsx watch src/server.ts",
+    "build": "tsc -b",
+    "typecheck": "tsc -b",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "db:migrate": "tsx src/migrate.ts up",
+    "db:rollback": "tsx src/migrate.ts down",
+    "db:check": "tsx src/db-check.ts",
+    "migrate:up": "tsx src/migrate.ts up",
+    "migrate:down": "tsx src/migrate.ts down"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.1151.0",
+    "@fastify/cors": "^10.0.0",
+    "@fastify/jwt": "^9.0.0",
+    "@fastify/rate-limit": "^10.0.0",
+    "@verso/shared": "workspace:*",
+    "archiver": "^7.0.1",
+    "bcryptjs": "^2.4.3",
+    "dotenv": "^16.4.7",
+    "fastify": "^5.0.0",
+    "node-pg-migrate": "^7.8.0",
+    "pg": "^8.13.0",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/archiver": "^6.0.3",
+    "@types/bcryptjs": "^2.4.6",
+    "@types/node": "^22.13.10",
+    "@types/pg": "^8.11.11",
+    "eslint": "^10.10.0",
+    "pg-mem": "^3.0.14",
+    "tsx": "^4.19.3",
+    "typescript": "~5.8.2",
+    "typescript-eslint": "^8.69.0",
+    "vitest": "^3.2.1"
+  }
+}
+
+================
+File: apps/server/src/proxy.ts
+================
+import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
+import { Readable } from 'node:stream';
+import { pool } from './db.js';
+import './types.js';
+
+const STATIC_ALLOWED_HOSTS = new Set([
+  'gutendex.com',
+  'www.gutenberg.org',
+  'gutenberg.org',
+  'standardebooks.org',
+  'api.mangadex.org',
+  'uploads.mangadex.org',
+  'openlibrary.org',
+  'covers.openlibrary.org',
+  'archive.org',
+  'mangapill.com',
+  'cdn.readdetectiveconan.com',
+  'raw.githubusercontent.com',
+  'cdn.jsdelivr.net',
+  'localhost',
+  '127.0.0.1',
+]);
+
+function isStaticAllowedHost(hostname: string): boolean {
+  const host = hostname.toLowerCase();
+  if (STATIC_ALLOWED_HOSTS.has(host)) return true;
+  if (host.endsWith('.mangadex.network')) return true;
+  if (host.endsWith('.archive.org')) return true;
+  if (host.endsWith('readdetectiveconan.com')) return true;
+  if (host.endsWith('mangapill.com')) return true;
+  return false;
+}
+
+// In-memory token bucket rate limiters per user
+interface RateBucket {
+  tokens: number;
+  lastRefill: number;
+  maxTokens: number;
+  refillRatePerSec: number;
+}
+
+const rateBuckets = new Map<string, RateBucket>();
+
+function checkRateLimit(key: string, maxTokens: number, refillRatePerSec: number): boolean {
+  const now = Date.now();
+  let bucket = rateBuckets.get(key);
+  if (!bucket) {
+    bucket = { tokens: maxTokens, lastRefill: now, maxTokens, refillRatePerSec };
+    rateBuckets.set(key, bucket);
+  }
+
+  const elapsedSec = (now - bucket.lastRefill) / 1000;
+  bucket.tokens = Math.min(bucket.maxTokens, bucket.tokens + elapsedSec * bucket.refillRatePerSec);
+  bucket.lastRefill = now;
+
+  if (bucket.tokens >= 1) {
+    bucket.tokens -= 1;
+    return true;
+  }
+  return false;
+}
+
+// Clean up old rate buckets periodically
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, bucket] of rateBuckets.entries()) {
+    if (now - bucket.lastRefill > 60000) {
+      rateBuckets.delete(key);
+    }
+  }
+}, 60000);
+
+export const proxyRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
+  const handler = async (
+    req: import('fastify').FastifyRequest<{ Querystring: { url?: string } }>,
+    reply: import('fastify').FastifyReply,
+  ) => {
+    const rawUrl = req.query?.url;
+    if (!rawUrl || typeof rawUrl !== 'string') {
+      return reply.code(400).send({ error: 'url parameter required' });
+    }
+
+    let parsed: URL;
+    try {
+      parsed = new URL(rawUrl);
+    } catch {
+      return reply.code(400).send({ error: 'invalid url' });
+    }
+
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      return reply.code(400).send({ error: 'only http and https supported' });
+    }
+
+    const hostname = parsed.hostname.toLowerCase();
+
+    // Try verifying JWT if authorization header is provided
+    let userId: string | null = null;
+    if (req.headers.authorization) {
+      try {
+        await req.jwtVerify();
+        userId = req.user.sub;
+      } catch {
+        // ignore invalid token for static allowed hosts, but don't grant user permissions
+      }
+    }
+
+    // Rate limit checks:
+    const rateLimitKey = userId ? `user:${userId}` : `ip:${req.ip}`;
+    if (!checkRateLimit(`overall:${rateLimitKey}`, 10, 10)) {
+      return reply.code(429).send({ error: 'overall proxy rate limit exceeded (10 req/s)' });
+    }
+
+    // 4 req/s for api.mangadex.org
+    if (hostname === 'api.mangadex.org') {
+      if (!checkRateLimit(`mangadex:${rateLimitKey}`, 4, 4)) {
+        return reply.code(429).send({ error: 'mangadex proxy rate limit exceeded (4 req/s)' });
+      }
+    }
+
+    // Check allowlist: static hosts first
+    let isAllowed = isStaticAllowedHost(hostname);
+    let isUserSourceHost = false;
+
+    // Check user source hosts if not static allowed and user is authenticated
+    if (!isAllowed && userId) {
+      const sourcesRes = await pool.query<{ url: string }>(
+        'select url from sources where user_id = $1 and deleted_at is null',
+        [userId],
+      );
+      for (const row of sourcesRes.rows) {
+        try {
+          const sourceUrl = new URL(row.url);
+          if (sourceUrl.hostname.toLowerCase() === hostname) {
+            isAllowed = true;
+            isUserSourceHost = true;
+            break;
+          }
+        } catch {
+          // ignore malformed source url
+        }
+      }
+    }
+
+    if (!isAllowed) {
+      return reply.code(403).send({ error: `host not allowed: ${hostname}` });
+    }
+
+    // Construct forward headers
+    const forwardHeaders: Record<string, string> = {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    };
+
+    if (hostname.endsWith('readdetectiveconan.com') || hostname.endsWith('mangapill.com')) {
+      forwardHeaders['Referer'] = 'https://mangapill.com/';
+    }
+
+    if (req.headers.accept) {
+      forwardHeaders['Accept'] = req.headers.accept;
+    }
+    if (req.headers.range) {
+      forwardHeaders['Range'] = req.headers.range;
+    }
+    // Forward Content-Type for POST/PUT requests (e.g. GraphQL mutations)
+    if (req.headers['content-type']) {
+      forwardHeaders['Content-Type'] = req.headers['content-type'];
+    }
+    // Forward Authorization ONLY for user source hosts
+    if (isUserSourceHost && req.headers.authorization) {
+      forwardHeaders['Authorization'] = req.headers.authorization;
+    }
+
+    // Determine request body for POST/PUT
+    const method = req.method as string;
+    const fetchInit: RequestInit = {
+      method,
+      headers: forwardHeaders,
+      redirect: 'follow',
+    };
+    if (method === 'POST' || method === 'PUT') {
+      const rawBody = req.body;
+      fetchInit.body = typeof rawBody === 'string' ? rawBody : JSON.stringify(rawBody);
+    }
+
+    let upstreamRes: Response;
+    try {
+      upstreamRes = await fetch(parsed.toString(), fetchInit);
+    } catch (err: unknown) {
+      const error = err as Error;
+      return reply.code(502).send({ error: 'upstream fetch failed', message: error.message });
+    }
+
+    reply.code(upstreamRes.status);
+
+    // Forward relevant headers
+    const forwardableHeaders = [
+      'content-type',
+      'content-length',
+      'content-range',
+      'accept-ranges',
+      'etag',
+      'last-modified',
+      'cache-control',
+    ];
+
+    for (const h of forwardableHeaders) {
+      const val = upstreamRes.headers.get(h);
+      if (val) {
+        reply.header(h, val);
+      }
+    }
+
+    if (!upstreamRes.body) {
+      return reply.send();
+    }
+
+    // Stream the body back
+    const nodeStream = Readable.fromWeb(upstreamRes.body as import('node:stream/web').ReadableStream);
+    return reply.send(nodeStream);
+  };
+
+  app.get<{ Querystring: { url?: string } }>('/', handler);
+  app.post<{ Querystring: { url?: string } }>('/', handler);
+};
+
+export default proxyRoutes;
+
+
+
+
+
+================================================================
+End of Codebase
+================================================================

@@ -5,6 +5,8 @@ export interface UseReaderTouchOptions {
   view: FoliateView | null
   flow: 'paginated' | 'scrolled'
   onImageZoom?: (src: string, alt?: string) => void
+  /** Current CFI, so a swipe can tell whether foliate already turned the page. */
+  getLocation?: () => string | undefined
 }
 
 export function getTouchDistance(t1: Touch, t2: Touch): number {
@@ -13,37 +15,39 @@ export function getTouchDistance(t1: Touch, t2: Touch): number {
   return Math.hypot(dx, dy)
 }
 
+const hasSelection = (e: TouchEvent): boolean => {
+  const sel = (e.target as Node | null)?.ownerDocument?.getSelection()
+  return !!sel && !sel.isCollapsed
+}
+
 export class ReaderTouchController {
   private startX = 0
   private startY = 0
   private startTime = 0
+  private startLocation: string | undefined
+  private selecting = false
+  private pendingTurn: number | undefined
   private initialPinchDist = 0
   private pinchTargetImg: HTMLImageElement | null = null
   private isSwiping = false
 
-  private getOptions: () => {
-    view: FoliateView | null
-    flow: 'paginated' | 'scrolled'
-    onImageZoom?: (src: string, alt?: string) => void
-  }
+  private getOptions: () => UseReaderTouchOptions
 
-  constructor(
-    getOptions: () => {
-      view: FoliateView | null
-      flow: 'paginated' | 'scrolled'
-      onImageZoom?: (src: string, alt?: string) => void
-    },
-  ) {
+  constructor(getOptions: () => UseReaderTouchOptions) {
     this.getOptions = getOptions
   }
 
   handleTouchStart = (e: TouchEvent) => {
-    const { onImageZoom } = this.getOptions()
+    const { onImageZoom, getLocation } = this.getOptions()
     if (e.touches.length === 1) {
       const touch = e.touches[0]
-      this.startX = touch.clientX
-      this.startY = touch.clientY
+      // screenX/Y, not clientX/Y: foliate drags the page along with the finger, so
+      // the finger barely moves relative to the book's iframe and clientX deltas stay ~0.
+      this.startX = touch.screenX
+      this.startY = touch.screenY
       this.startTime = Date.now()
+      this.startLocation = getLocation?.()
+      this.selecting = hasSelection(e)
       this.isSwiping = false
       this.initialPinchDist = 0
       this.pinchTargetImg = null
@@ -72,8 +76,8 @@ export class ReaderTouchController {
 
     if (e.touches.length === 1) {
       const touch = e.touches[0]
-      const dx = touch.clientX - this.startX
-      const dy = touch.clientY - this.startY
+      const dx = touch.screenX - this.startX
+      const dy = touch.screenY - this.startY
       if (Math.abs(dx) > 10 && Math.abs(dx) > Math.abs(dy)) {
         this.isSwiping = true
       }
@@ -82,37 +86,35 @@ export class ReaderTouchController {
 
   handleTouchEnd = (e: TouchEvent) => {
     const { view, flow } = this.getOptions()
-    if (flow !== 'paginated' || !view) {
-      this.isSwiping = false
-      return
-    }
-
-    const elapsed = Date.now() - this.startTime
     const touch = e.changedTouches[0]
-    if (!touch) return
-
-    const dx = touch.clientX - this.startX
-    const dy = touch.clientY - this.startY
-
-    // Per §6 P2.5: Horizontal swipe of at least 60px in <= 400ms turns pages
-    if (this.isSwiping && elapsed <= 400 && Math.abs(dy) < 50 && Math.abs(dx) >= 60) {
-      if (dx < -60) {
-        view.goRight()
-      } else if (dx > 60) {
-        view.goLeft()
-      }
-    }
-
+    const swiping = this.isSwiping
     this.isSwiping = false
     this.initialPinchDist = 0
     this.pinchTargetImg = null
+    if (flow !== 'paginated' || !view || !touch || !swiping) return
+    if (this.selecting || hasSelection(e) || e.touches.length > 0) return
+
+    const dx = touch.screenX - this.startX
+    const dy = touch.screenY - this.startY
+    if (Date.now() - this.startTime > 500 || Math.abs(dx) < 50 || Math.abs(dy) > Math.abs(dx) * 0.6) return
+
+    const before = this.startLocation
+    const forward = dx < 0
+    window.clearTimeout(this.pendingTurn)
+    // Give foliate's own drag-and-snap a moment; turn only if it didn't move the page.
+    this.pendingTurn = window.setTimeout(() => {
+      const { view: v, getLocation } = this.getOptions()
+      if (!v || (getLocation && getLocation() !== before)) return
+      if (forward) v.goRight()
+      else v.goLeft()
+    }, 450)
   }
 }
 
-export function useReaderTouch({ view, flow, onImageZoom }: UseReaderTouchOptions) {
-  const optionsRef = useRef({ view, flow, onImageZoom })
+export function useReaderTouch({ view, flow, onImageZoom, getLocation }: UseReaderTouchOptions) {
+  const optionsRef = useRef<UseReaderTouchOptions>({ view, flow, onImageZoom, getLocation })
   useEffect(() => {
-    optionsRef.current = { view, flow, onImageZoom }
+    optionsRef.current = { view, flow, onImageZoom, getLocation }
   })
 
   const controllerRef = useRef<ReaderTouchController | null>(null)

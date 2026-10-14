@@ -69,38 +69,59 @@ export function SelectionPopover(props: {
     const timer = setTimeout(() => void define(word, lang).catch(() => {}), 250);
     return () => clearTimeout(timer);
   }, [text, lang]);
-  const width = Math.min(390, window.innerWidth - 16);
-  const left = Math.min(Math.max(anchor.x - width / 2, 8), window.innerWidth - width - 8);
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  const M = 8;
+  const GAP = 10;
+  const width = Math.min(390, vw - M * 2);
+  const left = Math.min(Math.max(anchor.x - width / 2, M), vw - width - M);
   const needed = lookup ? 420 : 130;
-  const above = anchor.top > needed + 56;
-  const pos = above ? { bottom: window.innerHeight - anchor.top + 10 } : { top: anchor.bottom + 10 };
+  const spaceAbove = anchor.top - GAP - M;
+  const spaceBelow = vh - anchor.bottom - GAP - M;
+
+  let above: boolean;
+  let maxHeight: number;
+  let pos: React.CSSProperties;
+  if (lookup && vw < 640 && Math.max(spaceAbove, spaceBelow) < needed) {
+    // Phone, dictionary open, no room beside the selection: dock to the other half.
+    const selectionInTopHalf = (anchor.top + anchor.bottom) / 2 < vh / 2;
+    above = selectionInTopHalf; // docked at the bottom: card on top, tools nearest the thumb
+    maxHeight = Math.round(vh / 2) - M;
+    pos = selectionInTopHalf ? { bottom: M } : { top: M };
+  } else {
+    above = spaceAbove >= needed || (spaceBelow < needed && spaceAbove > spaceBelow);
+    maxHeight = Math.max(140, above ? spaceAbove : spaceBelow);
+    pos = above ? { bottom: vh - anchor.top + GAP } : { top: anchor.bottom + GAP };
+  }
 
   const card = lookup && (
-    <LookupCard
-      key={props.text}
-      text={props.text}
-      tab={lookup}
-      onTab={props.onLookup}
-      lang={props.lang}
-      translateTo={props.translateTo}
-      onTranslateTo={props.onTranslateTo}
-      onSpeak={props.onSpeakText}
-      onClose={() => props.onLookup(null)}
-      onExpand={props.onExpandLookup}
-    />
+    <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+      <LookupCard
+        key={props.text}
+        text={props.text}
+        tab={lookup}
+        onTab={props.onLookup}
+        lang={props.lang}
+        translateTo={props.translateTo}
+        onTranslateTo={props.onTranslateTo}
+        onSpeak={props.onSpeakText}
+        onClose={() => props.onLookup(null)}
+        onExpand={props.onExpandLookup}
+      />
+    </div>
   );
 
   const toggle = (t: LookupTab) => props.onLookup(lookup === t ? null : t);
 
   return (
     <div
-      className="fixed z-50 rounded-[var(--r-lg)] bg-[var(--layer-solid)] text-[var(--text-1)] border border-[var(--stroke)] shadow-[var(--shadow-flyout)] overflow-hidden select-none animate-in fade-in-0 duration-150"
-      style={{ left, width, ...pos }}
+      className="fixed z-50 flex flex-col rounded-[var(--r-lg)] bg-[var(--layer-solid)] text-[var(--text-1)] border border-[var(--stroke)] shadow-[var(--shadow-flyout)] overflow-hidden select-none animate-in fade-in-0 duration-150"
+      style={{ left, width, maxHeight, ...pos }}
     >
       {above && card}
 
       {/* Row 1: 6 Color dots + 4 style selectors */}
-      <div className="flex items-center justify-between px-3 py-2 border-b border-[var(--stroke)] bg-[var(--layer-1)]">
+      <div className="shrink-0 flex items-center justify-between px-3 py-2 border-b border-[var(--stroke)] bg-[var(--layer-1)]">
         <div className="flex items-center gap-2">
           {HIGHLIGHT_COLORS.map((c) => (
             <button
@@ -140,7 +161,7 @@ export function SelectionPopover(props: {
       </div>
 
       {/* Row 2: 9 Action tool icons */}
-      <div className="flex items-center justify-around px-2 py-1.5 bg-[var(--layer-solid)]">
+      <div className="shrink-0 flex items-center justify-around px-2 py-1.5 bg-[var(--layer-solid)]">
         <IconButton
           label={props.hasNote ? 'Edit note' : 'Add note'}
           icon={<StickyNote className={`w-4 h-4 ${props.hasNote ? 'text-[var(--accent)]' : ''}`} />}

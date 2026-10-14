@@ -107,6 +107,9 @@ export default function MangaReader() {
 
   const containerRef = useRef<HTMLDivElement>(null);
   const hudTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Swipe tracking for the paged modes (webtoon scrolls natively).
+  const swipeRef = useRef<{ x: number; y: number; t: number; multi: boolean } | null>(null);
+  const suppressClickRef = useRef(false);
 
   // Session tracking with idle detection
   const fractionRef = useRef<number>(0);
@@ -389,26 +392,27 @@ export default function MangaReader() {
     !loading,
   );
 
-  // Android back button closes transition screen or hud before navigating
+  const exitReader = () => {
+    if (((window.history.state as { idx?: number } | null)?.idx ?? 0) > 0) navigate(-1);
+    else navigate(`/series/${encodeURIComponent(seriesId)}`, { replace: true });
+  };
+  const exitReaderRef = useRef(exitReader);
+  useEffect(() => {
+    exitReaderRef.current = exitReader;
+  });
+
+  // Android back: close the "finished chapter" screen first, otherwise leave the
+  // reader. (Hiding the toolbar on the first press looked like back did nothing.)
   useEffect(() => {
     return registerBackHandler(() => {
       if (isTransitionScreen) {
         setIsTransitionScreen(false);
         return true;
       }
-      if (hudVisible) {
-        setHudVisible(false);
-        return true;
-      }
-      return false;
+      exitReaderRef.current();
+      return true;
     }, 40);
-  }, [isTransitionScreen, hudVisible]);
-
-
-  const exitReader = () => {
-    if (((window.history.state as { idx?: number } | null)?.idx ?? 0) > 0) navigate(-1);
-    else navigate(`/series/${encodeURIComponent(seriesId)}`, { replace: true });
-  };
+  }, [isTransitionScreen]);
 
   // Keyboard navigation
   useEffect(() => {
@@ -448,8 +452,41 @@ export default function MangaReader() {
     }
   };
 
+  // Swipe to turn pages in the paged modes. In RTL manga, swiping right reads forward.
+  const handleTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
+    if (readingMode === 'webtoon') return;
+    const t = e.touches[0];
+    swipeRef.current = t ? { x: t.clientX, y: t.clientY, t: Date.now(), multi: e.touches.length > 1 } : null;
+  };
+  const handleTouchMove = (e: React.TouchEvent<HTMLDivElement>) => {
+    if (swipeRef.current && e.touches.length > 1) swipeRef.current.multi = true;
+  };
+  const handleTouchEnd = (e: React.TouchEvent<HTMLDivElement>) => {
+    const s = swipeRef.current;
+    swipeRef.current = null;
+    const t = e.changedTouches[0];
+    if (!s || !t || s.multi || readingMode === 'webtoon') return;
+    if ((window.visualViewport?.scale ?? 1) > 1.05) return; // pinch-zoomed: let the user pan
+    const dx = t.clientX - s.x;
+    const dy = t.clientY - s.y;
+    if (Date.now() - s.t > 600 || Math.abs(dx) < 50 || Math.abs(dy) > Math.abs(dx) * 0.7) return;
+    // Ignore the click some browsers still fire after a swipe, but only briefly.
+    suppressClickRef.current = true;
+    setTimeout(() => {
+      suppressClickRef.current = false;
+    }, 400);
+    const forward = readingMode === 'paged-rtl' ? dx > 0 : dx < 0;
+    if (forward) goToNextPage();
+    else goToPrevPage();
+    triggerHaptic('light');
+  };
+
   // Tap zones: Left third / Center / Right third
   const handleScreenClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (suppressClickRef.current) {
+      suppressClickRef.current = false;
+      return;
+    }
     const rect = e.currentTarget.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const width = rect.width;
@@ -520,11 +557,13 @@ export default function MangaReader() {
     >
       {/* Top HUD Header */}
       <header
-        className={`absolute top-0 inset-x-0 z-40 bg-black/90 px-3 sm:px-4 py-2 flex items-center justify-between gap-2 text-white transition-all duration-200 border-b border-white/10 ${
+        className={`absolute top-0 inset-x-0 z-40 bg-black/90 px-2 sm:px-4 py-1.5 sm:py-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-white transition-all duration-200 border-b border-white/10 ${
           hudVisible ? 'translate-y-0 opacity-100' : '-translate-y-full opacity-0 pointer-events-none'
         }`}
       >
-        <div className="flex items-center gap-3 min-w-0 flex-1">
+        {/* min-w-11: the back button must never be squeezed under the controls
+            (it was, and the controls' empty area swallowed the tap). */}
+        <div className="flex items-center gap-2 min-w-11 flex-1">
           <IconButton
             icon={<ArrowLeft className="w-5 h-5 text-white" />}
             label="Back to series"
@@ -542,7 +581,7 @@ export default function MangaReader() {
         </div>
 
         {/* Reader settings in header */}
-        <div className="flex flex-wrap items-center justify-end gap-1.5 sm:gap-2">
+        <div className="ml-auto flex flex-wrap items-center justify-end gap-1.5 sm:gap-2">
           <IconButton
             icon={
               pageBookmarked ? (
@@ -608,9 +647,14 @@ export default function MangaReader() {
 
       {/* Main Reader View */}
       <div
-        className="flex-1 w-full h-full flex items-center justify-center overflow-auto"
+        className={`flex-1 w-full h-full flex items-center justify-center overflow-auto ${
+          readingMode !== 'webtoon' && fitMode !== 'original' ? 'touch-pan-y touch-pinch-zoom' : ''
+        }`}
         onWheel={handleWheel}
         onClick={handleScreenClick}
+        onTouchStart={handleTouchStart}
+        onTouchMove={handleTouchMove}
+        onTouchEnd={handleTouchEnd}
       >
         {isTransitionScreen ? (
           /* Chapter Transition Screen */

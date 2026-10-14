@@ -1,0 +1,1590 @@
+This file is a merged representation of a subset of the codebase, containing specifically included files, combined into a single document by Repomix.
+
+================================================================
+File Summary
+================================================================
+
+Purpose:
+--------
+This file contains a packed representation of a subset of the repository's contents that is considered the most important context.
+It is designed to be easily consumable by AI systems for analysis, code review,
+or other automated processes.
+
+File Format:
+------------
+The content is organized as follows:
+1. This summary section
+2. Repository information
+3. Directory structure
+4. Repository files (if enabled)
+5. Multiple file entries, each consisting of:
+  a. A separator line (================)
+  b. The file path (File: path/to/file)
+  c. Another separator line
+  d. The full contents of the file
+  e. A blank line
+
+Usage Guidelines:
+-----------------
+- This file should be treated as read-only. Any changes should be made to the
+  original repository files, not this packed version.
+- When processing this file, use the file path to distinguish
+  between different files in the repository.
+- Be aware that this file may contain sensitive information. Handle it with
+  the same level of security as you would the original repository.
+
+Notes:
+------
+- Some files may have been excluded based on .gitignore rules and Repomix's configuration
+- Binary files are not included in this packed representation. Please refer to the Repository Structure section for a complete list of file paths, including binary files
+- Only files matching these patterns are included: apps/client/src-tauri/**
+- Files matching patterns in .gitignore are excluded
+- Files matching default ignore patterns are excluded
+- Files are sorted by Git change count (files with more changes are at the bottom)
+
+
+================================================================
+Directory Structure
+================================================================
+apps/
+  client/
+    src-tauri/
+      capabilities/
+        default.json
+        desktop.json
+      gen/
+        android/
+          app/
+            src/
+              main/
+                java/
+                  com/
+                    verso/
+                      reader/
+                        MainActivity.kt
+                res/
+                  drawable/
+                    ic_launcher_background.xml
+                  drawable-v24/
+                    ic_launcher_foreground.xml
+                  layout/
+                    activity_main.xml
+                  mipmap-hdpi/
+                    ic_launcher_foreground.png
+                    ic_launcher_round.png
+                    ic_launcher.png
+                  mipmap-mdpi/
+                    ic_launcher_foreground.png
+                    ic_launcher_round.png
+                    ic_launcher.png
+                  mipmap-xhdpi/
+                    ic_launcher_foreground.png
+                    ic_launcher_round.png
+                    ic_launcher.png
+                  mipmap-xxhdpi/
+                    ic_launcher_foreground.png
+                    ic_launcher_round.png
+                    ic_launcher.png
+                  mipmap-xxxhdpi/
+                    ic_launcher_foreground.png
+                    ic_launcher_round.png
+                    ic_launcher.png
+                  values/
+                    colors.xml
+                    strings.xml
+                    themes.xml
+                  values-night/
+                    themes.xml
+                  xml/
+                    file_paths.xml
+                AndroidManifest.xml
+            .gitignore
+            build.gradle.kts
+            proguard-rules.pro
+          buildSrc/
+            src/
+              main/
+                java/
+                  com/
+                    folio/
+                      reader/
+                        kotlin/
+                          BuildTask.kt
+                          RustPlugin.kt
+            build.gradle.kts
+          gradle/
+            wrapper/
+              gradle-wrapper.jar
+              gradle-wrapper.properties
+          .editorconfig
+          .gitignore
+          build.gradle.kts
+          gradle.properties
+          gradlew
+          gradlew.bat
+          settings.gradle
+      icons/
+        128x128.png
+        128x128@2x.png
+        32x32.png
+        icon.icns
+        icon.ico
+        icon.png
+        Square107x107Logo.png
+        Square142x142Logo.png
+        Square150x150Logo.png
+        Square284x284Logo.png
+        Square30x30Logo.png
+        Square310x310Logo.png
+        Square44x44Logo.png
+        Square71x71Logo.png
+        Square89x89Logo.png
+        StoreLogo.png
+      src/
+        lib.rs
+        main.rs
+      .gitignore
+      build.rs
+      Cargo.toml
+      tauri.conf.json
+
+================================================================
+Files
+================================================================
+
+================
+File: apps/client/src-tauri/capabilities/desktop.json
+================
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "desktop",
+  "description": "Desktop-only: custom title bar window controls and window-state persistence",
+  "platforms": ["windows", "macOS", "linux"],
+  "windows": ["main"],
+  "permissions": [
+    "core:window:allow-minimize",
+    "core:window:allow-toggle-maximize",
+    "core:window:allow-close",
+    "core:window:allow-start-dragging",
+    "core:window:allow-set-fullscreen",
+    "core:webview:allow-create-webview-window",
+    "window-state:default"
+  ]
+}
+
+================
+File: apps/client/src-tauri/gen/android/app/src/main/res/drawable/ic_launcher_background.xml
+================
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#3DDC84"
+        android:pathData="M0,0h108v108h-108z" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M9,0L9,108"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M19,0L19,108"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M29,0L29,108"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M39,0L39,108"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M49,0L49,108"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M59,0L59,108"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M69,0L69,108"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M79,0L79,108"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M89,0L89,108"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M99,0L99,108"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M0,9L108,9"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M0,19L108,19"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M0,29L108,29"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M0,39L108,39"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M0,49L108,49"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M0,59L108,59"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M0,69L108,69"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M0,79L108,79"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M0,89L108,89"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M0,99L108,99"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M19,29L89,29"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M19,39L89,39"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M19,49L89,49"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M19,59L89,59"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M19,69L89,69"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M19,79L89,79"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M29,19L29,89"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M39,19L39,89"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M49,19L49,89"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M59,19L59,89"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M69,19L69,89"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M79,19L79,89"
+        android:strokeWidth="0.8"
+        android:strokeColor="#33FFFFFF" />
+</vector>
+
+================
+File: apps/client/src-tauri/gen/android/app/src/main/res/drawable-v24/ic_launcher_foreground.xml
+================
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path android:pathData="M31,63.928c0,0 6.4,-11 12.1,-13.1c7.2,-2.6 26,-1.4 26,-1.4l38.1,38.1L107,108.928l-32,-1L31,63.928z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:endX="85.84757"
+                android:endY="92.4963"
+                android:startX="42.9492"
+                android:startY="49.59793"
+                android:type="linear">
+                <item
+                    android:color="#44000000"
+                    android:offset="0.0" />
+                <item
+                    android:color="#00000000"
+                    android:offset="1.0" />
+            </gradient>
+        </aapt:attr>
+    </path>
+    <path
+        android:fillColor="#FFFFFF"
+        android:fillType="nonZero"
+        android:pathData="M65.3,45.828l3.8,-6.6c0.2,-0.4 0.1,-0.9 -0.3,-1.1c-0.4,-0.2 -0.9,-0.1 -1.1,0.3l-3.9,6.7c-6.3,-2.8 -13.4,-2.8 -19.7,0l-3.9,-6.7c-0.2,-0.4 -0.7,-0.5 -1.1,-0.3C38.8,38.328 38.7,38.828 38.9,39.228l3.8,6.6C36.2,49.428 31.7,56.028 31,63.928h46C76.3,56.028 71.8,49.428 65.3,45.828zM43.4,57.328c-0.8,0 -1.5,-0.5 -1.8,-1.2c-0.3,-0.7 -0.1,-1.5 0.4,-2.1c0.5,-0.5 1.4,-0.7 2.1,-0.4c0.7,0.3 1.2,1 1.2,1.8C45.3,56.528 44.5,57.328 43.4,57.328L43.4,57.328zM64.6,57.328c-0.8,0 -1.5,-0.5 -1.8,-1.2s-0.1,-1.5 0.4,-2.1c0.5,-0.5 1.4,-0.7 2.1,-0.4c0.7,0.3 1.2,1 1.2,1.8C66.5,56.528 65.6,57.328 64.6,57.328L64.6,57.328z"
+        android:strokeWidth="1"
+        android:strokeColor="#00000000" />
+</vector>
+
+================
+File: apps/client/src-tauri/gen/android/app/src/main/res/layout/activity_main.xml
+================
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    tools:context=".MainActivity">
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Hello World!"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintLeft_toLeftOf="parent"
+        app:layout_constraintRight_toRightOf="parent"
+        app:layout_constraintTop_toTopOf="parent" />
+
+</androidx.constraintlayout.widget.ConstraintLayout>
+
+================
+File: apps/client/src-tauri/gen/android/app/src/main/res/values/colors.xml
+================
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="purple_200">#FFBB86FC</color>
+    <color name="purple_500">#FF6200EE</color>
+    <color name="purple_700">#FF3700B3</color>
+    <color name="teal_200">#FF03DAC5</color>
+    <color name="teal_700">#FF018786</color>
+    <color name="black">#FF000000</color>
+    <color name="white">#FFFFFFFF</color>
+</resources>
+
+================
+File: apps/client/src-tauri/gen/android/app/src/main/res/values/themes.xml
+================
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <!-- Base application theme. -->
+    <style name="Theme.folio" parent="Theme.Material3.DayNight.NoActionBar">
+        <!-- Customize your theme here. -->
+    </style>
+</resources>
+
+================
+File: apps/client/src-tauri/gen/android/app/src/main/res/values-night/themes.xml
+================
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <!-- Base application theme. -->
+    <style name="Theme.folio" parent="Theme.Material3.DayNight.NoActionBar">
+        <!-- Customize your theme here. -->
+    </style>
+</resources>
+
+================
+File: apps/client/src-tauri/gen/android/app/src/main/res/xml/file_paths.xml
+================
+<?xml version="1.0" encoding="utf-8"?>
+<paths xmlns:android="http://schemas.android.com/apk/res/android">
+  <external-path name="my_images" path="." />
+  <cache-path name="my_cache_images" path="." />
+</paths>
+
+================
+File: apps/client/src-tauri/gen/android/app/.gitignore
+================
+/src/main/**/generated
+/src/main/jniLibs/**/*.so
+/src/main/assets/tauri.conf.json
+/tauri.build.gradle.kts
+/proguard-tauri.pro
+/tauri.properties
+
+================
+File: apps/client/src-tauri/gen/android/app/proguard-rules.pro
+================
+# Add project specific ProGuard rules here.
+# You can control the set of applied configuration files using the
+# proguardFiles setting in build.gradle.
+#
+# For more details, see
+#   http://developer.android.com/guide/developing/tools/proguard.html
+
+# If your project uses WebView with JS, uncomment the following
+# and specify the fully qualified class name to the JavaScript interface
+# class:
+#-keepclassmembers class fqcn.of.javascript.interface.for.webview {
+#   public *;
+#}
+
+# Uncomment this to preserve the line number information for
+# debugging stack traces.
+#-keepattributes SourceFile,LineNumberTable
+
+# If you keep the line number information, uncomment this to
+# hide the original source file name.
+#-renamesourcefileattribute SourceFile
+
+================
+File: apps/client/src-tauri/gen/android/buildSrc/src/main/java/com/folio/reader/kotlin/BuildTask.kt
+================
+import java.io.File
+import org.apache.tools.ant.taskdefs.condition.Os
+import org.gradle.api.DefaultTask
+import org.gradle.api.GradleException
+import org.gradle.api.logging.LogLevel
+import org.gradle.api.tasks.Input
+import org.gradle.api.tasks.TaskAction
+import javax.inject.Inject
+import org.gradle.process.ExecOperations
+
+abstract class BuildTask : DefaultTask() {
+    @get:Inject
+    abstract val execOperations: ExecOperations
+
+    @Input
+    var rootDirRel: String? = null
+    @Input
+    var projectDir: String? = null
+    @Input
+    var target: String? = null
+    @Input
+    var release: Boolean? = null
+
+    @TaskAction
+    fun assemble() {
+        val executable = """npm""";
+        try {
+            runTauriCli(executable)
+        } catch (e: Exception) {
+            if (Os.isFamily(Os.FAMILY_WINDOWS)) {
+                // Try different Windows-specific extensions
+                val fallbacks = listOf(
+                    "$executable.exe",
+                    "$executable.cmd",
+                    "$executable.bat",
+                )
+
+                var lastException: Exception = e
+                for (fallback in fallbacks) {
+                    try {
+                        runTauriCli(fallback)
+                        return
+                    } catch (fallbackException: Exception) {
+                        lastException = fallbackException
+                    }
+                }
+                throw lastException
+            } else {
+                throw e;
+            }
+        }
+    }
+
+    fun runTauriCli(executable: String) {
+        val rootDirRel = rootDirRel ?: throw GradleException("rootDirRel cannot be null")
+        val target = target ?: throw GradleException("target cannot be null")
+        val release = release ?: throw GradleException("release cannot be null")
+        val args = listOf("run", "--", "tauri", "android", "android-studio-script");
+
+        execOperations.exec {
+            workingDir(File(projectDir, rootDirRel))
+            executable(executable)
+            args(args)
+            if (logger.isEnabled(LogLevel.DEBUG)) {
+                args("-vv")
+            } else if (logger.isEnabled(LogLevel.INFO)) {
+                args("-v")
+            }
+            if (release) {
+                args("--release")
+            }
+            args(listOf("--target", target))
+        }.assertNormalExitValue()
+    }
+}
+
+================
+File: apps/client/src-tauri/gen/android/buildSrc/src/main/java/com/folio/reader/kotlin/RustPlugin.kt
+================
+import com.android.build.api.dsl.ApplicationExtension
+import org.gradle.api.DefaultTask
+import org.gradle.api.Plugin
+import org.gradle.api.Project
+import org.gradle.kotlin.dsl.configure
+import org.gradle.kotlin.dsl.get
+
+const val TASK_GROUP = "rust"
+
+open class Config {
+    lateinit var rootDirRel: String
+}
+
+open class RustPlugin : Plugin<Project> {
+    private lateinit var config: Config
+
+    override fun apply(project: Project) = with(project) {
+        config = extensions.create("rust", Config::class.java)
+
+        val defaultAbiList = listOf("arm64-v8a", "armeabi-v7a", "x86", "x86_64");
+        val abiList = (findProperty("abiList") as? String)?.split(',') ?: defaultAbiList
+
+        val defaultArchList = listOf("arm64", "arm", "x86", "x86_64");
+        val archList = (findProperty("archList") as? String)?.split(',') ?: defaultArchList
+
+        val targetsList = (findProperty("targetList") as? String)?.split(',') ?: listOf("aarch64", "armv7", "i686", "x86_64")
+
+        extensions.configure<ApplicationExtension> {
+            @Suppress("UnstableApiUsage")
+            flavorDimensions.add("abi")
+            productFlavors {
+                create("universal") {
+                    dimension = "abi"
+                    ndk {
+                        abiFilters += abiList
+                    }
+                }
+                defaultArchList.forEachIndexed { index, arch ->
+                    create(arch) {
+                        dimension = "abi"
+                        ndk {
+                            abiFilters.add(defaultAbiList[index])
+                        }
+                    }
+                }
+            }
+        }
+
+        afterEvaluate {
+            for (profile in listOf("debug", "release")) {
+                val profileCapitalized = profile.replaceFirstChar { it.uppercase() }
+                val buildTask = tasks.maybeCreate(
+                    "rustBuildUniversal$profileCapitalized",
+                    DefaultTask::class.java
+                ).apply {
+                    group = TASK_GROUP
+                    description = "Build dynamic library in $profile mode for all targets"
+                }
+
+                tasks["mergeUniversal${profileCapitalized}JniLibFolders"].dependsOn(buildTask)
+
+                for (targetPair in targetsList.withIndex()) {
+                    val targetName = targetPair.value
+                    val targetArch = archList[targetPair.index]
+                    val targetArchCapitalized = targetArch.replaceFirstChar { it.uppercase() }
+                    val targetBuildTask = project.tasks.register(
+                        "rustBuild$targetArchCapitalized$profileCapitalized",
+                        BuildTask::class.java
+                    ) {
+                        group = TASK_GROUP
+                        description = "Build dynamic library in $profile mode for $targetArch"
+                        rootDirRel = config.rootDirRel
+                        projectDir = project.projectDir.path
+                        target = targetName
+                        release = profile == "release"
+                    }
+
+                    buildTask.dependsOn(targetBuildTask)
+                    tasks["merge$targetArchCapitalized${profileCapitalized}JniLibFolders"].dependsOn(
+                        targetBuildTask
+                    )
+                }
+            }
+        }
+    }
+}
+
+================
+File: apps/client/src-tauri/gen/android/buildSrc/build.gradle.kts
+================
+plugins {
+    `kotlin-dsl`
+}
+
+gradlePlugin {
+    plugins {
+        create("pluginsForCoolKids") {
+            id = "rust"
+            implementationClass = "RustPlugin"
+        }
+    }
+}
+
+repositories {
+    google()
+    mavenCentral()
+}
+
+dependencies {
+    compileOnly(gradleApi())
+    implementation("com.android.tools.build:gradle:9.3.1")
+}
+
+================
+File: apps/client/src-tauri/gen/android/gradle/wrapper/gradle-wrapper.properties
+================
+#Tue May 10 19:22:52 CST 2022
+distributionBase=GRADLE_USER_HOME
+distributionUrl=https\://services.gradle.org/distributions/gradle-9.6.1-bin.zip
+distributionPath=wrapper/dists
+zipStorePath=wrapper/dists
+zipStoreBase=GRADLE_USER_HOME
+
+================
+File: apps/client/src-tauri/gen/android/.editorconfig
+================
+# EditorConfig is awesome: https://EditorConfig.org
+
+# top-most EditorConfig file
+root = true
+
+[*]
+indent_style = space
+indent_size = 2
+end_of_line = lf
+charset = utf-8
+trim_trailing_whitespace = false
+insert_final_newline = false
+
+================
+File: apps/client/src-tauri/gen/android/.gitignore
+================
+*.iml
+.gradle
+/local.properties
+/.idea/caches
+/.idea/libraries
+/.idea/modules.xml
+/.idea/workspace.xml
+/.idea/navEditor.xml
+/.idea/assetWizardSettings.xml
+.DS_Store
+build
+/captures
+.externalNativeBuild
+.cxx
+local.properties
+key.properties
+keystore.properties
+
+/.tauri
+/tauri.settings.gradle
+
+================
+File: apps/client/src-tauri/gen/android/gradle.properties
+================
+# Project-wide Gradle settings.
+# IDE (e.g. Android Studio) users:
+# Gradle settings configured through the IDE *will override*
+# any settings specified in this file.
+# For more details on how to configure your build environment visit
+# http://www.gradle.org/docs/current/userguide/build_environment.html
+# Specifies the JVM arguments used for the daemon process.
+# The setting is particularly useful for tweaking memory settings.
+org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
+org.gradle.configuration-cache=true
+# When configured, Gradle will run in incubating parallel mode.
+# This option should only be used with decoupled projects. More details, visit
+# http://www.gradle.org/docs/current/userguide/multi_project_builds.html#sec:decoupled_projects
+# org.gradle.parallel=true
+# Kotlin code style for this project: "official" or "obsolete":
+kotlin.code.style=official
+
+# Our old plugin template had a bug that caused missing `consumer-rules.pro` files
+# so we have to disable it for now.
+# See https://github.com/tauri-apps/tauri/pull/15828#issuecomment-5199937796
+android.proguard.failOnMissingFiles=false
+
+# Keeping Gradle 9 compatible with current plugins
+# TODO: Remove this in v3
+android.builtInKotlin=false
+android.newDsl=false
+
+================
+File: apps/client/src-tauri/gen/android/gradlew
+================
+#!/bin/sh
+
+#
+# Copyright © 2015 the original authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# SPDX-License-Identifier: Apache-2.0
+#
+
+##############################################################################
+#
+#   gradlew start up script for POSIX generated by Gradle.
+#
+#   Important for running:
+#
+#   (1) You need a POSIX-compliant shell to run this script. If your /bin/sh is
+#       noncompliant, but you have some other compliant shell such as ksh or
+#       bash, then to run this script, type that shell name before the whole
+#       command line, like:
+#
+#           ksh gradlew
+#
+#       Busybox and similar reduced shells will NOT work, because this script
+#       requires all of these POSIX shell features:
+#         * functions;
+#         * expansions «$var», «${var}», «${var:-default}», «${var+SET}»,
+#           «${var#prefix}», «${var%suffix}», and «$( cmd )»;
+#         * compound commands having a testable exit status, especially «case»;
+#         * various built-in commands including «command», «set», and «ulimit».
+#
+#   Important for patching:
+#
+#   (2) This script targets any POSIX shell, so it avoids extensions provided
+#       by Bash, Ksh, etc; in particular arrays are avoided.
+#
+#       The "traditional" practice of packing multiple parameters into a
+#       space-separated string is a well documented source of bugs and security
+#       problems, so this is (mostly) avoided, by progressively accumulating
+#       options in "$@", and eventually passing that to Java.
+#
+#       Where the inherited environment variables (DEFAULT_JVM_OPTS, JAVA_OPTS,
+#       and GRADLE_OPTS) rely on word-splitting, this is performed explicitly;
+#       see the in-line comments for details.
+#
+#       There are tweaks for specific operating systems such as AIX, CygWin,
+#       Darwin, MinGW, and NonStop.
+#
+#   (3) This script is generated from the Groovy template
+#       https://github.com/gradle/gradle/blob/3d91ce3b8caaf77ad09f381f43615b715b53f72c/platforms/jvm/plugins-application/src/main/resources/org/gradle/api/internal/plugins/unixStartScript.txt
+#       within the Gradle project.
+#
+#       You can find Gradle at https://github.com/gradle/gradle/.
+#
+##############################################################################
+
+# Attempt to set APP_HOME
+
+# Resolve links: $0 may be a link
+app_path=$0
+
+# Need this for daisy-chained symlinks.
+while
+    APP_HOME=${app_path%"${app_path##*/}"}  # leaves a trailing /; empty if no leading path
+    [ -h "$app_path" ]
+do
+    ls=$( ls -ld "$app_path" )
+    link=${ls#*' -> '}
+    case $link in             #(
+      /*)   app_path=$link ;; #(
+      *)    app_path=$APP_HOME$link ;;
+    esac
+done
+
+# This is normally unused
+# shellcheck disable=SC2034
+APP_BASE_NAME=${0##*/}
+# Discard cd standard output in case $CDPATH is set (https://github.com/gradle/gradle/issues/25036)
+APP_HOME=$( cd -P "${APP_HOME:-./}" > /dev/null && printf '%s\n' "$PWD" ) || exit
+
+# Use the maximum available, or set MAX_FD != -1 to use that value.
+MAX_FD=maximum
+
+warn () {
+    echo "$*"
+} >&2
+
+die () {
+    echo
+    echo "$*"
+    echo
+    exit 1
+} >&2
+
+# OS specific support (must be 'true' or 'false').
+cygwin=false
+msys=false
+darwin=false
+nonstop=false
+case "$( uname )" in                #(
+  CYGWIN* )         cygwin=true  ;; #(
+  Darwin* )         darwin=true  ;; #(
+  MSYS* | MINGW* )  msys=true    ;; #(
+  NONSTOP* )        nonstop=true ;;
+esac
+
+
+
+# Determine the Java command to use to start the JVM.
+if [ -n "$JAVA_HOME" ] ; then
+    if [ -x "$JAVA_HOME/jre/sh/java" ] ; then
+        # IBM's JDK on AIX uses strange locations for the executables
+        JAVACMD=$JAVA_HOME/jre/sh/java
+    else
+        JAVACMD=$JAVA_HOME/bin/java
+    fi
+    if [ ! -x "$JAVACMD" ] ; then
+        die "ERROR: JAVA_HOME is set to an invalid directory: $JAVA_HOME
+
+Please set the JAVA_HOME variable in your environment to match the
+location of your Java installation."
+    fi
+else
+    JAVACMD=java
+    if ! command -v java >/dev/null 2>&1
+    then
+        die "ERROR: JAVA_HOME is not set and no 'java' command could be found in your PATH.
+
+Please set the JAVA_HOME variable in your environment to match the
+location of your Java installation."
+    fi
+fi
+
+# Increase the maximum file descriptors if we can.
+if ! "$cygwin" && ! "$darwin" && ! "$nonstop" ; then
+    case $MAX_FD in #(
+      max*)
+        # In POSIX sh, ulimit -H is undefined. That's why the result is checked to see if it worked.
+        # shellcheck disable=SC2039,SC3045
+        MAX_FD=$( ulimit -H -n ) ||
+            warn "Could not query maximum file descriptor limit"
+    esac
+    case $MAX_FD in  #(
+      '' | soft) :;; #(
+      *)
+        # In POSIX sh, ulimit -n is undefined. That's why the result is checked to see if it worked.
+        # shellcheck disable=SC2039,SC3045
+        ulimit -n "$MAX_FD" ||
+            warn "Could not set maximum file descriptor limit to $MAX_FD"
+    esac
+fi
+
+# Collect all arguments for the java command, stacking in reverse order:
+#   * args from the command line
+#   * the main class name
+#   * -classpath
+#   * -D...appname settings
+#   * --module-path (only if needed)
+#   * DEFAULT_JVM_OPTS, JAVA_OPTS, and GRADLE_OPTS environment variables.
+
+# For Cygwin or MSYS, switch paths to Windows format before running java
+if "$cygwin" || "$msys" ; then
+    APP_HOME=$( cygpath --path --mixed "$APP_HOME" )
+
+    JAVACMD=$( cygpath --unix "$JAVACMD" )
+
+    # Now convert the arguments - kludge to limit ourselves to /bin/sh
+    for arg do
+        if
+            case $arg in                                #(
+              -*)   false ;;                            # don't mess with options #(
+              /?*)  t=${arg#/} t=/${t%%/*}              # looks like a POSIX filepath
+                    [ -e "$t" ] ;;                      #(
+              *)    false ;;
+            esac
+        then
+            arg=$( cygpath --path --ignore --mixed "$arg" )
+        fi
+        # Roll the args list around exactly as many times as the number of
+        # args, so each arg winds up back in the position where it started, but
+        # possibly modified.
+        #
+        # NB: a `for` loop captures its iteration list before it begins, so
+        # changing the positional parameters here affects neither the number of
+        # iterations, nor the values presented in `arg`.
+        shift                   # remove old arg
+        set -- "$@" "$arg"      # push replacement arg
+    done
+fi
+
+
+# Add default JVM options here. You can also use JAVA_OPTS and GRADLE_OPTS to pass JVM options to this script.
+DEFAULT_JVM_OPTS='"-Xmx64m" "-Xms64m"'
+
+# Collect all arguments for the java command:
+#   * DEFAULT_JVM_OPTS, JAVA_OPTS, and optsEnvironmentVar are not allowed to contain shell fragments,
+#     and any embedded shellness will be escaped.
+#   * For example: A user cannot expect ${Hostname} to be expanded, as it is an environment variable and will be
+#     treated as '${Hostname}' itself on the command line.
+
+set -- \
+        "-Dorg.gradle.appname=$APP_BASE_NAME" \
+        -jar "$APP_HOME/gradle/wrapper/gradle-wrapper.jar" \
+        "$@"
+
+# Stop when "xargs" is not available.
+if ! command -v xargs >/dev/null 2>&1
+then
+    die "xargs is not available"
+fi
+
+# Use "xargs" to parse quoted args.
+#
+# With -n1 it outputs one arg per line, with the quotes and backslashes removed.
+#
+# In Bash we could simply go:
+#
+#   readarray ARGS < <( xargs -n1 <<<"$var" ) &&
+#   set -- "${ARGS[@]}" "$@"
+#
+# but POSIX shell has neither arrays nor command substitution, so instead we
+# post-process each arg (as a line of input to sed) to backslash-escape any
+# character that might be a shell metacharacter, then use eval to reverse
+# that process (while maintaining the separation between arguments), and wrap
+# the whole thing up as a single "set" statement.
+#
+# This will of course break if any of these variables contains a newline or
+# an unmatched quote.
+#
+
+eval "set -- $(
+        printf '%s\n' "$DEFAULT_JVM_OPTS $JAVA_OPTS $GRADLE_OPTS" |
+        xargs -n1 |
+        sed ' s~[^-[:alnum:]+,./:=@_]~\\&~g; ' |
+        tr '\n' ' '
+    )" '"$@"'
+
+exec "$JAVACMD" "$@"
+
+================
+File: apps/client/src-tauri/gen/android/gradlew.bat
+================
+@rem
+@rem Copyright 2015 the original author or authors.
+@rem
+@rem Licensed under the Apache License, Version 2.0 (the "License");
+@rem you may not use this file except in compliance with the License.
+@rem You may obtain a copy of the License at
+@rem
+@rem      https://www.apache.org/licenses/LICENSE-2.0
+@rem
+@rem Unless required by applicable law or agreed to in writing, software
+@rem distributed under the License is distributed on an "AS IS" BASIS,
+@rem WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+@rem See the License for the specific language governing permissions and
+@rem limitations under the License.
+@rem
+@rem SPDX-License-Identifier: Apache-2.0
+@rem
+
+@if "%DEBUG%"=="" @echo off
+@rem ##########################################################################
+@rem
+@rem  gradlew startup script for Windows
+@rem
+@rem ##########################################################################
+
+@rem Set local scope for the variables, and ensure extensions are enabled
+setlocal EnableExtensions
+
+set DIRNAME=%~dp0
+if "%DIRNAME%"=="" set DIRNAME=.
+@rem This is normally unused
+set APP_BASE_NAME=%~n0
+set APP_HOME=%DIRNAME%
+
+@rem Resolve any "." and ".." in APP_HOME to make it shorter.
+for %%i in ("%APP_HOME%") do set APP_HOME=%%~fi
+
+@rem Add default JVM options here. You can also use JAVA_OPTS and GRADLE_OPTS to pass JVM options to this script.
+set DEFAULT_JVM_OPTS="-Xmx64m" "-Xms64m"
+
+@rem Find java.exe
+if defined JAVA_HOME goto findJavaFromJavaHome
+
+set JAVA_EXE=java.exe
+%JAVA_EXE% -version >NUL 2>&1
+if %ERRORLEVEL% equ 0 goto execute
+
+echo. 1>&2
+echo ERROR: JAVA_HOME is not set and no 'java' command could be found in your PATH. 1>&2
+echo. 1>&2
+echo Please set the JAVA_HOME variable in your environment to match the 1>&2
+echo location of your Java installation. 1>&2
+
+"%COMSPEC%" /c exit 1
+
+:findJavaFromJavaHome
+set JAVA_HOME=%JAVA_HOME:"=%
+set JAVA_EXE=%JAVA_HOME%/bin/java.exe
+
+if exist "%JAVA_EXE%" goto execute
+
+echo. 1>&2
+echo ERROR: JAVA_HOME is set to an invalid directory: %JAVA_HOME% 1>&2
+echo. 1>&2
+echo Please set the JAVA_HOME variable in your environment to match the 1>&2
+echo location of your Java installation. 1>&2
+
+"%COMSPEC%" /c exit 1
+
+:execute
+@rem Setup the command line
+
+
+
+@rem Execute gradlew
+@rem endlocal doesn't take effect until after the line is parsed and variables are expanded
+@rem which allows us to clear the local environment before executing the java command
+endlocal & "%JAVA_EXE%" %DEFAULT_JVM_OPTS% %JAVA_OPTS% %GRADLE_OPTS% "-Dorg.gradle.appname=%APP_BASE_NAME%" -jar "%APP_HOME%\gradle\wrapper\gradle-wrapper.jar" %* & call :exitWithErrorLevel
+
+:exitWithErrorLevel
+@rem Use "%COMSPEC%" /c exit to allow operators to work properly in scripts
+"%COMSPEC%" /c exit %ERRORLEVEL%
+
+================
+File: apps/client/src-tauri/gen/android/settings.gradle
+================
+include ':app'
+
+apply from: 'tauri.settings.gradle'
+
+================
+File: apps/client/src-tauri/.gitignore
+================
+# Generated by Cargo
+# will have compiled files and executables
+/target/
+/gen/schemas
+
+================
+File: apps/client/src-tauri/build.rs
+================
+fn main() {
+  tauri_build::build()
+}
+
+================
+File: apps/client/src-tauri/gen/android/app/src/main/res/values/strings.xml
+================
+<resources>
+    <string name="app_name">"Verso"</string>
+    <string name="main_activity_title">"Verso"</string>
+</resources>
+
+================
+File: apps/client/src-tauri/gen/android/app/src/main/AndroidManifest.xml
+================
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.VIBRATE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <!-- AndroidTV support -->
+    <uses-feature android:name="android.software.leanback" android:required="false" />
+
+    <application
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:theme="@style/Theme.folio"
+        android:usesCleartextTraffic="${usesCleartextTraffic}">
+        <activity
+            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode"
+            android:launchMode="singleTask"
+            android:label="@string/main_activity_title"
+            android:name=".MainActivity"
+            android:windowSoftInputMode="adjustResize"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+                <!-- AndroidTV support -->
+                <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
+            </intent-filter>
+
+            <!-- Deep link: folio:// -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="folio" />
+            </intent-filter>
+            <!-- tauri-file-associations. AUTO-GENERATED. DO NOT REMOVE. -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <action android:name="android.intent.action.SEND_MULTIPLE" />
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:mimeType="application/pdf" />
+                <data android:pathPattern=".*\\.epub" />
+                <data android:pathPattern=".*\\.mobi" />
+                <data android:pathPattern=".*\\.azw3" />
+                <data android:pathPattern=".*\\.azw" />
+                <data android:pathPattern=".*\\.fb2" />
+                <data android:pathPattern=".*\\.fbz" />
+                <data android:pathPattern=".*\\.cbz" />
+                <data android:pathPattern=".*\\.cbr" />
+                <data android:pathPattern=".*\\.cb7" />
+                <data android:pathPattern=".*\\.pdf" />
+            </intent-filter>
+            
+            <!-- tauri-file-associations. AUTO-GENERATED. DO NOT REMOVE. -->
+        </activity>
+
+        <provider
+          android:name="androidx.core.content.FileProvider"
+          android:authorities="${applicationId}.fileprovider"
+          android:exported="false"
+          android:grantUriPermissions="true">
+          <meta-data
+            android:name="android.support.FILE_PROVIDER_PATHS"
+            android:resource="@xml/file_paths" />
+        </provider>
+    </application>
+</manifest>
+
+================
+File: apps/client/src-tauri/gen/android/build.gradle.kts
+================
+buildscript {
+    repositories {
+        google()
+        mavenCentral()
+    }
+    dependencies {
+        classpath("com.android.tools.build:gradle:9.3.1")
+        classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:2.2.10")
+    }
+}
+
+allprojects {
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+
+tasks.register("clean").configure {
+    delete("build")
+}
+
+================
+File: apps/client/src-tauri/capabilities/default.json
+================
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "enables the default permissions",
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "core:default",
+    "opener:default",
+    "fs:default",
+    "fs:allow-appdata-read-recursive",
+    "fs:allow-appdata-write-recursive",
+    "fs:allow-exists",
+    "fs:allow-mkdir",
+    "fs:allow-read-file",
+    "fs:allow-write-file",
+    "fs:allow-remove",
+    "dialog:default",
+    {
+      "identifier": "http:default",
+      "allow": [{ "url": "https://*" }, { "url": "http://*" }]
+    },
+    "os:default",
+    "notification:default",
+    "deep-link:default"
+  ]
+}
+
+================
+File: apps/client/src-tauri/gen/android/app/src/main/java/com/verso/reader/MainActivity.kt
+================
+package com.verso.reader
+
+import android.graphics.Color
+import android.os.Bundle
+import android.view.View
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+
+class MainActivity : TauriActivity() {
+  override fun onCreate(savedInstanceState: Bundle?) {
+    super.onCreate(savedInstanceState)
+
+    // Android 15+ forces edge-to-edge for apps targeting API 35+, so the WebView
+    // was drawn under the status bar (top bars overlapped the clock) and under
+    // the navigation buttons (bottom tab bar / reader progress hidden). Pad the
+    // content by the system bars, display cutout and keyboard so every screen
+    // fits between them.
+    val content = findViewById<View>(android.R.id.content)
+    ViewCompat.setOnApplyWindowInsetsListener(content) { view, insets ->
+      val bars = insets.getInsets(
+        WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout(),
+      )
+      val ime = insets.getInsets(WindowInsetsCompat.Type.ime())
+      view.setPadding(bars.left, bars.top, bars.right, maxOf(bars.bottom, ime.bottom))
+      WindowInsetsCompat.CONSUMED
+    }
+
+    // The padded areas show the window background: match the app's dark base and
+    // use light status/navigation bar icons on it.
+    window.decorView.setBackgroundColor(Color.parseColor("#0E0F11"))
+    WindowCompat.getInsetsController(window, window.decorView).apply {
+      isAppearanceLightStatusBars = false
+      isAppearanceLightNavigationBars = false
+    }
+  }
+}
+
+================
+File: apps/client/src-tauri/gen/android/app/build.gradle.kts
+================
+import java.util.Properties
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+
+plugins {
+    id("com.android.application")
+    id("org.jetbrains.kotlin.android")
+    id("rust")
+}
+
+// Release signing: keystore.properties (git-ignored) points at a keystore kept
+// outside the repo. Without it, release builds are produced unsigned.
+val keystoreProperties = Properties().apply {
+    val propFile = rootProject.file("keystore.properties")
+    if (propFile.exists()) {
+        propFile.inputStream().use { load(it) }
+    }
+}
+
+val tauriProperties = Properties().apply {
+    val propFile = file("tauri.properties")
+    if (propFile.exists()) {
+        propFile.inputStream().use { load(it) }
+    }
+}
+
+android {
+    // 36 is the newest platform installed locally; 37 would trigger an SDK download.
+    compileSdk = 36
+    namespace = "com.verso.reader"
+    defaultConfig {
+        manifestPlaceholders["usesCleartextTraffic"] = "false"
+        applicationId = "com.verso.reader"
+        minSdk = 24
+        targetSdk = 36
+        versionCode = tauriProperties.getProperty("tauri.android.versionCode", "1").toInt()
+        versionName = tauriProperties.getProperty("tauri.android.versionName", "1.0")
+    }
+    signingConfigs {
+        if (keystoreProperties.containsKey("storeFile")) {
+            create("release") {
+                keyAlias = keystoreProperties["keyAlias"] as String
+                keyPassword = keystoreProperties["keyPassword"] as String
+                storeFile = file(keystoreProperties["storeFile"] as String)
+                storePassword = keystoreProperties["storePassword"] as String
+            }
+        }
+    }
+    buildTypes {
+        getByName("debug") {
+            manifestPlaceholders["usesCleartextTraffic"] = "true"
+            isDebuggable = true
+            isJniDebuggable = true
+            isMinifyEnabled = false
+            packaging {
+                jniLibs.keepDebugSymbols.add("*/arm64-v8a/*.so")
+                jniLibs.keepDebugSymbols.add("*/armeabi-v7a/*.so")
+                jniLibs.keepDebugSymbols.add("*/x86/*.so")
+                jniLibs.keepDebugSymbols.add("*/x86_64/*.so")
+            }
+        }
+        getByName("release") {
+            signingConfigs.findByName("release")?.let { signingConfig = it }
+            optimization {
+               enable = true
+            }
+            proguardFiles(
+                *fileTree(".") {
+                  include("**/*.pro")
+                  exclude("build/**")
+                }.files.toTypedArray()
+            )
+        }
+    }
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_1_8
+        targetCompatibility = JavaVersion.VERSION_1_8
+    }
+    buildFeatures {
+        buildConfig = true
+    }
+}
+
+kotlin {
+    compilerOptions {
+        jvmTarget = JvmTarget.JVM_1_8
+    }
+}
+
+rust {
+    rootDirRel = "../../../"
+}
+
+dependencies {
+    implementation("androidx.webkit:webkit:1.14.0")
+    implementation("androidx.appcompat:appcompat:1.7.1")
+    implementation("androidx.activity:activity-ktx:1.10.1")
+    implementation("com.google.android.material:material:1.12.0")
+    implementation("androidx.lifecycle:lifecycle-process:2.10.0")
+    testImplementation("junit:junit:4.13.2")
+    androidTestImplementation("androidx.test.ext:junit:1.1.4")
+    androidTestImplementation("androidx.test.espresso:espresso-core:3.5.0")
+}
+
+apply(from = file("tauri.build.gradle.kts"))
+
+================
+File: apps/client/src-tauri/src/main.rs
+================
+// Prevents additional console window on Windows in release, DO NOT REMOVE!!
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
+fn main() {
+  verso_lib::run();
+}
+
+================
+File: apps/client/src-tauri/tauri.conf.json
+================
+{
+  "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
+  "productName": "Verso",
+  "version": "0.1.0",
+  "identifier": "com.verso.reader",
+  "build": {
+    "frontendDist": "../dist",
+    "devUrl": "http://localhost:5173",
+    "beforeDevCommand": "pnpm dev",
+    "beforeBuildCommand": "pnpm build"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Verso",
+        "width": 1200,
+        "height": 800,
+        "minWidth": 900,
+        "minHeight": 600,
+        "resizable": true,
+        "fullscreen": false,
+        "decorations": false,
+        "center": true
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self' asset:; frame-src 'self' blob: asset: data:; child-src 'self' blob:; img-src 'self' asset: https: http: data: blob:; script-src 'self' 'unsafe-eval' 'unsafe-inline'; worker-src 'self' blob:; style-src 'self' 'unsafe-inline' blob:; font-src 'self' data: blob:; connect-src 'self' https: http: ws: wss: blob: data:; media-src 'self' asset: blob: data:;"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "fileAssociations": [
+      {
+        "ext": [
+          "epub",
+          "mobi",
+          "azw3",
+          "azw",
+          "fb2",
+          "fbz",
+          "cbz",
+          "cbr",
+          "cb7",
+          "pdf"
+        ],
+        "name": "eBook or Comic",
+        "description": "eBook or Comic file",
+        "role": "Viewer"
+      }
+    ],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "windows": {
+      "nsis": {
+        "installerIcon": "icons/icon.ico"
+      }
+    }
+  }
+}
+
+================
+File: apps/client/src-tauri/src/lib.rs
+================
+use tauri::{Emitter, Manager};
+
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
+pub fn run() {
+  #[allow(unused_mut)]
+  let mut builder = tauri::Builder::default()
+    .plugin(tauri_plugin_log::Builder::default().build())
+    .plugin(tauri_plugin_opener::init())
+    .plugin(tauri_plugin_fs::init())
+    .plugin(tauri_plugin_dialog::init())
+    .plugin(tauri_plugin_http::init())
+    .plugin(tauri_plugin_os::init())
+    .plugin(tauri_plugin_notification::init())
+    .plugin(tauri_plugin_deep_link::init());
+
+  #[cfg(desktop)]
+  {
+    builder = builder.plugin(tauri_plugin_window_state::Builder::default().build());
+    builder = builder.plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+      if let Some(win) = app.get_webview_window("main") {
+        let _ = win.set_focus();
+        let _ = win.unminimize();
+      }
+      for arg in args.into_iter().skip(1) {
+        if !arg.starts_with('-') {
+          let _ = app.emit("verso://file-open", arg);
+        }
+      }
+    }));
+  }
+
+  builder
+    .setup(|app| {
+      #[cfg(desktop)]
+      {
+        let args: Vec<String> = std::env::args().collect();
+        for arg in args.into_iter().skip(1) {
+          if !arg.starts_with('-') {
+            let _ = app.emit("verso://file-open", arg);
+          }
+        }
+      }
+      Ok(())
+    })
+    .run(tauri::generate_context!())
+    .expect("error while building tauri application");
+}
+
+================
+File: apps/client/src-tauri/Cargo.toml
+================
+[package]
+name = "verso"
+version = "0.1.0"
+description = "Verso eBook & Manga Reader"
+authors = ["Verso Team"]
+edition = "2021"
+
+[lib]
+name = "verso_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+serde_json = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+log = "0.4"
+tauri = { version = "2", features = [] }
+tauri-plugin-log = "2"
+tauri-plugin-opener = "2"
+tauri-plugin-fs = "2"
+tauri-plugin-dialog = "2"
+tauri-plugin-http = "2"
+tauri-plugin-os = "2"
+tauri-plugin-notification = "2"
+tauri-plugin-deep-link = "2"
+
+# Desktop-only plugins (they don't build for Android/iOS).
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+tauri-plugin-single-instance = "2"
+tauri-plugin-window-state = "2"
+
+# Dependencies (rustls, reqwest, image decoding) are very slow when unoptimised,
+# and every native HTTP request in `tauri dev` goes through them. Optimise deps in
+# dev while keeping the app crate itself fast to rebuild.
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.release]
+opt-level = 3
+panic = "abort"
+strip = true
+
+
+
+
+
+================================================================
+End of Codebase
+================================================================

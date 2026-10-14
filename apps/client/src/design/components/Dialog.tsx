@@ -1,9 +1,11 @@
-import React, { type ReactNode } from 'react';
+import React, { useEffect, useRef, type ReactNode } from 'react';
 import * as RadixDialog from '@radix-ui/react-dialog';
 import { X } from 'lucide-react';
 import { clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { IconButton } from './IconButton';
+import { registerBackHandler } from '../../lib/backStack';
+import { isAndroidDevice, isTauri } from '../../lib/tauri';
 
 export interface DialogProps {
   open: boolean;
@@ -30,6 +32,17 @@ export const Dialog: React.FC<DialogProps> = ({
     onOpenChange?.(isOpen);
     if (!isOpen) onClose?.();
   };
+
+  // Android back closes the dialog instead of leaving the page behind it.
+  const closeRef = useRef(handleOpenChange);
+  closeRef.current = handleOpenChange;
+  useEffect(() => {
+    if (!open || !isTauri() || !isAndroidDevice()) return;
+    return registerBackHandler(() => {
+      closeRef.current(false);
+      return true;
+    }, 60);
+  }, [open]);
 
   return (
     <RadixDialog.Root open={open} onOpenChange={handleOpenChange}>

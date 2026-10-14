@@ -2,6 +2,7 @@ import { net } from '../lib/net';
 import { cachedJson } from '../lib/apiCache';
 import type {
   CatalogEntry,
+  CatalogFilter,
   CatalogFormat,
   CatalogPage,
   CatalogSection,
@@ -129,11 +130,60 @@ function parseSubjectWork(work: OpenLibrarySubjectWork): CatalogEntry {
   };
 }
 
+const OPEN_LIBRARY_FILTERS: CatalogFilter[] = [
+  {
+    id: 'downloadable',
+    label: 'Availability',
+    options: [
+      { value: '', label: 'All titles' },
+      { value: '1', label: 'Free to download', hint: 'Only titles Verso can download (public domain).' },
+    ],
+  },
+  {
+    id: 'language',
+    label: 'Language',
+    options: [
+      { value: '', label: 'Any language', hint: 'Applies to searches.' },
+      { value: 'eng', label: 'English' },
+      { value: 'fre', label: 'French' },
+      { value: 'ger', label: 'German' },
+      { value: 'spa', label: 'Spanish' },
+      { value: 'hin', label: 'Hindi' },
+      { value: 'jpn', label: 'Japanese' },
+    ],
+  },
+  {
+    id: 'sort',
+    label: 'Sort',
+    options: [
+      { value: '', label: 'Most relevant', hint: 'Applies to searches.' },
+      { value: 'new', label: 'Newest' },
+      { value: 'old', label: 'Oldest' },
+      { value: 'rating', label: 'Top rated' },
+      { value: 'editions', label: 'Most editions' },
+    ],
+  },
+];
+
+function openLibrarySearchParams(f?: Record<string, string>): string {
+  let s = '';
+  if (f?.downloadable) s += '&has_fulltext=true';
+  if (f?.language) s += `&language=${encodeURIComponent(f.language)}`;
+  if (f?.sort) s += `&sort=${encodeURIComponent(f.sort)}`;
+  return s;
+}
+
+/** "Free to download" keeps only titles this app can actually fetch. */
+function keepDownloadable(items: CatalogEntry[], f?: Record<string, string>): CatalogEntry[] {
+  return f?.downloadable ? items.filter((i) => (i.formats?.length ?? 0) > 0) : items;
+}
+
 export class OpenLibrarySource implements CatalogSource {
   id = 'openlibrary';
   name = 'Open Library';
   icon = 'BookOpen';
   kind = 'books' as const;
+  filters = OPEN_LIBRARY_FILTERS;
 
   async sections(): Promise<CatalogSection[]> {
     return [
@@ -147,7 +197,7 @@ export class OpenLibrarySource implements CatalogSource {
     ];
   }
 
-  async browse(sectionId: string, cursor?: string): Promise<CatalogPage> {
+  async browse(sectionId: string, cursor?: string, filters?: Record<string, string>): Promise<CatalogPage> {
     const limit = 24;
     const offset = cursor ? parseInt(cursor, 10) : 0;
 
@@ -167,7 +217,7 @@ export class OpenLibrarySource implements CatalogSource {
       const sliced = all.slice(offset, offset + limit);
       const next = offset + limit < all.length ? String(offset + limit) : undefined;
       return {
-        items: sliced.map(parseOpenLibraryDoc),
+        items: keepDownloadable(sliced.map(parseOpenLibraryDoc), filters),
         next,
       };
     }
@@ -182,7 +232,9 @@ export class OpenLibrarySource implements CatalogSource {
     };
 
     const subject = subjectMap[sectionId] || sectionId;
-    const url = `https://openlibrary.org/subjects/${subject}.json?limit=${limit}&offset=${offset}`;
+    const url = `https://openlibrary.org/subjects/${subject}.json?limit=${limit}&offset=${offset}${
+      filters?.downloadable ? '&ebooks=true' : ''
+    }`;
 
     const data = await cachedJson<OpenLibrarySubjectResponse>(
       url,
@@ -194,17 +246,17 @@ export class OpenLibrarySource implements CatalogSource {
       { freshMs: 60 * 60_000 },
     );
 
-    const items = (data.works || []).map(parseSubjectWork);
+    const items = keepDownloadable((data.works || []).map(parseSubjectWork), filters);
     const hasMore = offset + limit < (data.work_count || 0);
     const next = hasMore ? String(offset + limit) : undefined;
 
     return { items, next };
   }
 
-  async search(query: string, cursor?: string): Promise<CatalogPage> {
+  async search(query: string, cursor?: string, filters?: Record<string, string>): Promise<CatalogPage> {
     const limit = 24;
     const page = cursor ? parseInt(cursor, 10) : 1;
-    const url = `https://openlibrary.org/search.json?q=${encodeURIComponent(query.trim())}&page=${page}&limit=${limit}&fields=key,title,author_name,cover_i,ebook_access,has_fulltext,id_project_gutenberg,ia,first_publish_year,subject,language`;
+    const url = `https://openlibrary.org/search.json?q=${encodeURIComponent(query.trim())}&page=${page}&limit=${limit}&fields=key,title,author_name,cover_i,ebook_access,has_fulltext,id_project_gutenberg,ia,first_publish_year,subject,language${openLibrarySearchParams(filters)}`;
 
     const data = await cachedJson<OpenLibrarySearchResponse>(
       url,
@@ -216,7 +268,7 @@ export class OpenLibrarySource implements CatalogSource {
       { freshMs: 30 * 60_000 },
     );
 
-    const items = (data.docs || []).map(parseOpenLibraryDoc);
+    const items = keepDownloadable((data.docs || []).map(parseOpenLibraryDoc), filters);
     const hasMore = page * limit < (data.numFound || 0);
     const next = hasMore ? String(page + 1) : undefined;
 

@@ -52,6 +52,10 @@ export interface CatalogSource {
   kind: 'books' | 'manga';
   /** Filters shown in the Store for this source; values are passed to browse/search. */
   filters?: CatalogFilter[];
+  /** Shown under the results once there are no more pages (e.g. a limited public feed). */
+  notice?: { text: string; linkLabel?: string; url?: string };
+  /** The source accepts a sign-in (stored only on this device), e.g. a membership email. */
+  signIn?: { label: string; usernameLabel: string; help: string };
   sections(): Promise<CatalogSection[]>;
   browse(sectionId: string, cursor?: string, filters?: Record<string, string>): Promise<CatalogPage>;
   search(

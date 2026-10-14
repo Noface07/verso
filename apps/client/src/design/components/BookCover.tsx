@@ -3,6 +3,7 @@ import { Heart, Check } from 'lucide-react';
 import { clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { db } from '../../db';
+import { net } from '../../lib/net';
 
 export interface BookCoverProps {
   id: string;
@@ -34,17 +35,22 @@ interface CoverEntry {
 const coverUrls = new Map<string, CoverEntry>();
 const COVER_URL_GRACE_MS = 30_000;
 
-function acquireCoverUrl(id: string, coverHash: string): Promise<string | null> {
+function acquireCover(id: string, coverHash: string): CoverEntry {
   const key = `${id}:${coverHash}`;
   let entry = coverUrls.get(key);
   if (!entry) {
-    entry = {
-      refs: 0,
-      url: db.covers
-        .get(id)
-        .then((cover) => (cover ? URL.createObjectURL(cover.blob) : null))
-        .catch(() => null),
-    };
+    const created: CoverEntry = { refs: 0, url: Promise.resolve(null) };
+    // A cover that isn't stored yet (e.g. still syncing) must not stay cached as
+    // "none", or the card keeps its placeholder after the cover arrives.
+    created.url = db.covers
+      .get(id)
+      .then((cover) => (cover ? URL.createObjectURL(cover.blob) : null))
+      .catch(() => null)
+      .then((url) => {
+        if (!url && coverUrls.get(key) === created) coverUrls.delete(key);
+        return url;
+      });
+    entry = created;
     coverUrls.set(key, entry);
   }
   if (entry.revokeTimer) {
@@ -52,37 +58,63 @@ function acquireCoverUrl(id: string, coverHash: string): Promise<string | null> 
     entry.revokeTimer = undefined;
   }
   entry.refs++;
-  return entry.url;
+  return entry;
 }
 
-function releaseCoverUrl(id: string, coverHash: string): void {
-  const key = `${id}:${coverHash}`;
-  const entry = coverUrls.get(key);
-  if (!entry) return;
+function releaseCover(key: string, entry: CoverEntry): void {
   entry.refs--;
   if (entry.refs > 0) return;
   entry.revokeTimer = setTimeout(() => {
-    coverUrls.delete(key);
+    if (coverUrls.get(key) === entry) coverUrls.delete(key);
     void entry.url.then((u) => u && URL.revokeObjectURL(u));
   }, COVER_URL_GRACE_MS);
 }
 
+// When a cover is written (sync download, metadata edit, rebuilt from the book),
+// drop cached URLs for that book so mounted covers reload it.
+const coverListeners = new Set<(id: string) => void>();
+function coverChanged(id: string): void {
+  for (const key of [...coverUrls.keys()]) {
+    if (key.startsWith(`${id}:`)) coverUrls.delete(key);
+  }
+  coverListeners.forEach((l) => l(id));
+}
+db.covers.hook('creating', (key, obj, trans) => {
+  trans.on('complete', () => coverChanged(String(obj.id ?? key)));
+});
+db.covers.hook('updating', (_mods, key, _obj, trans) => {
+  trans.on('complete', () => coverChanged(String(key)));
+});
+
 /** Object URL for a stored cover. Pass `enabled: false` to defer loading (e.g. off-screen). */
 export function useCoverBlobUrl(id: string, coverHash?: string | null, enabled = true) {
   const [loaded, setLoaded] = useState<{ key: string; url: string | null } | null>(null);
+  const [version, setVersion] = useState(0);
   const key = coverHash ? `${id}:${coverHash}` : null;
+
+  useEffect(() => {
+    const onChange = (changed: string) => {
+      if (changed === id) setVersion((v) => v + 1);
+    };
+    coverListeners.add(onChange);
+    return () => {
+      coverListeners.delete(onChange);
+    };
+  }, [id]);
 
   useEffect(() => {
     if (!coverHash || !enabled) return;
     let alive = true;
-    void acquireCoverUrl(id, coverHash).then((url) => {
-      if (alive) setLoaded({ key: `${id}:${coverHash}`, url });
+    const entryKey = `${id}:${coverHash}`;
+    const entry = acquireCover(id, coverHash);
+    void entry.url.then((url) => {
+      if (alive) setLoaded({ key: entryKey, url });
     });
     return () => {
       alive = false;
-      releaseCoverUrl(id, coverHash);
+      releaseCover(entryKey, entry);
     };
-  }, [id, coverHash, enabled]);
+  }, [id, coverHash, enabled, version]);
 
   return key && loaded?.key === key ? loaded.url : null;
 }
@@ -128,6 +160,20 @@ export const BookCover: React.FC<BookCoverProps> = ({
   const nearViewport = useNearViewport(rootRef);
   const blobCoverUrl = useCoverBlobUrl(id, coverHash, nearViewport && !coverUrlProp);
   const coverUrl = coverUrlProp || blobCoverUrl;
+  // Some hosts refuse covers to a plain <img> (anti-hotlinking, ngrok's warning page).
+  // Retry once through the app's HTTP client and show the result as a blob.
+  const [fallback, setFallback] = useState<{ src: string; url: string } | null>(null);
+  const triedFallback = useRef<string | null>(null);
+  const shownCoverUrl = fallback && fallback.src === coverUrl ? fallback.url : coverUrl;
+  const retryCover = () => {
+    const src = coverUrl;
+    if (!src || !/^https?:/i.test(src) || triedFallback.current === src) return;
+    triedFallback.current = src;
+    void net
+      .loadProtectedImage(src)
+      .then((url) => setFallback({ src, url }))
+      .catch(() => {});
+  };
   const hue = parseInt(id.slice(0, 6), 16) % 360;
   const fallbackBg = `hsl(${hue} 35% 32%)`;
 
@@ -163,8 +209,9 @@ export const BookCover: React.FC<BookCoverProps> = ({
       {/* Cover Image or Fallback */}
       {coverUrl ? (
         <img
-          src={coverUrl}
+          src={shownCoverUrl ?? undefined}
           alt={title}
+          onError={retryCover}
           loading="lazy"
           decoding="async"
           draggable={false}

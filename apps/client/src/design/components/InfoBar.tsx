@@ -41,13 +41,15 @@ export const InfoBar: React.FC<InfoBarProps> = ({
       role="alert"
       className={twMerge(
         clsx(
-          'flex items-start justify-between gap-3 p-3 rounded-[var(--r-md)] border text-sm text-[var(--text-1)] shadow-xs animate-in fade-in-0 duration-150',
+          // Wraps, so on narrow screens the action moves under the message instead
+          // of running off the edge.
+          'flex flex-wrap items-start justify-between gap-x-3 gap-y-2 p-3 rounded-[var(--r-md)] border text-sm text-[var(--text-1)] shadow-xs animate-in fade-in-0 duration-150',
           borders[severity],
           className,
         ),
       )}
     >
-      <div className="flex items-start gap-2.5 grow">
+      <div className="flex items-start gap-2.5 grow basis-56 min-w-0">
         <span className="mt-0.5">{icons[severity]}</span>
         <div className="grow">
           {title && <div className="font-semibold text-sm mb-0.5">{title}</div>}
@@ -55,7 +57,7 @@ export const InfoBar: React.FC<InfoBarProps> = ({
         </div>
       </div>
 
-      <div className="flex items-center gap-2 shrink-0">
+      <div className="flex items-center gap-2 shrink-0 ml-auto">
         {action}
         {onClose && (
           <button

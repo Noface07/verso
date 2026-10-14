@@ -1,0 +1,139 @@
+diff --git a/apps/client/src/lib/net.ts b/apps/client/src/lib/net.ts
+--- a/apps/client/src/lib/net.ts
++++ b/apps/client/src/lib/net.ts
+@@ -134,6 +134,13 @@
+     if (!headers.has('Referer')) {
+       headers.set('Referer', 'https://mangapill.com/');
+     }
+   }
+ 
++  // ngrok's free tunnels answer browser-like requests with an HTML warning page
++  // instead of the real response (self-hosted Suwayomi/Komga behind ngrok broke on
++  // phones). This header skips that page.
++  if (/(^|\.)ngrok(-free)?\.(app|dev|io)$/.test(targetHost)) {
++    headers.set('ngrok-skip-browser-warning', '1');
++  }
++
+   if (!isTauri && isExternalHttp) {
+     const serverUrl = await getServerUrl();
+diff --git a/apps/client/src/sources/suwayomi.ts b/apps/client/src/sources/suwayomi.ts
+--- a/apps/client/src/sources/suwayomi.ts
++++ b/apps/client/src/sources/suwayomi.ts
+@@ -1,4 +1,5 @@
+ import { net } from '../lib/net';
+ import { cachedJson } from '../lib/apiCache';
+ import { db } from '../db';
++import { isTauri } from '../lib/tauri';
+ import type {
+@@ -103,10 +104,17 @@
+     return `${this.baseUrl}${cleanPath}`;
+   }
+ 
++  // In the apps, use native HTTP (net.fetch): no CORS limits, and it adds the header
++  // that skips ngrok's browser warning page. On Android the server is usually reached
++  // through such a tunnel, and that page made every GET (source list, popular,
++  // chapters) fail while the GraphQL POSTs still worked.
+   private getFetch(): (input: string | URL, init?: RequestInit) => Promise<Response> {
+-    return typeof window !== 'undefined' && typeof window.fetch === 'function'
+-      ? (input, init) => window.fetch(input, init)
+-      : (input, init) => net.fetch(input, init);
++    if (isTauri() || typeof window === 'undefined' || typeof window.fetch !== 'function') {
++      return (input, init) => net.fetch(input, init);
++    }
++    return (input, init) => window.fetch(input, init);
+   }
+ 
+   async getInstalledExtensions(forceRefresh = false): Promise<SuwayomiSourceInfo[]> {
+@@ -133,6 +141,6 @@
+   async getExtensionList(): Promise<SuwayomiExtension[]> {
+     const url = `${this.baseUrl}/api/graphql`;
+     try {
+-      const fetchImpl = typeof window !== 'undefined' && typeof window.fetch === 'function' ? window.fetch.bind(window) : net.fetch;
++      const fetchImpl = this.getFetch();
+       const res = await fetchImpl(url, {
+         method: 'POST',
+@@ -223,6 +231,6 @@
+   async installExtension(pkgName: string): Promise<boolean> {
+     const url = `${this.baseUrl}/api/graphql`;
+     try {
+-      const fetchImpl = typeof window !== 'undefined' && typeof window.fetch === 'function' ? window.fetch.bind(window) : net.fetch;
++      const fetchImpl = this.getFetch();
+       const res = await fetchImpl(url, {
+         method: 'POST',
+@@ -258,6 +266,6 @@
+   async uninstallExtension(pkgName: string): Promise<boolean> {
+     const url = `${this.baseUrl}/api/graphql`;
+     try {
+-      const fetchImpl = typeof window !== 'undefined' && typeof window.fetch === 'function' ? window.fetch.bind(window) : net.fetch;
++      const fetchImpl = this.getFetch();
+       const res = await fetchImpl(url, {
+         method: 'POST',
+@@ -340,10 +348,12 @@
+         : defaultSourceId;
+ 
+     if (!sourceId) {
+-      return {
+-        items: [],
+-        next: undefined,
+-      };
++      // Used to show an empty "No books" page, which hid the real problem.
++      throw new Error(
++        `Couldn't get the list of installed sources from your Suwayomi server (${this.baseUrl}). ` +
++          'Check that it is running and reachable from this device, and that at least one extension is installed.',
++      );
+     }
+     this.lastBrowsedSourceId = sourceId;
+ 
+diff --git a/apps/client/src/design/components/BookCover.tsx b/apps/client/src/design/components/BookCover.tsx
+--- a/apps/client/src/design/components/BookCover.tsx
++++ b/apps/client/src/design/components/BookCover.tsx
+@@ -3,4 +3,5 @@
+ import { clsx } from 'clsx';
+ import { twMerge } from 'tailwind-merge';
+ import { db } from '../../db';
++import { net } from '../../lib/net';
+ 
+@@ -165,6 +166,22 @@
+   const blobCoverUrl = useCoverBlobUrl(id, coverHash, nearViewport && !coverUrlProp);
+   const coverUrl = coverUrlProp || blobCoverUrl;
++  // Some hosts refuse covers to a plain <img> (anti-hotlinking, ngrok's warning page).
++  // Retry once through the app's HTTP client and show the result as a blob.
++  const [fallback, setFallback] = useState<{ src: string; url: string } | null>(null);
++  const triedFallback = useRef<string | null>(null);
++  const shownCoverUrl = fallback && fallback.src === coverUrl ? fallback.url : coverUrl;
++  const retryCover = () => {
++    const src = coverUrl;
++    if (!src || !/^https?:/i.test(src) || triedFallback.current === src) return;
++    triedFallback.current = src;
++    void net
++      .loadProtectedImage(src)
++      .then((url) => setFallback({ src, url }))
++      .catch(() => {});
++  };
+   const hue = parseInt(id.slice(0, 6), 16) % 360;
+   const fallbackBg = `hsl(${hue} 35% 32%)`;
+@@ -198,7 +215,8 @@
+       {coverUrl ? (
+         <img
+-          src={coverUrl}
++          src={shownCoverUrl ?? undefined}
+           alt={title}
++          onError={retryCover}
+           loading="lazy"
+           decoding="async"
+           draggable={false}
+diff --git a/apps/client/src/pages/Store.tsx b/apps/client/src/pages/Store.tsx
+--- a/apps/client/src/pages/Store.tsx
++++ b/apps/client/src/pages/Store.tsx
+@@ -1310,11 +1310,8 @@
+                     {ext.iconUrl ? (
+                       <img
+-                        src={
+-                          activeSource instanceof SuwayomiSource
+-                            ? `${activeSource.baseUrl}${ext.iconUrl.startsWith('/') ? '' : '/'}${ext.iconUrl}`
+-                            : ext.iconUrl
+-                        }
++                        // Already absolute (resolved in SuwayomiSource); prefixing the server again broke it.
++                        src={ext.iconUrl}
+                         alt={ext.name}
+                         className="w-8 h-8 rounded-[var(--r-sm)] object-contain bg-[var(--layer-3)] shrink-0"

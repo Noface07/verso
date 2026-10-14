@@ -1,0 +1,872 @@
+diff --git a/apps/client/src/main.tsx b/apps/client/src/main.tsx
+--- a/apps/client/src/main.tsx
++++ b/apps/client/src/main.tsx
+@@ -1,4 +1,4 @@
+-import { useEffect, lazy, Suspense } from 'react'
++import { useEffect, useRef, lazy, Suspense } from 'react'
+ import { StrictMode } from 'react'
+ import { createRoot } from 'react-dom/client'
+ import { HashRouter, Route, Routes, useNavigate } from 'react-router-dom'
+@@ -36,29 +36,36 @@
+ function AppRoutes() {
+   const navigate = useNavigate()
++  // navigate() gets a new identity on every route change. Reading it through a ref
++  // keeps the native listeners (Android back, file open) registered once; re-adding
++  // them on each navigation left gaps where back fell through to Android (app exit).
++  const navigateRef = useRef(navigate)
++  useEffect(() => {
++    navigateRef.current = navigate
++  })
+   useEffect(() => {
+-    const cleanupDesktop = initTauriDesktopIntegration((path) => navigate(path))
++    const cleanupDesktop = initTauriDesktopIntegration((path) => navigateRef.current(path))
+     const cleanupAndroid = initAndroidIntegration(
+-      (path) => navigate(path),
++      (path) => navigateRef.current(path),
+       () => {
+         // Nothing left to close: go back a page, then to Home, then leave the app.
+         const idx = (window.history.state as { idx?: number } | null)?.idx ?? 0
+         if (idx > 0) {
+-          navigate(-1)
++          navigateRef.current(-1)
+           return
+         }
+         if ((window.location.hash.replace(/^#/, '') || '/') !== '/') {
+-          navigate('/', { replace: true })
++          navigateRef.current('/', { replace: true })
+           return
+         }
+         void import('@tauri-apps/plugin-process').then(({ exit }) => exit(0))
+       },
+     )
+     return () => {
+       cleanupDesktop()
+       cleanupAndroid()
+     }
+-  }, [navigate])
++  }, [])
+ 
+   return (
+diff --git a/apps/client/src/features/manga/MangaReader.tsx b/apps/client/src/features/manga/MangaReader.tsx
+--- a/apps/client/src/features/manga/MangaReader.tsx
++++ b/apps/client/src/features/manga/MangaReader.tsx
+@@ -95,4 +95,7 @@
+   const containerRef = useRef<HTMLDivElement>(null);
+   const hudTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
++  // Swipe tracking for the paged modes (webtoon scrolls natively).
++  const swipeRef = useRef<{ x: number; y: number; t: number; multi: boolean } | null>(null);
++  const suppressClickRef = useRef(false);
+ 
+   // Session tracking with idle detection
+@@ -360,27 +363,30 @@
+     !loading,
+   );
+ 
+-  // Android back button closes transition screen or hud before navigating
+-  useEffect(() => {
+-    return registerBackHandler(() => {
+-      if (isTransitionScreen) {
+-        setIsTransitionScreen(false);
+-        return true;
+-      }
+-      if (hudVisible) {
+-        setHudVisible(false);
+-        return true;
+-      }
+-      return false;
+-    }, 40);
+-  }, [isTransitionScreen, hudVisible]);
+-
+-
+   const exitReader = () => {
+     if (((window.history.state as { idx?: number } | null)?.idx ?? 0) > 0) navigate(-1);
+     else navigate(`/series/${encodeURIComponent(seriesId)}`, { replace: true });
+   };
++  const exitReaderRef = useRef(exitReader);
++  useEffect(() => {
++    exitReaderRef.current = exitReader;
++  });
++
++  // Android back: close the "finished chapter" screen first, otherwise leave the
++  // reader. (Hiding the toolbar on the first press looked like back did nothing.)
++  useEffect(() => {
++    return registerBackHandler(() => {
++      if (isTransitionScreen) {
++        setIsTransitionScreen(false);
++        return true;
++      }
++      exitReaderRef.current();
++      return true;
++    }, 40);
++  }, [isTransitionScreen]);
+ 
+   // Keyboard navigation
+@@ -421,6 +427,40 @@
+-  // Tap zones: Left third / Center / Right third
++  // Swipe to turn pages in the paged modes. In RTL manga, swiping right reads forward.
++  const handleTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
++    if (readingMode === 'webtoon') return;
++    const t = e.touches[0];
++    swipeRef.current = t ? { x: t.clientX, y: t.clientY, t: Date.now(), multi: e.touches.length > 1 } : null;
++  };
++  const handleTouchMove = (e: React.TouchEvent<HTMLDivElement>) => {
++    if (swipeRef.current && e.touches.length > 1) swipeRef.current.multi = true;
++  };
++  const handleTouchEnd = (e: React.TouchEvent<HTMLDivElement>) => {
++    const s = swipeRef.current;
++    swipeRef.current = null;
++    const t = e.changedTouches[0];
++    if (!s || !t || s.multi || readingMode === 'webtoon') return;
++    if ((window.visualViewport?.scale ?? 1) > 1.05) return; // pinch-zoomed: let the user pan
++    const dx = t.clientX - s.x;
++    const dy = t.clientY - s.y;
++    if (Date.now() - s.t > 600 || Math.abs(dx) < 50 || Math.abs(dy) > Math.abs(dx) * 0.7) return;
++    // Ignore the click some browsers still fire after a swipe, but only briefly.
++    suppressClickRef.current = true;
++    setTimeout(() => {
++      suppressClickRef.current = false;
++    }, 400);
++    const forward = readingMode === 'paged-rtl' ? dx > 0 : dx < 0;
++    if (forward) goToNextPage();
++    else goToPrevPage();
++    triggerHaptic('light');
++  };
++
++  // Tap zones: Left third / Center / Right third
+   const handleScreenClick = (e: React.MouseEvent<HTMLDivElement>) => {
++    if (suppressClickRef.current) {
++      suppressClickRef.current = false;
++      return;
++    }
+     const rect = e.currentTarget.getBoundingClientRect();
+     const x = e.clientX - rect.left;
+@@ -505,11 +545,13 @@
+       {/* Top HUD Header */}
+       <header
+-        className={`absolute top-0 inset-x-0 z-40 bg-black/90 px-3 sm:px-4 py-2 flex items-center justify-between gap-2 text-white transition-all duration-200 border-b border-white/10 ${
++        className={`absolute top-0 inset-x-0 z-40 bg-black/90 px-2 sm:px-4 py-1.5 sm:py-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-white transition-all duration-200 border-b border-white/10 ${
+           hudVisible ? 'translate-y-0 opacity-100' : '-translate-y-full opacity-0 pointer-events-none'
+         }`}
+       >
+-        <div className="flex items-center gap-3 min-w-0 flex-1">
++        {/* min-w-11: the back button must never be squeezed under the controls
++            (it was, and the controls' empty area swallowed the tap). */}
++        <div className="flex items-center gap-2 min-w-11 flex-1">
+           <IconButton
+             icon={<ArrowLeft className="w-5 h-5 text-white" />}
+@@ -527,5 +569,5 @@
+         {/* Reader settings in header */}
+-        <div className="flex flex-wrap items-center justify-end gap-1.5 sm:gap-2">
++        <div className="ml-auto flex flex-wrap items-center justify-end gap-1.5 sm:gap-2">
+           <IconButton
+             icon={
+@@ -600,8 +642,13 @@
+       {/* Main Reader View */}
+       <div
+-        className="flex-1 w-full h-full flex items-center justify-center overflow-auto"
++        className={`flex-1 w-full h-full flex items-center justify-center overflow-auto ${
++          readingMode !== 'webtoon' && fitMode !== 'original' ? 'touch-pan-y touch-pinch-zoom' : ''
++        }`}
+         onWheel={handleWheel}
+         onClick={handleScreenClick}
++        onTouchStart={handleTouchStart}
++        onTouchMove={handleTouchMove}
++        onTouchEnd={handleTouchEnd}
+       >
+         {isTransitionScreen ? (
+diff --git a/apps/client/src/design/components/InfoBar.tsx b/apps/client/src/design/components/InfoBar.tsx
+--- a/apps/client/src/design/components/InfoBar.tsx
++++ b/apps/client/src/design/components/InfoBar.tsx
+@@ -38,16 +38,18 @@
+       className={twMerge(
+         clsx(
+-          'flex items-start justify-between gap-3 p-3 rounded-[var(--r-md)] border text-sm text-[var(--text-1)] shadow-xs animate-in fade-in-0 duration-150',
++          // Wraps, so on narrow screens the action moves under the message instead
++          // of running off the edge.
++          'flex flex-wrap items-start justify-between gap-x-3 gap-y-2 p-3 rounded-[var(--r-md)] border text-sm text-[var(--text-1)] shadow-xs animate-in fade-in-0 duration-150',
+           borders[severity],
+           className,
+         ),
+       )}
+     >
+-      <div className="flex items-start gap-2.5 grow">
++      <div className="flex items-start gap-2.5 grow basis-56 min-w-0">
+         <span className="mt-0.5">{icons[severity]}</span>
+@@ -58,5 +60,5 @@
+ 
+-      <div className="flex items-center gap-2 shrink-0">
++      <div className="flex items-center gap-2 shrink-0 ml-auto">
+         {action}
+         {onClose && (
+diff --git a/apps/client/src/sources/types.ts b/apps/client/src/sources/types.ts
+--- a/apps/client/src/sources/types.ts
++++ b/apps/client/src/sources/types.ts
+@@ -58,3 +58,5 @@
+   notice?: { text: string; linkLabel?: string; url?: string };
++  /** The source accepts a sign-in (stored only on this device), e.g. a membership email. */
++  signIn?: { label: string; usernameLabel: string; help: string };
+   sections(): Promise<CatalogSection[]>;
+   browse(sectionId: string, cursor?: string, filters?: Record<string, string>): Promise<CatalogPage>;
+diff --git a/apps/client/src/sources/opds.ts b/apps/client/src/sources/opds.ts
+--- a/apps/client/src/sources/opds.ts
++++ b/apps/client/src/sources/opds.ts
+@@ -1,2 +1,3 @@
+ import { net } from '../lib/net';
++import { db } from '../db';
+ import type {
+@@ -70,16 +71,57 @@
+     return net.fetch(url, { headers });
+   }
+ 
+-  async sections(): Promise<CatalogSection[]> {
+-    return [
+-      { id: 'root', title: 'Catalog' },
+-      { id: 'new', title: 'New Releases' },
+-    ];
+-  }
++  private searchTemplate: string | null = null;
++
++  /**
++   * Navigation feeds (Standard Ebooks, Calibre, Kavita…) list sub-catalogues
++   * instead of books; each becomes a section. A plain book feed is one section.
++   */
++  async sections(): Promise<CatalogSection[]> {
++    const fallback = [{ id: 'root', title: 'Catalog' }];
++    try {
++      const res = await this.fetchFeed(this.baseUrl);
++      if (!res.ok || (res.headers.get('content-type') || '').includes('json')) return fallback;
++      const doc = new DOMParser().parseFromString(await res.text(), 'text/xml');
++      this.searchTemplate = await this.resolveSearchTemplate(doc);
++      const nav = navigationSections(doc, this.baseUrl);
++      return nav.length > 0 ? nav : fallback;
++    } catch {
++      return fallback;
++    }
++  }
++
++  /** OpenSearch: either a template link in the feed or a description document. */
++  private async resolveSearchTemplate(doc: Document): Promise<string | null> {
++    const link = Array.from(doc.querySelectorAll('link')).find(
++      (l) => l.getAttribute('rel') === 'search' && l.parentElement === doc.documentElement,
++    );
++    const href = link?.getAttribute('href');
++    if (!href) return null;
++    const abs = absoluteUrl(href, this.baseUrl);
++    if (/\{searchTerms\}|%7BsearchTerms%7D/i.test(abs)) return abs;
++    try {
++      const res = await this.fetchFeed(abs);
++      if (!res.ok) return null;
++      const desc = new DOMParser().parseFromString(await res.text(), 'text/xml');
++      const urls = Array.from(desc.getElementsByTagNameNS('*', 'Url'));
++      const tpl = (urls.find((u) => (u.getAttribute('type') || '').includes('atom')) ?? urls[0])?.getAttribute('template');
++      return tpl ? absoluteUrl(tpl, abs) : null;
++    } catch {
++      return null;
++    }
++  }
+ 
+-  async browse(_sectionId: string, cursor?: string): Promise<CatalogPage> {
+-    const url = cursor || this.baseUrl;
++  async browse(sectionId: string, cursor?: string): Promise<CatalogPage> {
++    // Section ids from navigation feeds are the sub-catalogue URLs.
++    const url = cursor || (/^https?:\/\//i.test(sectionId) ? sectionId : this.baseUrl);
+     const res = await this.fetchFeed(url);
++    if (res.status === 401 || res.status === 403) {
++      throw new Error('This catalogue rejected the sign-in. Check the username or email you entered.');
++    }
+     if (!res.ok) {
+-      throw new Error(`Failed to load OPDS feed: ${res.statusText}`);
++      throw new Error(`Failed to load OPDS feed (HTTP ${res.status})`);
+     }
+ 
+@@ -100,9 +142,16 @@
+   async search(query: string, cursor?: string): Promise<CatalogPage> {
+     let url = cursor;
+     if (!url) {
+-      // Basic fallback search if OpenSearch URL is not already resolved
+-      const sep = this.baseUrl.includes('?') ? '&' : '?';
+-      url = `${this.baseUrl}${sep}q=${encodeURIComponent(query)}`;
++      if (this.searchTemplate) {
++        url = this.searchTemplate
++          .replace(/\{searchTerms\}|%7BsearchTerms%7D/gi, encodeURIComponent(query))
++          .replace(/\{[^}]*\?\}/g, '');
++      } else {
++        // Fallback when the catalogue doesn't advertise OpenSearch.
++        const sep = this.baseUrl.includes('?') ? '&' : '?';
++        url = `${this.baseUrl}${sep}q=${encodeURIComponent(query)}`;
++      }
+     }
+     const res = await this.fetchFeed(url);
+@@ -276,31 +325,104 @@
+-function uidFallback(): string {
++// Keeps OpenSearch placeholders like {searchTerms} intact (URL() would encode them).
++function absoluteUrl(href: string, base: string): string {
++  if (/^https?:\/\//i.test(href)) return href;
++  try {
++    const b = new URL(base);
++    return href.startsWith('/') ? `${b.origin}${href}` : new URL(href, base).href;
++  } catch {
++    return href;
++  }
++}
++
++function navigationSections(doc: Document, base: string): CatalogSection[] {
++  const out: CatalogSection[] = [];
++  for (const entry of Array.from(doc.querySelectorAll('entry'))) {
++    const links = Array.from(entry.querySelectorAll('link'));
++    // Any downloadable entry means this is a list of books, not a menu.
++    if (links.some((l) => (l.getAttribute('rel') || '').includes('acquisition'))) return [];
++    const nav = links.find((l) => /opds-catalog|atom\+xml/i.test(l.getAttribute('type') || ''));
++    const href = nav?.getAttribute('href');
++    const title = entry.querySelector('title')?.textContent?.trim();
++    if (href && title) out.push({ id: absoluteUrl(href, base), title });
++  }
++  return out;
++}
++
++function uidFallback(): string {
+   return Math.random().toString(36).slice(2, 10);
+ }
+ 
+-// Standard Ebooks only publishes its 15 newest releases openly; the full catalogue
+-// feeds are for Patrons Circle members (they can add them as a custom OPDS source).
+-class StandardEbooksSource extends OpdsSource {
+-  notice = {
+-    text:
+-      'Standard Ebooks only shares its 15 newest releases openly. Patrons Circle members can add the full catalogue: ' +
+-      'Store → + → OPDS, the "All ebooks" OPDS feed URL from standardebooks.org/feeds, your Patron email as username and an empty password.',
+-    linkLabel: 'Browse all on standardebooks.org',
+-    url: 'https://standardebooks.org/ebooks',
+-  };
+-
+-  override async sections(): Promise<CatalogSection[]> {
+-    return [{ id: 'new', title: 'New releases' }];
+-  }
+-
+-  // The public feed has no search; filter the 15 entries locally.
+-  override async search(query: string): Promise<CatalogPage> {
+-    const q = query.toLowerCase();
+-    const { items } = await this.browse('new');
+-    return {
+-      items: items.filter(
+-        (i) => i.title.toLowerCase().includes(q) || i.authors.some((a) => a.toLowerCase().includes(q)),
+-      ),
+-    };
+-  }
+-}
++const SE_NEW_RELEASES = 'https://standardebooks.org/feeds/atom/new-releases';
++const SE_OPDS_ROOT = 'https://standardebooks.org/feeds/opds';
++
++// Standard Ebooks opens only its 15 newest releases to everyone; the full catalogue
++// feeds are a Patrons Circle benefit (member email as username, no password).
++class StandardEbooksSource extends OpdsSource {
++  signIn = {
++    label: 'Patrons Circle',
++    usernameLabel: 'Patron email',
++    help:
++      'Standard Ebooks Patrons Circle members get the full catalogue. Enter the email you joined with; ' +
++      'there is no password. It is stored only on this device.',
++  };
++  private patron = false;
++
++  get notice() {
++    if (this.patron) return undefined;
++    return {
++      text:
++        'Standard Ebooks only shares its 15 newest releases openly. Patrons Circle members can sign in ' +
++        '(button above) to browse the full catalogue.',
++      linkLabel: 'Browse all on standardebooks.org',
++      url: 'https://standardebooks.org/ebooks',
++    };
++  }
++
++  private async loadAuth(): Promise<void> {
++    const cred = await db.source_credentials.get(this.id).catch(() => undefined);
++    const email = cred?.username?.trim();
++    this.patron = !!email;
++    this.authHeader = email ? `Basic ${btoa(`${email}:`)}` : undefined;
++    this.baseUrl = email ? SE_OPDS_ROOT : SE_NEW_RELEASES;
++  }
++
++  override async sections(): Promise<CatalogSection[]> {
++    await this.loadAuth();
++    if (!this.patron) return [{ id: 'new', title: 'New releases' }];
++    return super.sections();
++  }
++
++  override async browse(sectionId: string, cursor?: string): Promise<CatalogPage> {
++    await this.loadAuth();
++    return super.browse(sectionId, cursor);
++  }
++
++  override async search(query: string, cursor?: string): Promise<CatalogPage> {
++    await this.loadAuth();
++    if (this.patron) return super.search(query, cursor);
++    // The public feed has no search; filter its 15 entries locally.
++    const q = query.toLowerCase();
++    const { items } = await super.browse('new');
++    return {
++      items: items.filter(
++        (i) => i.title.toLowerCase().includes(q) || i.authors.some((a) => a.toLowerCase().includes(q)),
++      ),
++    };
++  }
++
++  override async download(entry: CatalogEntry, format: string, onProgress?: (p: number) => void): Promise<File> {
++    await this.loadAuth();
++    return super.download(entry, format, onProgress);
++  }
++}
+ 
+ export const standardEbooksSource = new StandardEbooksSource(
+   'standardebooks',
+diff --git a/apps/client/src/sources/gutenberg.ts b/apps/client/src/sources/gutenberg.ts
+--- a/apps/client/src/sources/gutenberg.ts
++++ b/apps/client/src/sources/gutenberg.ts
+@@ -108,7 +108,19 @@
+   ]).catch(() => cached.data);
+ }
+ 
++// Extra Gutendex filters: sort order, copyright status and when the author lived.
++function applyGutendexFilters(params: URLSearchParams, f?: Record<string, string>): void {
++  if (f?.sort) params.set('sort', f.sort);
++  if (f?.copyright) params.set('copyright', f.copyright);
++  const [start, end] = (f?.era ?? '').split(':');
++  if (start) params.set('author_year_start', start);
++  if (end) params.set('author_year_end', end);
++}
++
+ export class GutenbergSource implements CatalogSource {
+   id = 'gutenberg';
+   name = 'Project Gutenberg';
+@@ -147,6 +159,40 @@
+         { value: 'la', label: 'Latin' },
+       ],
+     },
++    {
++      id: 'sort',
++      label: 'Sort',
++      options: [
++        { value: '', label: 'Section order' },
++        { value: 'popular', label: 'Most downloaded' },
++        { value: 'descending', label: 'Newest added' },
++        { value: 'ascending', label: 'Oldest added' },
++      ],
++    },
++    {
++      id: 'era',
++      label: 'Author era',
++      options: [
++        { value: '', label: 'Any era' },
++        { value: ':1600', label: 'Before 1600' },
++        { value: '1600:1800', label: '1600–1800' },
++        { value: '1800:1900', label: '1800s' },
++        { value: '1900:', label: '1900 onwards' },
++      ],
++    },
++    {
++      id: 'copyright',
++      label: 'Copyright',
++      options: [
++        { value: '', label: 'Any copyright' },
++        { value: 'false', label: 'Public domain only' },
++      ],
++    },
+   ];
+ 
+   async browse(sectionId: string, cursor?: string, filters?: Record<string, string>): Promise<CatalogPage> {
+@@ -157,6 +203,7 @@
+       else if (sectionId.startsWith('topic:')) params.set('topic', sectionId.slice(6));
+       if (filters?.languages) params.set('languages', filters.languages);
++      applyGutendexFilters(params, filters);
+       url = `https://gutendex.com/books?${params.toString()}`;
+     }
+ 
+@@ -181,6 +228,7 @@
+       if (filters?.languages) params.set('languages', filters.languages);
+       if (filters?.topic) params.set('topic', filters.topic);
++      applyGutendexFilters(params, filters);
+       url = `https://gutendex.com/books?${params.toString()}`;
+     }
+ 
+diff --git a/apps/client/src/sources/archiveorg.ts b/apps/client/src/sources/archiveorg.ts
+--- a/apps/client/src/sources/archiveorg.ts
++++ b/apps/client/src/sources/archiveorg.ts
+@@ -3,5 +3,6 @@
+ import type {
+   CatalogEntry,
++  CatalogFilter,
+   CatalogFormat,
+   CatalogPage,
+@@ -118,13 +119,83 @@
+     year: typeof doc.year === 'number' ? doc.year : doc.year ? parseInt(String(doc.year), 10) : undefined,
+   };
+ }
+ 
++const ARCHIVE_LANGUAGES: [string, string][] = [
++  ['eng', 'English'],
++  ['fre', 'French'],
++  ['ger', 'German'],
++  ['spa', 'Spanish'],
++  ['ita', 'Italian'],
++  ['por', 'Portuguese'],
++  ['rus', 'Russian'],
++  ['hin', 'Hindi'],
++  ['jpn', 'Japanese'],
++  ['chi', 'Chinese'],
++];
++
++const ARCHIVE_FILTERS: CatalogFilter[] = [
++  {
++    id: 'sort',
++    label: 'Sort',
++    options: [
++      { value: '', label: 'Most downloaded' },
++      { value: 'addeddate desc', label: 'Recently added' },
++      { value: 'date desc', label: 'Newest published' },
++      { value: 'date asc', label: 'Oldest published' },
++      { value: 'titleSorter asc', label: 'Title A–Z' },
++    ],
++  },
++  {
++    id: 'language',
++    label: 'Language',
++    options: [
++      { value: '', label: 'Any language' },
++      ...ARCHIVE_LANGUAGES.map(([value, label]) => ({ value, label })),
++    ],
++  },
++  {
++    id: 'format',
++    label: 'Format',
++    options: [
++      { value: '', label: 'Any format' },
++      { value: 'EPUB', label: 'EPUB' },
++      { value: 'PDF', label: 'PDF' },
++      { value: 'CBZ', label: 'Comic (CBZ)' },
++    ],
++  },
++  {
++    id: 'year',
++    label: 'Published',
++    options: [
++      { value: '', label: 'Any year' },
++      { value: '[* TO 1900]', label: 'Before 1900' },
++      { value: '[1900 TO 1950]', label: '1900–1950' },
++      { value: '[1950 TO 2000]', label: '1950–2000' },
++      { value: '[2000 TO *]', label: '2000 onwards' },
++    ],
++  },
++];
++
++/** Extra clauses for the advancedsearch query from the Store filters. */
++function archiveFilterQuery(f?: Record<string, string>): string {
++  let q = '';
++  if (f?.language) {
++    const name = ARCHIVE_LANGUAGES.find(([code]) => code === f.language)?.[1];
++    q += ` AND language:(${f.language}${name ? ` OR ${name}` : ''})`;
++  }
++  if (f?.format) q += ` AND format:${f.format}`;
++  if (f?.year) q += ` AND year:${f.year}`;
++  return q;
++}
++
+ export class ArchiveOrgSource implements CatalogSource {
+   id = 'archiveorg';
+   name = 'Internet Archive';
+   icon = 'BookOpen';
+   kind = 'books' as const;
++  filters = ARCHIVE_FILTERS;
+ 
+   async sections(): Promise<CatalogSection[]> {
+@@ -142,5 +213,5 @@
+-  async browse(sectionId: string, cursor?: string): Promise<CatalogPage> {
++  async browse(sectionId: string, cursor?: string, filters?: Record<string, string>): Promise<CatalogPage> {
+     const limit = 24;
+     const page = cursor ? parseInt(cursor, 10) : 1;
+ 
+     let filter = 'mediatype:texts AND -mediatype:collection AND (format:EPUB OR format:PDF OR format:CBZ)';
+@@ -159,15 +230,16 @@
+     } else if (sectionId === 'history') {
+       filter += ' AND subject:history';
+     }
++    filter += archiveFilterQuery(filters);
+ 
+     const params = new URLSearchParams();
+     params.set('q', filter);
+     params.append('fl[]', 'identifier');
+     params.append('fl[]', 'title');
+     params.append('fl[]', 'creator');
+     params.append('fl[]', 'description');
+     params.append('fl[]', 'year');
+     params.append('fl[]', 'downloads');
+-    params.set('sort[]', 'downloads desc');
++    params.set('sort[]', filters?.sort || 'downloads desc');
+     params.set('rows', String(limit));
+     params.set('page', String(page));
+@@ -191,20 +263,20 @@
+-  async search(query: string, cursor?: string): Promise<CatalogPage> {
++  async search(query: string, cursor?: string, filters?: Record<string, string>): Promise<CatalogPage> {
+     const limit = 24;
+     const page = cursor ? parseInt(cursor, 10) : 1;
+ 
+     const safeQuery = query.replace(/[^\w\s-]/g, ' ').trim();
+-    const filter = `mediatype:texts AND -mediatype:collection AND (format:EPUB OR format:PDF OR format:CBZ) AND (title:(${safeQuery}) OR creator:(${safeQuery}) OR description:(${safeQuery}))`;
++    const filter = `mediatype:texts AND -mediatype:collection AND (format:EPUB OR format:PDF OR format:CBZ) AND (title:(${safeQuery}) OR creator:(${safeQuery}) OR description:(${safeQuery}))` + archiveFilterQuery(filters);
+ 
+     const params = new URLSearchParams();
+     params.set('q', filter);
+     params.append('fl[]', 'identifier');
+     params.append('fl[]', 'title');
+     params.append('fl[]', 'creator');
+     params.append('fl[]', 'description');
+     params.append('fl[]', 'year');
+     params.append('fl[]', 'downloads');
+-    params.set('sort[]', 'downloads desc');
++    params.set('sort[]', filters?.sort || 'downloads desc');
+     params.set('rows', String(limit));
+     params.set('page', String(page));
+diff --git a/apps/client/src/sources/openlibrary.ts b/apps/client/src/sources/openlibrary.ts
+--- a/apps/client/src/sources/openlibrary.ts
++++ b/apps/client/src/sources/openlibrary.ts
+@@ -3,5 +3,6 @@
+ import type {
+   CatalogEntry,
++  CatalogFilter,
+   CatalogFormat,
+   CatalogPage,
+@@ -136,13 +137,70 @@
+     kind: 'book',
+     year: work.first_publish_year,
+   };
+ }
+ 
++const OPEN_LIBRARY_FILTERS: CatalogFilter[] = [
++  {
++    id: 'downloadable',
++    label: 'Availability',
++    options: [
++      { value: '', label: 'All titles' },
++      { value: '1', label: 'Free to download', hint: 'Only titles Verso can download (public domain).' },
++    ],
++  },
++  {
++    id: 'language',
++    label: 'Language',
++    options: [
++      { value: '', label: 'Any language', hint: 'Applies to searches.' },
++      { value: 'eng', label: 'English' },
++      { value: 'fre', label: 'French' },
++      { value: 'ger', label: 'German' },
++      { value: 'spa', label: 'Spanish' },
++      { value: 'hin', label: 'Hindi' },
++      { value: 'jpn', label: 'Japanese' },
++    ],
++  },
++  {
++    id: 'sort',
++    label: 'Sort',
++    options: [
++      { value: '', label: 'Most relevant', hint: 'Applies to searches.' },
++      { value: 'new', label: 'Newest' },
++      { value: 'old', label: 'Oldest' },
++      { value: 'rating', label: 'Top rated' },
++      { value: 'editions', label: 'Most editions' },
++    ],
++  },
++];
++
++function openLibrarySearchParams(f?: Record<string, string>): string {
++  let s = '';
++  if (f?.downloadable) s += '&has_fulltext=true';
++  if (f?.language) s += `&language=${encodeURIComponent(f.language)}`;
++  if (f?.sort) s += `&sort=${encodeURIComponent(f.sort)}`;
++  return s;
++}
++
++/** "Free to download" keeps only titles this app can actually fetch. */
++function keepDownloadable(items: CatalogEntry[], f?: Record<string, string>): CatalogEntry[] {
++  return f?.downloadable ? items.filter((i) => (i.formats?.length ?? 0) > 0) : items;
++}
++
+ export class OpenLibrarySource implements CatalogSource {
+   id = 'openlibrary';
+   name = 'Open Library';
+   icon = 'BookOpen';
+   kind = 'books' as const;
++  filters = OPEN_LIBRARY_FILTERS;
+ 
+   async sections(): Promise<CatalogSection[]> {
+@@ -158,5 +216,5 @@
+-  async browse(sectionId: string, cursor?: string): Promise<CatalogPage> {
++  async browse(sectionId: string, cursor?: string, filters?: Record<string, string>): Promise<CatalogPage> {
+     const limit = 24;
+     const offset = cursor ? parseInt(cursor, 10) : 0;
+ 
+@@ -178,5 +236,5 @@
+       return {
+-        items: sliced.map(parseOpenLibraryDoc),
++        items: keepDownloadable(sliced.map(parseOpenLibraryDoc), filters),
+         next,
+       };
+@@ -193,5 +251,7 @@
+     const subject = subjectMap[sectionId] || sectionId;
+-    const url = `https://openlibrary.org/subjects/${subject}.json?limit=${limit}&offset=${offset}`;
++    const url = `https://openlibrary.org/subjects/${subject}.json?limit=${limit}&offset=${offset}${
++      filters?.downloadable ? '&ebooks=true' : ''
++    }`;
+ 
+     const data = await cachedJson<OpenLibrarySubjectResponse>(
+@@ -205,5 +265,5 @@
+ 
+-    const items = (data.works || []).map(parseSubjectWork);
++    const items = keepDownloadable((data.works || []).map(parseSubjectWork), filters);
+     const hasMore = offset + limit < (data.work_count || 0);
+     const next = hasMore ? String(offset + limit) : undefined;
+@@ -212,8 +272,8 @@
+-  async search(query: string, cursor?: string): Promise<CatalogPage> {
++  async search(query: string, cursor?: string, filters?: Record<string, string>): Promise<CatalogPage> {
+     const limit = 24;
+     const page = cursor ? parseInt(cursor, 10) : 1;
+-    const url = `https://openlibrary.org/search.json?q=${encodeURIComponent(query.trim())}&page=${page}&limit=${limit}&fields=key,title,author_name,cover_i,ebook_access,has_fulltext,id_project_gutenberg,ia,first_publish_year,subject,language`;
++    const url = `https://openlibrary.org/search.json?q=${encodeURIComponent(query.trim())}&page=${page}&limit=${limit}&fields=key,title,author_name,cover_i,ebook_access,has_fulltext,id_project_gutenberg,ia,first_publish_year,subject,language${openLibrarySearchParams(filters)}`;
+ 
+     const data = await cachedJson<OpenLibrarySearchResponse>(
+@@ -227,5 +287,5 @@
+ 
+-    const items = (data.docs || []).map(parseOpenLibraryDoc);
++    const items = keepDownloadable((data.docs || []).map(parseOpenLibraryDoc), filters);
+     const hasMore = page * limit < (data.numFound || 0);
+     const next = hasMore ? String(page + 1) : undefined;
+diff --git a/apps/client/src/pages/Store.tsx b/apps/client/src/pages/Store.tsx
+--- a/apps/client/src/pages/Store.tsx
++++ b/apps/client/src/pages/Store.tsx
+@@ -13,4 +13,6 @@
+   AlertCircle,
+   ExternalLink,
++  SlidersHorizontal,
++  KeyRound,
+ } from 'lucide-react';
+ import { db, type Book, type DownloadItem } from '../db';
+@@ -133,6 +135,13 @@
+   // Book being fetched by "Read now" (downloads the small edition, then opens it).
+   const [readingNow, setReadingNow] = useState<{ id: string; error?: string } | null>(null);
++  // Phones: filters collapse behind a button. sectionsNonce reloads sections after a sign-in.
++  const [filtersOpen, setFiltersOpen] = useState(false);
++  const [sectionsNonce, setSectionsNonce] = useState(0);
++  const [signInOpen, setSignInOpen] = useState(false);
++  const [signInName, setSignInName] = useState('');
++  const sourceCred = useLiveQuery(() => db.source_credentials.get(activeSourceId), [activeSourceId]);
+ 
+   // Suwayomi Extension Store state
+@@ -290,5 +299,5 @@
+     return () => {
+       alive = false;
+     };
+-  }, [activeSource]);
++  }, [activeSource, sectionsNonce]);
+ 
+@@ -326,5 +335,10 @@
+       try {
+-        const page = query ? await source.search(query, undefined, f) : await source.browse(sectionId, undefined, f);
++        let page = query ? await source.search(query, undefined, f) : await source.browse(sectionId, undefined, f);
++        // Filters applied on the client can empty a page; look a few pages further.
++        for (let i = 0; i < 3 && page.items.length === 0 && page.next; i++) {
++          page = query ? await source.search(query, page.next, f) : await source.browse(sectionId, page.next, f);
++        }
+         if (!isCurrent()) return;
+         setItems(page.items);
+@@ -722,4 +736,30 @@
+         <div className="px-3 sm:px-6 py-2 border-b border-[var(--stroke)] bg-[var(--layer-1)] flex flex-wrap sm:flex-nowrap items-center gap-2 shrink-0 sm:overflow-x-auto no-scrollbar">
++          {(activeSource?.filters?.length ?? 0) > 0 && (
++            <button
++              type="button"
++              onClick={() => setFiltersOpen((o) => !o)}
++              aria-expanded={filtersOpen}
++              className="sm:hidden h-7 px-2.5 rounded-[var(--r-md)] border border-[var(--stroke)] bg-[var(--layer-2)] text-xs text-[var(--text-2)] inline-flex items-center gap-1.5 shrink-0 cursor-pointer"
++            >
++              <SlidersHorizontal className="w-3.5 h-3.5" />
++              Filters{Object.values(filters).filter(Boolean).length ? ` (${Object.values(filters).filter(Boolean).length})` : ''}
++            </button>
++          )}
++          {activeSource?.signIn && (
++            <button
++              type="button"
++              onClick={() => {
++                setSignInName(sourceCred?.username ?? '');
++                setSignInOpen(true);
++              }}
++              className="h-7 px-2.5 rounded-[var(--r-md)] border border-[var(--stroke)] bg-[var(--layer-2)] text-xs text-[var(--text-2)] hover:text-[var(--text-1)] inline-flex items-center gap-1.5 shrink-0 cursor-pointer"
++            >
++              <KeyRound className="w-3.5 h-3.5" />
++              {sourceCred?.username ? `${activeSource.signIn.label} ✓` : `${activeSource.signIn.label} sign-in`}
++            </button>
++          )}
++          <div className={`${filtersOpen ? 'flex' : 'hidden'} sm:contents basis-full flex-wrap items-center gap-2`}>
+           {activeSource?.filters?.map((f) => (
+             <select
+               key={f.id}
+@@ -747,6 +787,7 @@
+               Clear filters
+             </button>
+           )}
++          </div>
+           {!debouncedQuery && displayedSections.length > 0 && (activeSource?.filters?.length ?? 0) > 0 && (
+             <span className="w-px h-5 bg-[var(--stroke)] mx-1 hidden sm:block shrink-0" aria-hidden="true" />
+@@ -1125,6 +1166,58 @@
+         </Dialog>
+       )}
+ 
++      {/* Source sign-in (e.g. Standard Ebooks Patrons Circle). Stored only on this device. */}
++      {activeSource?.signIn && (
++        <Dialog open={signInOpen} onOpenChange={setSignInOpen} title={activeSource.signIn.label}>
++          <form
++            className="flex flex-col gap-3"
++            onSubmit={async (e) => {
++              e.preventDefault();
++              const username = signInName.trim();
++              if (!username) return;
++              await db.source_credentials.put({ id: activeSource.id, username, password: '' });
++              setSignInOpen(false);
++              setSectionsNonce((n) => n + 1);
++              switchSource(activeSource.id);
++            }}
++          >
++            <p className="text-xs text-[var(--text-2)] leading-relaxed">{activeSource.signIn.help}</p>
++            <label htmlFor="source-signin-user" className="text-xs font-semibold text-[var(--text-2)]">
++              {activeSource.signIn.usernameLabel}
++            </label>
++            <input
++              id="source-signin-user"
++              type="email"
++              required
++              value={signInName}
++              onChange={(e) => setSignInName(e.target.value)}
++              className="w-full h-9 px-3 rounded-[var(--r-md)] bg-[var(--layer-2)] border border-[var(--stroke)] text-sm text-[var(--text-1)] outline-none focus:border-[var(--accent)]"
++            />
++            <div className="flex flex-wrap justify-end gap-2 pt-2">
++              {sourceCred?.username && (
++                <Button
++                  type="button"
++                  variant="subtle"
++                  onClick={async () => {
++                    await db.source_credentials.delete(activeSource.id);
++                    setSignInOpen(false);
++                    setSectionsNonce((n) => n + 1);
++                    switchSource(activeSource.id);
++                  }}
++                >
++                  Sign out
++                </Button>
++              )}
++              <Button type="submit" variant="accent">
++                Save
++              </Button>
++            </div>
++          </form>
++        </Dialog>
++      )}
++
+       {/* Add Custom Source Dialog */}
+       <Dialog
+         open={addSourceOpen}

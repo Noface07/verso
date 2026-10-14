@@ -69,10 +69,11 @@ export async function exportBackup(options?: ExportBackupOptions): Promise<Blob>
         }
       }
       if (b.cover_hash && coversFolder) {
-        const coverRow = await db.covers.get(b.cover_hash);
+        // Covers are keyed by book id (restore puts them back under the file name).
+        const coverRow = await db.covers.get(b.id);
         if (coverRow?.blob) {
           const buffer = await coverRow.blob.arrayBuffer();
-          coversFolder.file(b.cover_hash, buffer);
+          coversFolder.file(b.id, buffer);
         }
       }
     }

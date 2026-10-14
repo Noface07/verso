@@ -30,7 +30,7 @@ import { exitAppFullscreen, isAppFullscreen, toggleAppFullscreen, useAppFullscre
 import { isInputTarget } from '../lib/useHotkeys'
 import { registerBackHandler } from '../lib/backStack'
 import { setKeepScreenOn, triggerHaptic, useVolumeKeys } from '../lib/mobileUx'
-import { ACCEPT, importOne } from '../lib/importBook'
+import { ACCEPT, backfillCover, importOne } from '../lib/importBook'
 
 type Panel = 'toc' | 'search' | 'notes' | 'bookmarks' | 'settings' | 'lookup' | null
 const PANEL_TITLE: Record<Exclude<Panel, null>, string> = {
@@ -224,10 +224,17 @@ export default function Reader() {
     attachDocRef.current = attachDocument
   }, [attachDocument])
 
+  // Declared before the touch hook so swipes can compare locations.
+  const locRef = useRef<Loc | null>(null)
+  useEffect(() => {
+    locRef.current = loc
+  }, [loc])
+
   const { attachDocument: attachTouchDoc } = useReaderTouch({
     view: viewInstance,
     flow: settings.flow,
     onImageZoom: (src, alt) => setZoomedImage({ src, alt }),
+    getLocation: () => locRef.current?.cfi,
   })
   const attachTouchDocRef = useRef(attachTouchDoc)
   useEffect(() => {
@@ -675,6 +682,8 @@ export default function Reader() {
 
         void db.books.update(id, { last_opened_at: Date.now(), ...dirty() })
         setStatus('ready')
+        // Books synced from another device can arrive without a cover; take it from the file.
+        void backfillCover(id, v.book).catch(() => false)
       } catch (err) {
         if (!cancelled) {
           setError(err instanceof Error ? err.message : String(err))
@@ -695,11 +704,6 @@ export default function Reader() {
       dispose()
     }
   }, [id, loadAttempt])
-
-  const locRef = useRef<Loc | null>(null)
-  useEffect(() => {
-    locRef.current = loc
-  }, [loc])
 
   useEffect(() => {
     void loadCustomFontFaceCSS().then(setCustomFontCSS)

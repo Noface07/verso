@@ -2,6 +2,7 @@ import { net } from '../lib/net';
 import { cachedJson } from '../lib/apiCache';
 import type {
   CatalogEntry,
+  CatalogFilter,
   CatalogFormat,
   CatalogPage,
   CatalogSection,
@@ -102,11 +103,80 @@ function parseArchiveOrgDoc(doc: ArchiveOrgDoc): CatalogEntry {
   };
 }
 
+const ARCHIVE_LANGUAGES: [string, string][] = [
+  ['eng', 'English'],
+  ['fre', 'French'],
+  ['ger', 'German'],
+  ['spa', 'Spanish'],
+  ['ita', 'Italian'],
+  ['por', 'Portuguese'],
+  ['rus', 'Russian'],
+  ['hin', 'Hindi'],
+  ['jpn', 'Japanese'],
+  ['chi', 'Chinese'],
+];
+
+const ARCHIVE_FILTERS: CatalogFilter[] = [
+  {
+    id: 'sort',
+    label: 'Sort',
+    options: [
+      { value: '', label: 'Most downloaded' },
+      { value: 'addeddate desc', label: 'Recently added' },
+      { value: 'date desc', label: 'Newest published' },
+      { value: 'date asc', label: 'Oldest published' },
+      { value: 'titleSorter asc', label: 'Title A–Z' },
+    ],
+  },
+  {
+    id: 'language',
+    label: 'Language',
+    options: [
+      { value: '', label: 'Any language' },
+      ...ARCHIVE_LANGUAGES.map(([value, label]) => ({ value, label })),
+    ],
+  },
+  {
+    id: 'format',
+    label: 'Format',
+    options: [
+      { value: '', label: 'Any format' },
+      { value: 'EPUB', label: 'EPUB' },
+      { value: 'PDF', label: 'PDF' },
+      { value: 'CBZ', label: 'Comic (CBZ)' },
+    ],
+  },
+  {
+    id: 'year',
+    label: 'Published',
+    options: [
+      { value: '', label: 'Any year' },
+      { value: '[* TO 1900]', label: 'Before 1900' },
+      { value: '[1900 TO 1950]', label: '1900–1950' },
+      { value: '[1950 TO 2000]', label: '1950–2000' },
+      { value: '[2000 TO *]', label: '2000 onwards' },
+    ],
+  },
+];
+
+/** Extra clauses for the advancedsearch query from the Store filters. */
+function archiveFilterQuery(f?: Record<string, string>): string {
+  let q = '';
+  if (f?.language) {
+    const name = ARCHIVE_LANGUAGES.find(([code]) => code === f.language)?.[1];
+    q += ` AND language:(${f.language}${name ? ` OR ${name}` : ''})`;
+  }
+  if (f?.format) q += ` AND format:${f.format}`;
+  if (f?.year) q += ` AND year:${f.year}`;
+  return q;
+}
+
 export class ArchiveOrgSource implements CatalogSource {
   id = 'archiveorg';
   name = 'Internet Archive';
   icon = 'BookOpen';
   kind = 'books' as const;
+  filters = ARCHIVE_FILTERS;
 
   async sections(): Promise<CatalogSection[]> {
     return [
@@ -120,7 +190,7 @@ export class ArchiveOrgSource implements CatalogSource {
     ];
   }
 
-  async browse(sectionId: string, cursor?: string): Promise<CatalogPage> {
+  async browse(sectionId: string, cursor?: string, filters?: Record<string, string>): Promise<CatalogPage> {
     const limit = 24;
     const page = cursor ? parseInt(cursor, 10) : 1;
 
@@ -138,6 +208,7 @@ export class ArchiveOrgSource implements CatalogSource {
     } else if (sectionId === 'history') {
       filter += ' AND subject:history';
     }
+    filter += archiveFilterQuery(filters);
 
     const params = new URLSearchParams();
     params.set('q', filter);
@@ -147,7 +218,7 @@ export class ArchiveOrgSource implements CatalogSource {
     params.append('fl[]', 'description');
     params.append('fl[]', 'year');
     params.append('fl[]', 'downloads');
-    params.set('sort[]', 'downloads desc');
+    params.set('sort[]', filters?.sort || 'downloads desc');
     params.set('rows', String(limit));
     params.set('page', String(page));
     params.set('output', 'json');
@@ -170,12 +241,12 @@ export class ArchiveOrgSource implements CatalogSource {
     return { items, next };
   }
 
-  async search(query: string, cursor?: string): Promise<CatalogPage> {
+  async search(query: string, cursor?: string, filters?: Record<string, string>): Promise<CatalogPage> {
     const limit = 24;
     const page = cursor ? parseInt(cursor, 10) : 1;
 
     const safeQuery = query.replace(/[^\w\s-]/g, ' ').trim();
-    const filter = `mediatype:texts AND -mediatype:collection AND (format:EPUB OR format:PDF OR format:CBZ) AND (title:(${safeQuery}) OR creator:(${safeQuery}) OR description:(${safeQuery}))`;
+    const filter = `mediatype:texts AND -mediatype:collection AND (format:EPUB OR format:PDF OR format:CBZ) AND (title:(${safeQuery}) OR creator:(${safeQuery}) OR description:(${safeQuery}))` + archiveFilterQuery(filters);
 
     const params = new URLSearchParams();
     params.set('q', filter);
@@ -185,7 +256,7 @@ export class ArchiveOrgSource implements CatalogSource {
     params.append('fl[]', 'description');
     params.append('fl[]', 'year');
     params.append('fl[]', 'downloads');
-    params.set('sort[]', 'downloads desc');
+    params.set('sort[]', filters?.sort || 'downloads desc');
     params.set('rows', String(limit));
     params.set('page', String(page));
     params.set('output', 'json');

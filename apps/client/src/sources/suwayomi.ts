@@ -1,6 +1,7 @@
 import { net } from '../lib/net';
 import { cachedJson } from '../lib/apiCache';
 import { db } from '../db';
+import { isTauri } from '../lib/tauri';
 import type {
   CatalogEntry,
   CatalogFilter,
@@ -114,10 +115,15 @@ export class SuwayomiSource implements MangaSource {
     return `${this.baseUrl}${cleanPath}`;
   }
 
+  // In the apps, use native HTTP (net.fetch): no CORS limits, and it adds the header
+  // that skips ngrok's browser warning page. On Android the server is usually reached
+  // through such a tunnel, and that page made every GET (source list, popular,
+  // chapters) fail while the GraphQL POSTs still worked.
   private getFetch(): (input: string | URL, init?: RequestInit) => Promise<Response> {
-    return typeof window !== 'undefined' && typeof window.fetch === 'function'
-      ? (input, init) => window.fetch(input, init)
-      : (input, init) => net.fetch(input, init);
+    if (isTauri() || typeof window === 'undefined' || typeof window.fetch !== 'function') {
+      return (input, init) => net.fetch(input, init);
+    }
+    return (input, init) => window.fetch(input, init);
   }
 
   async getInstalledExtensions(forceRefresh = false): Promise<SuwayomiSourceInfo[]> {
@@ -147,7 +153,7 @@ export class SuwayomiSource implements MangaSource {
   async getExtensionList(): Promise<SuwayomiExtension[]> {
     const url = `${this.baseUrl}/api/graphql`;
     try {
-      const fetchImpl = typeof window !== 'undefined' && typeof window.fetch === 'function' ? window.fetch.bind(window) : net.fetch;
+      const fetchImpl = this.getFetch();
       const res = await fetchImpl(url, {
         method: 'POST',
         headers: {
@@ -248,7 +254,7 @@ export class SuwayomiSource implements MangaSource {
   async installExtension(pkgName: string): Promise<boolean> {
     const url = `${this.baseUrl}/api/graphql`;
     try {
-      const fetchImpl = typeof window !== 'undefined' && typeof window.fetch === 'function' ? window.fetch.bind(window) : net.fetch;
+      const fetchImpl = this.getFetch();
       const res = await fetchImpl(url, {
         method: 'POST',
         headers: {
@@ -283,7 +289,7 @@ export class SuwayomiSource implements MangaSource {
   async uninstallExtension(pkgName: string): Promise<boolean> {
     const url = `${this.baseUrl}/api/graphql`;
     try {
-      const fetchImpl = typeof window !== 'undefined' && typeof window.fetch === 'function' ? window.fetch.bind(window) : net.fetch;
+      const fetchImpl = this.getFetch();
       const res = await fetchImpl(url, {
         method: 'POST',
         headers: {
@@ -370,10 +376,11 @@ export class SuwayomiSource implements MangaSource {
         : defaultSourceId;
 
     if (!sourceId) {
-      return {
-        items: [],
-        next: undefined,
-      };
+      // Used to show an empty "No books" page, which hid the real problem.
+      throw new Error(
+        `Couldn't get the list of installed sources from your Suwayomi server (${this.baseUrl}). ` +
+          'Check that it is running and reachable from this device, and that at least one extension is installed.',
+      );
     }
     this.lastBrowsedSourceId = sourceId;
 

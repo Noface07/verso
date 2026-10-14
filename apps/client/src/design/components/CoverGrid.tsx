@@ -19,16 +19,14 @@ export const CoverGrid: React.FC<CoverGridProps> = ({
     <div
       className={twMerge(
         clsx(
-          'grid gap-3 sm:gap-5 py-4',
+          // Phones: always three columns; minmax(0, 1fr) keeps long titles from
+          // widening a column. Wider screens fill columns of `columnWidth`.
+          'grid grid-cols-3 gap-3 sm:gap-5 py-4 sm:[grid-template-columns:var(--cover-cols)]',
           selectionMode && 'select-none',
           className,
         ),
       )}
-      style={{
-        // Phones get three smaller covers per row instead of two huge ones
-        // (1.5rem = the two phone-width gaps).
-        gridTemplateColumns: `repeat(auto-fill, minmax(min(${columnWidth}px, calc((100% - 1.5rem) / 3)), 1fr))`,
-      }}
+      style={{ '--cover-cols': `repeat(auto-fill, minmax(${columnWidth}px, 1fr))` } as React.CSSProperties}
     >
       {children}
     </div>

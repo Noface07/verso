@@ -1,4 +1,4 @@
-import { useEffect, lazy, Suspense } from 'react'
+import { useEffect, useRef, lazy, Suspense } from 'react'
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { HashRouter, Route, Routes, useNavigate } from 'react-router-dom'
@@ -41,17 +41,36 @@ syncEngine.init()
 
 function AppRoutes() {
   const navigate = useNavigate()
+  // navigate() gets a new identity on every route change. Reading it through a ref
+  // keeps the native listeners (Android back, file open) registered once; re-adding
+  // them on each navigation left gaps where back fell through to Android (app exit).
+  const navigateRef = useRef(navigate)
   useEffect(() => {
-    const cleanupDesktop = initTauriDesktopIntegration((path) => navigate(path))
+    navigateRef.current = navigate
+  })
+  useEffect(() => {
+    const cleanupDesktop = initTauriDesktopIntegration((path) => navigateRef.current(path))
     const cleanupAndroid = initAndroidIntegration(
-      (path) => navigate(path),
-      () => navigate(-1),
+      (path) => navigateRef.current(path),
+      () => {
+        // Nothing left to close: go back a page, then to Home, then leave the app.
+        const idx = (window.history.state as { idx?: number } | null)?.idx ?? 0
+        if (idx > 0) {
+          navigateRef.current(-1)
+          return
+        }
+        if ((window.location.hash.replace(/^#/, '') || '/') !== '/') {
+          navigateRef.current('/', { replace: true })
+          return
+        }
+        void import('@tauri-apps/plugin-process').then(({ exit }) => exit(0))
+      },
     )
     return () => {
       cleanupDesktop()
       cleanupAndroid()
     }
-  }, [navigate])
+  }, [])
 
   return (
     <div className="w-full h-full flex flex-col overflow-hidden">

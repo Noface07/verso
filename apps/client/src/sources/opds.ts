@@ -1,4 +1,5 @@
 import { net } from '../lib/net';
+import { db } from '../db';
 import type {
   CatalogEntry,
   CatalogFormat,
@@ -67,18 +68,56 @@ export class OpdsSource implements CatalogSource {
     return net.fetch(url, { headers });
   }
 
+  private searchTemplate: string | null = null;
+
+  /**
+   * Navigation feeds (Standard Ebooks, Calibre, Kavita…) list sub-catalogues
+   * instead of books; each becomes a section. A plain book feed is one section.
+   */
   async sections(): Promise<CatalogSection[]> {
-    return [
-      { id: 'root', title: 'Catalog' },
-      { id: 'new', title: 'New Releases' },
-    ];
+    const fallback = [{ id: 'root', title: 'Catalog' }];
+    try {
+      const res = await this.fetchFeed(this.baseUrl);
+      if (!res.ok || (res.headers.get('content-type') || '').includes('json')) return fallback;
+      const doc = new DOMParser().parseFromString(await res.text(), 'text/xml');
+      this.searchTemplate = await this.resolveSearchTemplate(doc);
+      const nav = navigationSections(doc, this.baseUrl);
+      return nav.length > 0 ? nav : fallback;
+    } catch {
+      return fallback;
+    }
   }
 
-  async browse(_sectionId: string, cursor?: string): Promise<CatalogPage> {
-    const url = cursor || this.baseUrl;
+  /** OpenSearch: either a template link in the feed or a description document. */
+  private async resolveSearchTemplate(doc: Document): Promise<string | null> {
+    const link = Array.from(doc.querySelectorAll('link')).find(
+      (l) => l.getAttribute('rel') === 'search' && l.parentElement === doc.documentElement,
+    );
+    const href = link?.getAttribute('href');
+    if (!href) return null;
+    const abs = absoluteUrl(href, this.baseUrl);
+    if (/\{searchTerms\}|%7BsearchTerms%7D/i.test(abs)) return abs;
+    try {
+      const res = await this.fetchFeed(abs);
+      if (!res.ok) return null;
+      const desc = new DOMParser().parseFromString(await res.text(), 'text/xml');
+      const urls = Array.from(desc.getElementsByTagNameNS('*', 'Url'));
+      const tpl = (urls.find((u) => (u.getAttribute('type') || '').includes('atom')) ?? urls[0])?.getAttribute('template');
+      return tpl ? absoluteUrl(tpl, abs) : null;
+    } catch {
+      return null;
+    }
+  }
+
+  async browse(sectionId: string, cursor?: string): Promise<CatalogPage> {
+    // Section ids from navigation feeds are the sub-catalogue URLs.
+    const url = cursor || (/^https?:\/\//i.test(sectionId) ? sectionId : this.baseUrl);
     const res = await this.fetchFeed(url);
+    if (res.status === 401 || res.status === 403) {
+      throw new Error('This catalogue rejected the sign-in. Check the username or email you entered.');
+    }
     if (!res.ok) {
-      throw new Error(`Failed to load OPDS feed: ${res.statusText}`);
+      throw new Error(`Failed to load OPDS feed (HTTP ${res.status})`);
     }
 
     const contentType = res.headers.get('content-type') || '';
@@ -94,9 +133,15 @@ export class OpdsSource implements CatalogSource {
   async search(query: string, cursor?: string): Promise<CatalogPage> {
     let url = cursor;
     if (!url) {
-      // Basic fallback search if OpenSearch URL is not already resolved
-      const sep = this.baseUrl.includes('?') ? '&' : '?';
-      url = `${this.baseUrl}${sep}q=${encodeURIComponent(query)}`;
+      if (this.searchTemplate) {
+        url = this.searchTemplate
+          .replace(/\{searchTerms\}|%7BsearchTerms%7D/gi, encodeURIComponent(query))
+          .replace(/\{[^}]*\?\}/g, '');
+      } else {
+        // Fallback when the catalogue doesn't advertise OpenSearch.
+        const sep = this.baseUrl.includes('?') ? '&' : '?';
+        url = `${this.baseUrl}${sep}q=${encodeURIComponent(query)}`;
+      }
     }
     const res = await this.fetchFeed(url);
     if (!res.ok) {
@@ -275,12 +320,100 @@ export class OpdsSource implements CatalogSource {
   }
 }
 
+// Keeps OpenSearch placeholders like {searchTerms} intact (URL() would encode them).
+function absoluteUrl(href: string, base: string): string {
+  if (/^https?:\/\//i.test(href)) return href;
+  try {
+    const b = new URL(base);
+    return href.startsWith('/') ? `${b.origin}${href}` : new URL(href, base).href;
+  } catch {
+    return href;
+  }
+}
+
+function navigationSections(doc: Document, base: string): CatalogSection[] {
+  const out: CatalogSection[] = [];
+  for (const entry of Array.from(doc.querySelectorAll('entry'))) {
+    const links = Array.from(entry.querySelectorAll('link'));
+    // Any downloadable entry means this is a list of books, not a menu.
+    if (links.some((l) => (l.getAttribute('rel') || '').includes('acquisition'))) return [];
+    const nav = links.find((l) => /opds-catalog|atom\+xml/i.test(l.getAttribute('type') || ''));
+    const href = nav?.getAttribute('href');
+    const title = entry.querySelector('title')?.textContent?.trim();
+    if (href && title) out.push({ id: absoluteUrl(href, base), title });
+  }
+  return out;
+}
+
 function uidFallback(): string {
   return Math.random().toString(36).slice(2, 10);
 }
 
-// Built-in Standard Ebooks Source (Public New Releases Atom Feed)
-export const standardEbooksSource = new OpdsSource(
+const SE_NEW_RELEASES = 'https://standardebooks.org/feeds/atom/new-releases';
+const SE_OPDS_ROOT = 'https://standardebooks.org/feeds/opds';
+
+// Standard Ebooks opens only its 15 newest releases to everyone; the full catalogue
+// feeds are a Patrons Circle benefit (member email as username, no password).
+class StandardEbooksSource extends OpdsSource {
+  signIn = {
+    label: 'Patrons Circle',
+    usernameLabel: 'Patron email',
+    help:
+      'Standard Ebooks Patrons Circle members get the full catalogue. Enter the email you joined with; ' +
+      'there is no password. It is stored only on this device.',
+  };
+  private patron = false;
+
+  get notice() {
+    if (this.patron) return undefined;
+    return {
+      text:
+        'Standard Ebooks only shares its 15 newest releases openly. Patrons Circle members can sign in ' +
+        '(button above) to browse the full catalogue.',
+      linkLabel: 'Browse all on standardebooks.org',
+      url: 'https://standardebooks.org/ebooks',
+    };
+  }
+
+  private async loadAuth(): Promise<void> {
+    const cred = await db.source_credentials.get(this.id).catch(() => undefined);
+    const email = cred?.username?.trim();
+    this.patron = !!email;
+    this.authHeader = email ? `Basic ${btoa(`${email}:`)}` : undefined;
+    this.baseUrl = email ? SE_OPDS_ROOT : SE_NEW_RELEASES;
+  }
+
+  override async sections(): Promise<CatalogSection[]> {
+    await this.loadAuth();
+    if (!this.patron) return [{ id: 'new', title: 'New releases' }];
+    return super.sections();
+  }
+
+  override async browse(sectionId: string, cursor?: string): Promise<CatalogPage> {
+    await this.loadAuth();
+    return super.browse(sectionId, cursor);
+  }
+
+  override async search(query: string, cursor?: string): Promise<CatalogPage> {
+    await this.loadAuth();
+    if (this.patron) return super.search(query, cursor);
+    // The public feed has no search; filter its 15 entries locally.
+    const q = query.toLowerCase();
+    const { items } = await super.browse('new');
+    return {
+      items: items.filter(
+        (i) => i.title.toLowerCase().includes(q) || i.authors.some((a) => a.toLowerCase().includes(q)),
+      ),
+    };
+  }
+
+  override async download(entry: CatalogEntry, format: string, onProgress?: (p: number) => void): Promise<File> {
+    await this.loadAuth();
+    return super.download(entry, format, onProgress);
+  }
+}
+
+export const standardEbooksSource = new StandardEbooksSource(
   'standardebooks',
   'Standard Ebooks',
   'https://standardebooks.org/feeds/atom/new-releases',

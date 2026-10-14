@@ -168,6 +168,13 @@ export async function netFetch(
     }
   }
 
+  // ngrok's free tunnels answer browser-like requests with an HTML warning page
+  // instead of the real response (self-hosted Suwayomi/Komga behind ngrok broke on
+  // phones). This header skips that page.
+  if (/(^|\.)ngrok(-free)?\.(app|dev|io)$/.test(targetHost)) {
+    headers.set('ngrok-skip-browser-warning', '1');
+  }
+
   if (!isTauri && isExternalHttp) {
     const serverUrl = await getServerUrl();
     let serverOrigin = '';

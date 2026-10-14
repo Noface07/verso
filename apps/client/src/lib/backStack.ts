@@ -1,4 +1,4 @@
-import { isTauri } from './tauri';
+import { isAndroidDevice, isTauri } from './tauri';
 
 export type BackHandler = () => boolean;
 
@@ -21,8 +21,8 @@ export function registerBackHandler(
   priority = 10,
 ): () => void {
   const id = `back-h-${nextId++}`;
-  backHandlers.push({ id, handler, priority });
-  // Keep sorted descending by priority
+  // Newest first; the sort is stable, so among equal priorities the latest wins.
+  backHandlers.unshift({ id, handler, priority });
   backHandlers.sort((a, b) => b.priority - a.priority);
 
   return () => {
@@ -65,23 +65,24 @@ export function clearBackHandlers(): void {
 }
 
 /**
- * Initializes listeners for Android back button events (`folio://back-pressed`).
+ * Routes the Android back button (Tauri >= 2.9 `onBackButtonPress`) through the
+ * back stack: the topmost layer closes first, otherwise `onFallbackBack` runs.
  */
 export function initAndroidBackHandler(onFallbackBack?: () => void): () => void {
-  let unlistenTauri = () => {};
+  let unregister: (() => void) | null = null;
+  let disposed = false;
 
-  if (isTauri()) {
+  if (isTauri() && isAndroidDevice()) {
     void (async () => {
       try {
-        const { listen } = await import('@tauri-apps/api/event');
-        unlistenTauri = await listen('folio://back-pressed', () => {
-          const consumed = handleBackPress();
-          if (!consumed && onFallbackBack) {
-            onFallbackBack();
-          }
+        const { onBackButtonPress } = await import('@tauri-apps/api/app');
+        const listener = await onBackButtonPress(() => {
+          if (!handleBackPress()) onFallbackBack?.();
         });
+        if (disposed) void listener.unregister();
+        else unregister = () => void listener.unregister();
       } catch (err) {
-        console.warn('Failed to listen to folio://back-pressed:', err);
+        console.warn('Android back button handler unavailable:', err);
       }
     })();
   }
@@ -99,7 +100,8 @@ export function initAndroidBackHandler(onFallbackBack?: () => void): () => void 
   window.addEventListener('keydown', onKeyDown);
 
   return () => {
-    unlistenTauri();
+    disposed = true;
+    unregister?.();
     window.removeEventListener('keydown', onKeyDown);
   };
 }
