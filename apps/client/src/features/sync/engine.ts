@@ -9,7 +9,7 @@ import {
   syncEventsToken,
 } from './api';
 import { getRefreshToken, getServerUrl } from '../auth/storage';
-import type { SyncTableName } from '@folio/shared';
+import type { SyncTableName } from '@verso/shared';
 
 // 'signedOut': no account, so nothing is synced (previously shown as 'idle' = "Synced").
 export type SyncStatus = 'idle' | 'syncing' | 'offline' | 'error' | 'signedOut';

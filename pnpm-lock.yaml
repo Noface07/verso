@@ -17,9 +17,6 @@ importers:
 
   apps/client:
     dependencies:
-      '@folio/shared':
-        specifier: workspace:*
-        version: link:../../packages/shared
       '@fontsource-variable/inter':
         specifier: ^5.3.0
         version: 5.3.0
@@ -104,6 +101,9 @@ importers:
       '@tauri-apps/plugin-window-state':
         specifier: ^2.5.0
         version: 2.5.0
+      '@verso/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
       clsx:
         specifier: ^2.1.1
         version: 2.1.1
@@ -216,7 +216,7 @@ importers:
       '@fastify/rate-limit':
         specifier: ^10.0.0
         version: 10.3.0
-      '@folio/shared':
+      '@verso/shared':
         specifier: workspace:*
         version: link:../../packages/shared
       archiver:

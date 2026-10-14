@@ -47,7 +47,7 @@ export default function DevComponents() {
             Mica Design System Gallery
           </h1>
           <p className="text-sm text-[var(--text-2)] mt-1">
-            Interactive token and primitive showroom for Folio.
+            Interactive token and primitive showroom for Verso.
           </p>
         </div>
 
@@ -230,7 +230,7 @@ export default function DevComponents() {
         <section className="space-y-4">
           <h2 className="text-lg font-semibold text-[var(--text-1)]">Feedback & Progress</h2>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <InfoBar severity="info" title="Information" message="Folio synced 12 new items across your devices." />
+            <InfoBar severity="info" title="Information" message="Verso synced 12 new items across your devices." />
             <InfoBar severity="success" title="Success" message="Book imported and ready to read." />
             <InfoBar severity="warning" title="Warning" message="Server connection slow. Offline cache active." />
             <InfoBar severity="error" title="Error" message="Could not authenticate with server." />

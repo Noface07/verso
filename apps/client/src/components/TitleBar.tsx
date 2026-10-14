@@ -71,7 +71,7 @@ export function TitleBar() {
       {/* Left: App Logo & Title */}
       <div className="flex items-center gap-2 px-3 pointer-events-none">
         <BookOpen className="w-3.5 h-3.5 text-[var(--accent)]" />
-        <span className="font-semibold text-xs tracking-tight">Folio</span>
+        <span className="font-semibold text-xs tracking-tight">Verso</span>
       </div>
 
       {/* Middle: Drag area spacer */}

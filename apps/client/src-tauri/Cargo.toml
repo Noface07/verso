@@ -1,12 +1,12 @@
 [package]
-name = "folio"
+name = "verso"
 version = "0.1.0"
-description = "Folio eBook & Manga Reader"
-authors = ["Folio Team"]
+description = "Verso eBook & Manga Reader"
+authors = ["Verso Team"]
 edition = "2021"
 
 [lib]
-name = "folio_lib"
+name = "verso_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]

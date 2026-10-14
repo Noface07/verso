@@ -8,7 +8,7 @@ import {
   type SyncPushResponse,
   type SyncPullResponse,
   type EventsTokenResponse,
-} from '@folio/shared';
+} from '@verso/shared';
 import './types.js';
 
 const JSON_COLS = new Set(['meta', 'data']);

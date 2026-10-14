@@ -703,7 +703,7 @@ export default function SeriesDetail() {
             <div className="p-4 rounded-[var(--r-md)] bg-[var(--layer-2)] border border-[var(--stroke)] text-xs text-[var(--text-2)] leading-relaxed">
               {chapters.length === 0
                 ? 'MangaDex has no English chapters of this series. It is usually because the series is officially licensed and the publisher asked for them to be removed.'
-                : 'This series is only available as official releases on the publisher’s site, so it can’t be read inside Folio. The chapters below open the publisher’s own reader.'}
+                : 'This series is only available as official releases on the publisher’s site, so it can’t be read inside Verso. The chapters below open the publisher’s own reader.'}
             </div>
           )}
           {visibleChapters.length === 0 ? (
@@ -733,7 +733,7 @@ export default function SeriesDetail() {
                     onClick={() => {
                       if (ch.externalUrl) {
                         // Official releases can't be rendered as pages; open the
-                        // publisher's reader in its own Folio window (browser on mobile).
+                        // publisher's reader in its own Verso window (browser on mobile).
                         void openInAppWindow(ch.externalUrl, ch.title || 'Chapter');
                       } else {
                         navigate(

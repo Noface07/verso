@@ -14,7 +14,7 @@ import type {
   SyncPullResponse,
   EventsTokenResponse,
   SyncTableName,
-} from '@folio/shared';
+} from '@verso/shared';
 
 export class ApiError extends Error {
   status: number;

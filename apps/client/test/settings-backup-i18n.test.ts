@@ -24,7 +24,7 @@ describe('Phase 12: Settings, Backup, Onboarding, Accessibility, and i18n', () =
 
   describe('P12.1: Internationalization (i18n) & RTL Layout', () => {
     it('translates common keys with t()', () => {
-      expect(t('common.appName')).toBe('Folio');
+      expect(t('common.appName')).toBe('Verso');
       expect(t('common.save')).toBe('Save');
       expect(t('common.cancel')).toBe('Cancel');
       expect(t('settings.title')).toBe('Settings');
@@ -140,7 +140,7 @@ describe('Phase 12: Settings, Backup, Onboarding, Accessibility, and i18n', () =
       );
 
       // Step 1: Welcome & Theme
-      expect(screen.getByText(/Welcome to Folio/i)).toBeInTheDocument();
+      expect(screen.getByText(/Welcome to Verso/i)).toBeInTheDocument();
       const continueBtn1 = screen.getByRole('button', { name: /continue/i });
       fireEvent.click(continueBtn1);
 

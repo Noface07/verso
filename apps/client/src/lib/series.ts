@@ -2,7 +2,7 @@ import { db, dirty, now, type Series } from '../db'
 import type { CatalogEntry } from '../sources/types'
 
 /**
- * A series row means "Folio knows this series" (it was followed or read). Following
+ * A series row means "Verso knows this series" (it was followed or read). Following
  * is `meta.followed`; rows written before that flag existed were only ever created
  * by following, so a missing flag counts as followed.
  */

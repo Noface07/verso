@@ -115,7 +115,7 @@ function isLocalhostDirectFetch(targetUrl: string): boolean {
 
 function corsBlockedError(host: string): Error {
   return new Error(
-    `${host} doesn't allow downloads directly from a web browser. Sign in to your Folio ` +
+    `${host} doesn't allow downloads directly from a web browser. Sign in to your Verso ` +
       'server (Settings → Account & Sync) so it can fetch the file for you, or use the ' +
       'desktop or Android app.',
   );
@@ -196,7 +196,7 @@ export async function netFetch(
     }
 
     // Route through /proxy when:
-    // - The target is not the Folio server itself (different origin)
+    // - The target is not the Verso server itself (different origin)
     // - AND target is not a direct CORS host or localhost server
     // (Direct CORS hosts and local servers like Suwayomi/Komga natively allow CORS from the browser)
     const isTargetingServer = serverOrigin && targetOrigin && serverOrigin === targetOrigin;

@@ -4,7 +4,7 @@ import bcrypt from 'bcryptjs';
 import archiver from 'archiver';
 import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import { pool } from './db.js';
-import { SYNC_TABLES, type SyncTableName } from '@folio/shared';
+import { SYNC_TABLES, type SyncTableName } from '@verso/shared';
 import './types.js';
 
 const ROOT = process.env.FILES_DIR || './data/files';

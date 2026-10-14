@@ -23,7 +23,7 @@ export function initAndroidIntegration(
   void (async () => {
     try {
       const { listen } = await import('@tauri-apps/api/event');
-      cleanupFileOpen = await listen<string>('folio://file-open', (event) => {
+      cleanupFileOpen = await listen<string>('verso://file-open', (event) => {
         if (event.payload) {
           void handleOpenedFile(event.payload, (bookId) => {
             navigate(`/read/${bookId}`);

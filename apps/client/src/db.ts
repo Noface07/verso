@@ -1,5 +1,5 @@
 import Dexie, { type EntityTable } from 'dexie'
-import { SYNC_TABLES as SHARED_SYNC_TABLES, type SyncTableName } from '@folio/shared'
+import { SYNC_TABLES as SHARED_SYNC_TABLES, type SyncTableName } from '@verso/shared'
 
 export interface Syncable {
   id: string

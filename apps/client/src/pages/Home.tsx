@@ -145,7 +145,7 @@ export default function Home() {
               <div>
                 <div className="font-semibold text-sm text-[var(--text-1)]">Sync across devices?</div>
                 <div className="text-xs text-[var(--text-2)] mt-0.5">
-                  Folio lets you sync books, notes, and reading progress across all your devices.
+                  Verso lets you sync books, notes, and reading progress across all your devices.
                 </div>
               </div>
             </div>
@@ -168,7 +168,7 @@ export default function Home() {
         )}
         <EmptyState
           icon={<BookOpen className="w-8 h-8" />}
-          title="Welcome to Folio"
+          title="Welcome to Verso"
           description="Add EPUB, MOBI, AZW3, FB2, CBZ or PDF files to get started. You can also drag & drop them directly into this window."
           action={
             <Button variant="accent" size="lg" icon={<Plus className="w-4 h-4" />} onClick={openImport}>
@@ -233,7 +233,7 @@ export default function Home() {
             <div>
               <div className="font-semibold text-sm text-[var(--text-1)]">Sync across devices?</div>
               <div className="text-xs text-[var(--text-2)] mt-0.5">
-                Folio lets you sync books, notes, and reading progress across all your devices.
+                Verso lets you sync books, notes, and reading progress across all your devices.
               </div>
             </div>
           </div>

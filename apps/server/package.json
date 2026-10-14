@@ -21,7 +21,7 @@
     "@fastify/cors": "^10.0.0",
     "@fastify/jwt": "^9.0.0",
     "@fastify/rate-limit": "^10.0.0",
-    "@folio/shared": "workspace:*",
+    "@verso/shared": "workspace:*",
     "archiver": "^7.0.1",
     "bcryptjs": "^2.4.3",
     "dotenv": "^16.4.7",

@@ -1,6 +1,6 @@
 /**
  * `pnpm --filter server db:check` — verifies the configured database is usable
- * by Folio: connection + TLS, schema migrations, Supabase API lockdown (RLS),
+ * by Verso: connection + TLS, schema migrations, Supabase API lockdown (RLS),
  * and a LISTEN/NOTIFY round trip (what live sync depends on).
  */
 import { randomUUID } from 'node:crypto';

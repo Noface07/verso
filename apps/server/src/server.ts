@@ -92,7 +92,7 @@ if (process.env.NODE_ENV !== 'test') {
       process.on('SIGINT', shutdown);
 
       await server.listen({ host, port });
-      console.log(`Folio server listening on http://${host}:${port}`);
+      console.log(`Verso server listening on http://${host}:${port}`);
     } catch (err) {
       console.error('Failed to start server:', err);
       process.exit(1);

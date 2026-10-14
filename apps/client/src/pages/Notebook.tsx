@@ -87,7 +87,7 @@ export default function Notebook() {
 
   // Export functions
   const exportMarkdown = () => {
-    let md = '# Folio Notebook Export\n\n';
+    let md = '# Verso Notebook Export\n\n';
     for (const g of groups) {
       md += `## ${g.book.title} — ${g.book.author}\n\n`;
       for (const item of g.items) {

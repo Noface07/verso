@@ -38,7 +38,7 @@ export class IndexedDbBlobStore implements BlobStore {
 
 /**
  * Desktop filesystem implementation backed by Tauri `@tauri-apps/plugin-fs`.
- * Stores files under `$APPDATA/Folio/files/<hash>`.
+ * Stores files under `$APPDATA/Verso/files/<hash>`.
  */
 export class FsBlobStore implements BlobStore {
   private fallback = new IndexedDbBlobStore();
@@ -51,12 +51,14 @@ export class FsBlobStore implements BlobStore {
           const { appDataDir, join } = await import('@tauri-apps/api/path');
           const { mkdir, exists } = await import('@tauri-apps/plugin-fs');
           const appData = await appDataDir();
-          const filesDir = await join(appData, 'Folio', 'files');
-          const dirExists = await exists(filesDir);
-          if (!dirExists) {
-            await mkdir(filesDir, { recursive: true });
-          }
-          return filesDir;
+          const versoDir = await join(appData, 'Verso', 'files');
+          const folioDir = await join(appData, 'Folio', 'files');
+          const versoExists = await exists(versoDir);
+          if (versoExists) return versoDir;
+          const folioExists = await exists(folioDir);
+          if (folioExists) return folioDir;
+          await mkdir(versoDir, { recursive: true });
+          return versoDir;
         } catch {
           return '';
         }

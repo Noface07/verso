@@ -269,7 +269,7 @@ export const AccountSettings: React.FC<AccountSettingsProps> = ({ onAuthChange }
               type="button"
               onClick={() => setIsEditingServer(true)}
               className="text-xs font-medium text-[var(--text-3)] hover:text-[var(--accent)] hover:underline cursor-pointer"
-              title="Only needed if you run your own Folio server"
+              title="Only needed if you run your own Verso server"
             >
               Advanced…
             </button>
@@ -279,12 +279,12 @@ export const AccountSettings: React.FC<AccountSettingsProps> = ({ onAuthChange }
         {isEditingServer ? (
           <div className="flex flex-col gap-2 mt-1">
             <p className="text-[11px] text-[var(--text-3)]">
-              The address of a Folio API server, not the database. Leave the default unless you host your own.
+              The address of a Verso API server, not the database. Leave the default unless you host your own.
             </p>
             <div className="flex flex-wrap items-center gap-2">
               <input
                 type="url"
-                aria-label="Folio server address"
+                aria-label="Verso server address"
                 value={serverUrlVal}
                 onChange={(e) => {
                   setServerUrlVal(e.target.value);
@@ -324,7 +324,7 @@ export const AccountSettings: React.FC<AccountSettingsProps> = ({ onAuthChange }
         <section className="flex flex-col gap-4">
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-semibold text-[var(--text-1)]">
-              {authMode === 'login' ? 'Sign in to Folio' : 'Create an Account'}
+              {authMode === 'login' ? 'Sign in to Verso' : 'Create an Account'}
             </h3>
             <button
               type="button"

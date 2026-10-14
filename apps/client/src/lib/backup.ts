@@ -21,7 +21,7 @@ export interface ImportBackupResult {
 }
 
 /**
- * Exports all Folio data and files into a .foliobackup ZIP archive.
+ * Exports all Verso data and files into a .versobackup ZIP archive.
  */
 export async function exportBackup(options?: ExportBackupOptions): Promise<Blob> {
   const zip = new JSZip();
@@ -234,7 +234,7 @@ export async function importBackup(file: File | Blob): Promise<ImportBackupResul
 export function downloadBackupBlob(blob: Blob, filename?: string): void {
   const d = new Date();
   const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-  const name = filename || `folio_backup_${dateStr}.foliobackup`;
+  const name = filename || `verso_backup_${dateStr}.versobackup`;
 
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');

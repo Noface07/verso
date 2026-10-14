@@ -18,7 +18,7 @@ export const resources = {
   en: {
     translation: {
       common: {
-        appName: 'Folio',
+        appName: 'Verso',
         cancel: 'Cancel',
         save: 'Save',
         delete: 'Delete',
@@ -92,7 +92,7 @@ export const resources = {
         licenses: 'Licenses & Attribution',
       },
       onboarding: {
-        welcomeTitle: 'Welcome to Folio',
+        welcomeTitle: 'Welcome to Verso',
         welcomeSubtitle: 'Your personal, distraction-free reader for eBooks and Manga.',
         chooseTheme: 'Choose your preferred look',
         next: 'Continue',
@@ -118,7 +118,7 @@ export const resources = {
   ar: {
     translation: {
       common: {
-        appName: 'فوليو',
+        appName: 'فيرسو',
         cancel: 'إلغاء',
         save: 'حفظ',
         delete: 'حذف',

@@ -1,8 +1,8 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "Folio",
+  "productName": "Verso",
   "version": "0.1.0",
-  "identifier": "com.folio.reader",
+  "identifier": "com.verso.reader",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:5173",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "Folio",
+        "title": "Verso",
         "width": 1200,
         "height": 800,
         "minWidth": 900,

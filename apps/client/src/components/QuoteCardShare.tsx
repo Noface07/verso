@@ -171,10 +171,10 @@ export function QuoteCardShare({ quote, title, author, onClose }: QuoteCardShare
     ctx.font = '28px "Inter Variable", system-ui, sans-serif';
     ctx.fillText(wrapText(ctx, author, maxWidth, 1)[0] ?? '', x, y);
 
-    // Folio watermark at bottom
+    // Verso watermark at bottom
     ctx.fillStyle = t.subtext;
     ctx.font = '600 22px "Inter Variable", system-ui, sans-serif';
-    ctx.fillText('FOLIO', width - 180, height - 90);
+    ctx.fillText('VERSO', width - 180, height - 90);
   }, [cleanQuote, title, author, theme]);
 
   const handleCopyImage = async () => {

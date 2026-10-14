@@ -22,7 +22,7 @@ export const ShortcutsDialog: React.FC<ShortcutsDialogProps> = ({ open, onOpenCh
           <span>Keyboard Shortcuts</span>
         </div>
       }
-      description="Quick navigation and reading shortcuts across Folio."
+      description="Quick navigation and reading shortcuts across Verso."
       className="max-w-[580px]"
     >
       <div className="space-y-5 max-h-[60vh] overflow-y-auto pr-1">

@@ -1,4 +1,4 @@
-# Folio — agent guide
+# Verso — agent guide
 
 ## Commands
 - Install: `pnpm i`

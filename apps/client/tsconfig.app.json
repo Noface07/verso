@@ -17,7 +17,7 @@
     "noEmit": true,
     "jsx": "react-jsx",
     "paths": {
-      "@folio/shared": ["../../packages/shared/src/index.ts"]
+      "@verso/shared": ["../../packages/shared/src/index.ts"]
     },
 
     /* Linting */

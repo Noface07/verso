@@ -539,21 +539,21 @@ export default function Settings() {
               <div>
                 <h3 className="text-base font-semibold">{t('settings.restoreBackup')}</h3>
                 <p className="text-xs text-[var(--text-muted)] mt-0.5">
-                  Merge a `.foliobackup` archive into Folio using Last-Write-Wins rules.
+                  Merge a `.versobackup` or `.foliobackup` archive into Verso using Last-Write-Wins rules.
                 </p>
               </div>
               <div>
                 <label className="cursor-pointer">
                   <input
                     type="file"
-                    accept=".foliobackup,.zip"
+                    accept=".versobackup,.foliobackup,.zip"
                     onChange={handleImportBackup}
                     disabled={importing}
                     className="hidden"
                   />
                   <span className="inline-flex items-center text-sm font-semibold px-4 py-2 rounded-[var(--r-md)] bg-[var(--surface-overlay)] hover:bg-[var(--surface-base)] border border-[var(--border-subtle)] text-[var(--accent)] transition-colors">
                     <Upload className="w-4 h-4 mr-1.5" />
-                    {importing ? 'Restoring…' : 'Select .foliobackup File'}
+                    {importing ? 'Restoring…' : 'Select Backup File'}
                   </span>
                 </label>
               </div>
@@ -565,7 +565,7 @@ export default function Settings() {
         {activeTab === 'about' && (
           <div className="flex flex-col gap-8 animate-in fade-in-50 duration-150">
             <div>
-              <h2 className="text-xl font-bold">Folio</h2>
+              <h2 className="text-xl font-bold">Verso</h2>
               <p className="text-sm text-[var(--text-muted)]">
                 Version 0.1.0 · Designed for distraction-free reading.
               </p>
@@ -585,7 +585,7 @@ export default function Settings() {
               <div>
                 <h4 className="text-sm font-semibold">Anonymous Error Reporting</h4>
                 <p className="text-xs text-[var(--text-muted)]">
-                  Help improve Folio by sending anonymous crash logs. Off by default; no personal data or book text is ever sent.
+                  Help improve Verso by sending anonymous crash logs. Off by default; no personal data or book text is ever sent.
                 </p>
               </div>
               <input

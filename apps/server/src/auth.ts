@@ -2,7 +2,7 @@ import bcrypt from 'bcryptjs';
 import crypto from 'node:crypto';
 import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import { pool } from './db.js';
-import type { AuthResponse } from '@folio/shared';
+import type { AuthResponse } from '@verso/shared';
 import './types.js';
 
 const ACCESS_TTL = '1h';

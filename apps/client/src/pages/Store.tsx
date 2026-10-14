@@ -1320,7 +1320,7 @@ export default function Store() {
             />
             <p className="text-[11px] text-[var(--text-3)] mt-1">
               {newSourceKind === 'suwayomi'
-                ? 'Connects to Suwayomi-Server (Tachidesk). All installed Tachiyomi and Mihon extensions become available in Folio.'
+                ? 'Connects to Suwayomi-Server (Tachidesk). All installed Tachiyomi and Mihon extensions become available in Verso.'
                 : newSourceKind === 'komga'
                   ? 'Connects to your self-hosted Komga comics and manga server.'
                   : 'Connects to standard OPDS 1.2 or 2.0 feeds (Calibre, Kavita, Unglue.it, etc.).'}
@@ -1415,7 +1415,7 @@ export default function Store() {
       >
         <div className="space-y-4">
           <p className="text-xs text-[var(--text-2)]">
-            Installed Tachiyomi and Mihon extensions from your local Suwayomi server. Install new sources from the Keiyoushi Extension Store to read in Folio.
+            Installed Tachiyomi and Mihon extensions from your local Suwayomi server. Install new sources from the Keiyoushi Extension Store to read in Verso.
           </p>
 
           <div className="flex flex-wrap items-center gap-2">

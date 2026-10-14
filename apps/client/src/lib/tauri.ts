@@ -109,7 +109,7 @@ export async function listenFileOpen(
   if (!isTauri()) return () => {};
   try {
     const { listen } = await import('@tauri-apps/api/event');
-    const unlisten = await listen<string>('folio://file-open', (event) => {
+    const unlisten = await listen<string>('verso://file-open', (event) => {
       if (event.payload) callback(event.payload);
     });
     return unlisten;
@@ -120,7 +120,7 @@ export async function listenFileOpen(
 }
 
 /**
- * Listens for deep-link protocol events (folio://).
+ * Listens for deep-link protocol events (verso://).
  */
 export async function listenDeepLink(
   callback: (url: string) => void,
@@ -162,12 +162,12 @@ export function isAndroidDevice(): boolean {
 }
 
 /**
- * Opens an external page (e.g. an official publisher's chapter) inside Folio: in a
+ * Opens an external page (e.g. an official publisher's chapter) inside Verso: in a
  * separate app window on desktop, falling back to the system browser elsewhere.
- * The window loads remote content only; it gets no access to Folio's APIs because
+ * The window loads remote content only; it gets no access to Verso's APIs because
  * capabilities are granted to the "main" window alone.
  */
-export async function openInAppWindow(url: string, title = 'Folio'): Promise<void> {
+export async function openInAppWindow(url: string, title = 'Verso'): Promise<void> {
   if (isTauri() && !isAndroidDevice()) {
     try {
       const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow');
@@ -196,7 +196,7 @@ export async function openInAppWindow(url: string, title = 'Folio'): Promise<voi
  * not block (it returns before the user answers), so actions ran immediately and
  * the dialog appeared afterwards. Uses the native dialog there instead.
  */
-export async function confirmAction(message: string, title = 'Folio'): Promise<boolean> {
+export async function confirmAction(message: string, title = 'Verso'): Promise<boolean> {
   if (isTauri()) {
     try {
       const { ask } = await import('@tauri-apps/plugin-dialog');

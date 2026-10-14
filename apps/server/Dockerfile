@@ -5,7 +5,7 @@ COPY package.json pnpm-lock.yaml* pnpm-workspace.yaml ./
 COPY packages/shared ./packages/shared
 COPY apps/server ./apps/server
 RUN pnpm install --frozen-lockfile
-RUN pnpm --filter @folio/shared build && pnpm --filter server build
+RUN pnpm --filter @verso/shared build && pnpm --filter server build
 
 FROM node:22-alpine
 WORKDIR /app

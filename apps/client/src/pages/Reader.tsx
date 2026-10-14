@@ -1496,7 +1496,7 @@ export default function Reader() {
               <h3 className="font-display font-semibold text-base">Open External Link?</h3>
             </div>
             <p className="text-xs text-[var(--text-2)] mb-3">
-              You are about to open a website outside of Folio in your browser:
+              You are about to open a website outside of Verso in your browser:
             </p>
             <div className="p-2.5 rounded-lg bg-[var(--layer-2)] border border-[var(--stroke)] text-xs font-mono break-all text-[var(--text-1)] mb-4">
               {externalLinkPrompt}

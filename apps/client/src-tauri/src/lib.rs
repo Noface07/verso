@@ -23,7 +23,7 @@ pub fn run() {
       }
       for arg in args.into_iter().skip(1) {
         if !arg.starts_with('-') {
-          let _ = app.emit("folio://file-open", arg);
+          let _ = app.emit("verso://file-open", arg);
         }
       }
     }));
@@ -36,7 +36,7 @@ pub fn run() {
         let args: Vec<String> = std::env::args().collect();
         for arg in args.into_iter().skip(1) {
           if !arg.starts_with('-') {
-            let _ = app.emit("folio://file-open", arg);
+            let _ = app.emit("verso://file-open", arg);
           }
         }
       }

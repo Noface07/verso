@@ -107,7 +107,7 @@ export const NavRail: React.FC<NavRailProps> = ({
         </button>
         {expanded && (
           <span className="font-display font-bold text-lg text-[var(--text-1)] ml-2.5 tracking-tight animate-in fade-in-0 duration-150">
-            Folio
+            Verso
           </span>
         )}
       </div>

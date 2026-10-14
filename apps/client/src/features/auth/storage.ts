@@ -34,17 +34,17 @@ export async function setRefreshToken(token: string | null): Promise<void> {
 }
 
 /**
- * Validates and normalises a Folio server address. Returns an error message for
- * values that can't work, notably a database address: the app talks to the Folio
+ * Validates and normalises a Verso server address. Returns an error message for
+ * values that can't work, notably a database address: the app talks to the Verso
  * API, and only the API talks to Postgres/Supabase.
  */
 export function normalizeServerUrl(input: string): { url: string } | { error: string } {
   let raw = input.trim().replace(/\/+$/, '');
-  if (!raw) return { error: 'Enter the address of your Folio server.' };
+  if (!raw) return { error: 'Enter the address of your Verso server.' };
   if (/^postgres(ql)?:/i.test(raw)) {
     return {
       error:
-        'That is a database connection string. Enter the Folio server address instead (for example https://folio.example.com).',
+        'That is a database connection string. Enter the Verso server address instead (for example https://verso.example.com).',
     };
   }
   if (!/^https?:\/\//i.test(raw)) {
@@ -60,7 +60,7 @@ export function normalizeServerUrl(input: string): { url: string } | { error: st
   if (/supabase\.(co|com)$/i.test(u.hostname) || u.port === '5432' || u.port === '6543') {
     return {
       error:
-        'That is the Supabase database address. The app connects to the Folio API server, which then talks to Supabase (for example http://localhost:8080 or your deployed server).',
+        'That is the Supabase database address. The app connects to the Verso API server, which then talks to Supabase (for example http://localhost:8080 or your deployed server).',
     };
   }
   return { url: `${u.origin}${u.pathname.replace(/\/+$/, '')}` };
