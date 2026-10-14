@@ -1,0 +1,7 @@
+node_modules
+.git
+.github
+apps/client
+test-results
+playwright-report
+*.log
