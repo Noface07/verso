@@ -6,12 +6,36 @@ import {
   PutObjectCommand,
   GetObjectCommand,
   HeadObjectCommand,
+  HeadBucketCommand,
   DeleteObjectCommand,
   DeleteObjectsCommand,
   ListObjectsV2Command,
 } from '@aws-sdk/client-s3';
 
 export const HASH_RE = /^[a-f0-9]{64}$/;
+
+/**
+ * The storage service can't be reached (e.g. the PC running s3rver is off or the
+ * ngrok tunnel is closed). Routes answer 503 "storage_offline" for this instead
+ * of claiming the file doesn't exist.
+ */
+export class StorageOfflineError extends Error {
+  constructor(cause?: unknown) {
+    super('Book storage is offline', { cause });
+    this.name = 'StorageOfflineError';
+  }
+}
+
+type AwsError = { name?: string; code?: string; message?: string; $metadata?: { httpStatusCode?: number } };
+
+/** Network-level failure or a gateway/tunnel error rather than an S3 answer. */
+function isUnreachable(err: unknown): boolean {
+  const e = err as AwsError;
+  const status = e.$metadata?.httpStatusCode;
+  if (status === 502 || status === 503 || status === 504) return true;
+  const text = `${e.name ?? ''} ${e.code ?? ''} ${e.message ?? ''}`;
+  return /ECONNREFUSED|ENOTFOUND|ETIMEDOUT|ECONNRESET|EAI_AGAIN|socket hang up|TimeoutError|ERR_NGROK|Unexpected end|Deserialization|char '<'/i.test(text);
+}
 
 export interface FileItem {
   hash: string;
@@ -25,6 +49,8 @@ export interface StorageDriver {
   delete(userId: string, hash: string): Promise<void>;
   list(userId: string): Promise<FileItem[]>;
   deleteAll(userId: string): Promise<void>;
+  /** Throws StorageOfflineError if the backing store can't be reached. */
+  ping(): Promise<void>;
 }
 
 class LocalStorageDriver implements StorageDriver {
@@ -97,6 +123,10 @@ class LocalStorageDriver implements StorageDriver {
   async deleteAll(userId: string): Promise<void> {
     await fsp.rm(this.userDir(userId), { recursive: true, force: true });
   }
+
+  async ping(): Promise<void> {
+    await fsp.mkdir(this.root, { recursive: true });
+  }
 }
 
 class R2StorageDriver implements StorageDriver {
@@ -120,6 +150,28 @@ class R2StorageDriver implements StorageDriver {
     return `${userId}/${hash}`;
   }
 
+  private reachableUntil = 0;
+
+  /**
+   * Confirms the bucket answers. A tunnel that's down (ngrok) replies 404 to
+   * every request, which on its own looks exactly like "file not found", so a
+   * not-found result is only trusted once the bucket itself is reachable.
+   */
+  async ping(): Promise<void> {
+    if (Date.now() < this.reachableUntil) return;
+    try {
+      await this.client.send(new HeadBucketCommand({ Bucket: this.bucket }));
+      this.reachableUntil = Date.now() + 30_000;
+    } catch (err) {
+      throw new StorageOfflineError(err);
+    }
+  }
+
+  private async rethrow(err: unknown): Promise<never> {
+    if (isUnreachable(err)) throw new StorageOfflineError(err);
+    throw err;
+  }
+
   async has(userId: string, hash: string): Promise<boolean> {
     try {
       await this.client.send(
@@ -130,11 +182,12 @@ class R2StorageDriver implements StorageDriver {
       );
       return true;
     } catch (err: unknown) {
-      const e = err as { name?: string; $metadata?: { httpStatusCode?: number } };
+      const e = err as AwsError;
       if (e.name === 'NotFound' || e.name === 'NoSuchKey' || e.$metadata?.httpStatusCode === 404) {
+        await this.ping();
         return false;
       }
-      throw err;
+      return this.rethrow(err);
     }
   }
 
@@ -152,11 +205,12 @@ class R2StorageDriver implements StorageDriver {
         size: res.ContentLength ?? 0,
       };
     } catch (err: unknown) {
-      const e = err as { name?: string; $metadata?: { httpStatusCode?: number } };
+      const e = err as AwsError;
       if (e.name === 'NotFound' || e.name === 'NoSuchKey' || e.$metadata?.httpStatusCode === 404) {
+        await this.ping();
         return null;
       }
-      throw err;
+      return this.rethrow(err);
     }
   }
 
@@ -172,18 +226,17 @@ class R2StorageDriver implements StorageDriver {
           ContentType: 'application/octet-stream',
         }),
       );
+    } catch (err) {
+      await this.rethrow(err);
     } finally {
       await fsp.rm(localFilePath, { force: true });
     }
   }
 
   async delete(userId: string, hash: string): Promise<void> {
-    await this.client.send(
-      new DeleteObjectCommand({
-        Bucket: this.bucket,
-        Key: this.key(userId, hash),
-      }),
-    );
+    await this.client
+      .send(new DeleteObjectCommand({ Bucket: this.bucket, Key: this.key(userId, hash) }))
+      .catch((err) => this.rethrow(err));
   }
 
   /** All object keys under a prefix. ListObjectsV2 returns at most 1000 per page. */
@@ -191,9 +244,13 @@ class R2StorageDriver implements StorageDriver {
     const out: { Key: string; Size: number }[] = [];
     let token: string | undefined;
     do {
-      const res = await this.client.send(
-        new ListObjectsV2Command({ Bucket: this.bucket, Prefix: prefix, ContinuationToken: token }),
-      );
+      const res = await this.client
+        .send(new ListObjectsV2Command({ Bucket: this.bucket, Prefix: prefix, ContinuationToken: token }))
+        .catch(async (err) => {
+          // A 404 for the whole listing is a closed tunnel (or a missing bucket).
+          if ((err as AwsError).$metadata?.httpStatusCode === 404) await this.ping();
+          return this.rethrow(err);
+        });
       for (const obj of res.Contents || []) {
         if (obj.Key) out.push({ Key: obj.Key, Size: obj.Size ?? 0 });
       }

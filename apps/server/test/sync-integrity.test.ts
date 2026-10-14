@@ -1,5 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { vi } from 'vitest';
 import { setupTestApp, type TestContext } from './test-helper.js';
+import { storage, StorageOfflineError } from '../src/storage.js';
 
 const book = (id: string, title: string, updated_at: number) => ({
   id,
@@ -107,5 +109,26 @@ describe('Sync integrity', () => {
       headers: { authorization: `Bearer ${again.json().accessToken}` },
     });
     expect(pull.json().changes.books ?? []).toHaveLength(0);
+  });
+
+  it('answers 503 storage_offline (not 404) when the book storage is unreachable', async () => {
+    const spy = vi.spyOn(storage, 'get').mockRejectedValue(new StorageOfflineError());
+    const res = await ctx.app.inject({
+      method: 'GET',
+      url: `/files/${'a'.repeat(64)}`,
+      headers: { authorization: `Bearer ${access}` },
+    });
+    expect(res.statusCode).toBe(503);
+    expect(res.json().code).toBe('storage_offline');
+    spy.mockRestore();
+  });
+
+  it('reports storage health', async () => {
+    const ok = await ctx.app.inject({ method: 'GET', url: '/health/storage' });
+    expect(ok.statusCode).toBe(200);
+    const spy = vi.spyOn(storage, 'ping').mockRejectedValue(new StorageOfflineError());
+    const down = await ctx.app.inject({ method: 'GET', url: '/health/storage' });
+    expect(down.statusCode).toBe(503);
+    spy.mockRestore();
   });
 });

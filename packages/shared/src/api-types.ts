@@ -84,6 +84,9 @@ export interface SyncPullResponse {
 /** Error code in 401 bodies when the account no longer exists. */
 export const ACCOUNT_DELETED = 'account_deleted';
 
+/** Error code in 503 bodies when the book file storage can't be reached. */
+export const STORAGE_OFFLINE = 'storage_offline';
+
 export interface EventsTokenResponse {
   token: string;
   expiresIn: number;

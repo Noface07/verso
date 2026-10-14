@@ -20,6 +20,7 @@ function fakeServer() {
     pushed: [] as Record<string, unknown[]>[],
     deleted: false,
     refreshStatus: 200,
+    storageOffline: false,
   };
   const json = (body: unknown, status = 200) =>
     new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
@@ -64,6 +65,9 @@ function fakeServer() {
         }
       }
       return json({ accepted: 0, stale, invalid: 0, staleIds: {}, serverRows, serverTime: Date.now() });
+    }
+    if (url.pathname.startsWith('/files') && state.storageOffline) {
+      return json({ error: 'book storage is offline', code: 'storage_offline' }, 503);
     }
     if (url.pathname === '/files' && method === 'GET') {
       return json([...state.files].map((hash) => ({ hash, size: 1 })));
@@ -181,6 +185,23 @@ describe('Sync integrity (client)', () => {
     expect(await getRefreshToken()).toBeNull();
     expect(useSyncStore.getState().accountDeleted).toBe(true);
     expect(useSyncStore.getState().status).toBe('signedOut');
+  });
+
+  it('keeps syncing data, and flags it, when the book storage (s3rver PC) is offline', async () => {
+    server.state.storageOffline = true;
+    await db.books.put({ ...book('e'.repeat(64), 1000, { file_hash: 'e'.repeat(64) }), _dirty: 1 });
+    await db.files.put({ hash: 'e'.repeat(64), blob: new Blob(['y']) });
+    await syncEngine.runSync();
+    expect(server.state.rows.get(`books:${'e'.repeat(64)}`)).toBeTruthy(); // data still synced
+    expect(useSyncStore.getState().status).toBe('idle');
+    expect(useSyncStore.getState().storageOffline).toBe(true);
+
+    server.state.storageOffline = false; // PC back on
+    const st = (await db.kv.get('sync_state'))!.value as Record<string, unknown>;
+    await db.kv.put({ key: 'sync_state', value: { ...st, lastFileCheck: 0 } });
+    await syncEngine.runSync();
+    expect(server.state.files.has('e'.repeat(64))).toBe(true);
+    expect(useSyncStore.getState().storageOffline).toBe(false);
   });
 
   it('stays signed in when the server is temporarily unavailable during refresh', async () => {

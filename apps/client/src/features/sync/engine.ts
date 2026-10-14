@@ -8,6 +8,7 @@ import {
   listFiles,
   syncEventsToken,
   AccountDeletedError,
+  StorageOfflineError,
 } from './api';
 import { getAuthUser, getRefreshToken, getServerUrl, clearAuth } from '../auth/storage';
 import type { SyncTableName } from '@verso/shared';
@@ -78,6 +79,8 @@ export interface SyncState {
   isOnline: boolean;
   /** Set when the server reported this account deleted (local copy was wiped). */
   accountDeleted: boolean;
+  /** Book file storage unreachable; data still syncs, files wait until it's back. */
+  storageOffline: boolean;
   runSync: () => Promise<void>;
   updatePendingCount: () => Promise<number>;
 }
@@ -91,6 +94,7 @@ export const useSyncStore = create<SyncState>((set) => ({
   filesUploadingTotal: 0,
   isOnline: typeof navigator !== 'undefined' ? navigator.onLine : true,
   accountDeleted: false,
+  storageOffline: false,
 
   updatePendingCount: async () => {
     let count = 0;
@@ -219,14 +223,14 @@ export class SyncEngine {
       // Stage 1: PUSH
       await this.stage1Push();
 
-      // Stage 2: FILES UP
-      await this.stage2FilesUp(state);
+      // Stage 2: FILES UP (book storage may be offline: then only files wait)
+      const filesOk = await this.withFileStorage(() => this.stage2FilesUp(state));
 
       // Stage 3: PULL
       await this.stage3Pull(state);
 
       // Stage 4: FILES DOWN
-      await this.stage4FilesDown();
+      if (filesOk) await this.withFileStorage(() => this.stage4FilesDown());
 
       // Stage 5: Success
       useSyncStore.setState({
@@ -281,6 +285,25 @@ export class SyncEngine {
     await db.kv.bulkDelete(['sync_cursor', 'uploaded_files']);
     await writeSyncState(fresh);
     return fresh;
+  }
+
+  /**
+   * Runs a file stage. If the book storage is offline (the PC running s3rver is
+   * off or its tunnel is closed), library/progress/highlights still sync and the
+   * files are retried on the next sync, instead of the whole sync failing.
+   */
+  private async withFileStorage(stage: () => Promise<void>): Promise<boolean> {
+    try {
+      await stage();
+      useSyncStore.setState({ storageOffline: false });
+      return true;
+    } catch (err) {
+      if (err instanceof StorageOfflineError) {
+        useSyncStore.setState({ storageOffline: true, filesUploadingCount: 0, filesUploadingTotal: 0 });
+        return false;
+      }
+      throw err;
+    }
   }
 
   /** The server says the account no longer exists: wipe this device's copy. */
@@ -347,6 +370,7 @@ export class SyncEngine {
     }
 
     const pending: Array<{ hash: string; getBlob: () => Promise<Blob | null> }> = [];
+    let storageDown: StorageOfflineError | null = null;
     const books = await db.books.filter((b) => !b.deleted_at).toArray();
     for (const book of books) {
       if (book.file_hash && !uploaded.has(book.file_hash)) {
@@ -375,6 +399,11 @@ export class SyncEngine {
             }
           } catch (err) {
             if (err instanceof AccountDeletedError) throw err;
+            if (err instanceof StorageOfflineError) {
+              storageDown = err;
+              index = pending.length; // stop the other worker too
+              continue;
+            }
             // Other per-file errors don't fail the sync; the file is retried next time.
           } finally {
             completed++;
@@ -388,6 +417,7 @@ export class SyncEngine {
 
     state.uploaded = Array.from(uploaded);
     await writeSyncState(state);
+    if (storageDown) throw storageDown;
   }
 
   // 3) PULL
@@ -451,7 +481,7 @@ export class SyncEngine {
         const blob = await getFile(coverHash);
         await db.covers.put({ id: book.id, blob });
       } catch (err) {
-        if (err instanceof AccountDeletedError) throw err;
+        if (err instanceof AccountDeletedError || err instanceof StorageOfflineError) throw err;
         // Skip on cover download error; retried next sync.
       }
     }

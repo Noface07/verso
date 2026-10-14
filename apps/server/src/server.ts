@@ -11,7 +11,8 @@ import { pool, describeConnection } from './db.js';
 import { getNotifyHub } from './notify.js';
 import { runMigrations } from './migrate.js';
 import { userExists, wasDeleted } from './integrity.js';
-import { ACCOUNT_DELETED } from '@verso/shared';
+import { ACCOUNT_DELETED, STORAGE_OFFLINE } from '@verso/shared';
+import { storage, StorageOfflineError } from './storage.js';
 import './types.js';
 
 export async function createServer(): Promise<FastifyInstance> {
@@ -57,10 +58,29 @@ export async function createServer(): Promise<FastifyInstance> {
     }
   });
 
+  // Storage offline (PC with s3rver off / tunnel closed): a clear 503 instead of a
+  // generic 500, or "not found" for files that do exist.
+  app.setErrorHandler((err, _req, reply) => {
+    if (err instanceof StorageOfflineError) {
+      return reply.code(503).send({ error: 'book storage is offline', code: STORAGE_OFFLINE });
+    }
+    return reply.send(err);
+  });
+
   // Health endpoint checks database connectivity
   app.get('/health', async () => {
     await pool.query('select 1');
     return { ok: true };
+  });
+
+  // Is the book file storage reachable? (open in a browser to check your tunnel)
+  app.get('/health/storage', async (_req, reply) => {
+    try {
+      await storage.ping();
+      return { ok: true };
+    } catch {
+      return reply.code(503).send({ ok: false, code: STORAGE_OFFLINE });
+    }
   });
 
   // Me endpoint

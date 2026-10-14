@@ -61,6 +61,7 @@ export const NavRail: React.FC<NavRailProps> = ({
     filesUploadingCount,
     filesUploadingTotal,
     runSync,
+    storageOffline,
   } = useSyncStore();
 
   const effectiveStatus = syncStatusProp ?? storeSyncStatus;
@@ -70,7 +71,7 @@ export const NavRail: React.FC<NavRailProps> = ({
   }, [expanded]);
 
   const syncLabels = {
-    idle: lastSyncAt ? 'Synced' : 'Not synced yet',
+    idle: lastSyncAt ? (storageOffline ? 'Synced · book storage offline' : 'Synced') : 'Not synced yet',
     signedOut: 'Sync off · not signed in',
     syncing: 'Syncing…',
     error: 'Sync error',

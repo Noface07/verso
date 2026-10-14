@@ -8,7 +8,7 @@ import {
   getAuthUser,
   clearAuth,
 } from '../auth/storage';
-import { ACCOUNT_DELETED } from '@verso/shared';
+import { ACCOUNT_DELETED, STORAGE_OFFLINE } from '@verso/shared';
 import { setClockOffset } from '../../db';
 import type {
   AuthResponse,
@@ -41,6 +41,21 @@ export class AccountDeletedError extends ApiError {
     this.name = 'AccountDeletedError';
   }
 }
+
+/** The server is up but can't reach the book file storage (s3rver PC / tunnel down). */
+export class StorageOfflineError extends ApiError {
+  constructor(data: unknown) {
+    super(
+      503,
+      data,
+      'Your book storage is offline. Start your storage (s3rver + ngrok) on your PC, then try again.',
+    );
+    this.name = 'StorageOfflineError';
+  }
+}
+
+const isStorageOffline = (body: unknown) =>
+  !!body && typeof body === 'object' && (body as { code?: unknown }).code === STORAGE_OFFLINE;
 
 const isAccountDeleted = (body: unknown) =>
   !!body && typeof body === 'object' && (body as { code?: unknown }).code === ACCOUNT_DELETED;
@@ -143,6 +158,7 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
   if (!res.ok) {
     const errorBody = await res.json().catch(() => null);
     if (res.status === 401 && isAccountDeleted(errorBody)) throw new AccountDeletedError(errorBody);
+    if (res.status === 503 && isStorageOffline(errorBody)) throw new StorageOfflineError(errorBody);
     throw new ApiError(res.status, errorBody);
   }
 
@@ -287,6 +303,10 @@ export async function getFile(hash: string): Promise<Blob> {
   }
 
   if (!res.ok) {
+    if (res.status === 503) {
+      const body = await res.json().catch(() => null);
+      if (isStorageOffline(body)) throw new StorageOfflineError(body);
+    }
     throw new ApiError(
       res.status,
       null,
