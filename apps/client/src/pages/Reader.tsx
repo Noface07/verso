@@ -3,7 +3,7 @@ import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useLiveQuery } from 'dexie-react-hooks'
 import {
   ArrowLeft, BookMarked, Bookmark, Columns2, ExternalLink, Headphones, Highlighter, List,
-  Maximize2, Minimize2, RectangleVertical, Search, Type, Undo2, X,
+  Maximize2, Minimize2, RectangleVertical, Search, Type, Undo2, Upload, X,
 } from 'lucide-react'
 import { db, deviceId, dirty, uid, type Annotation, type HighlightStyle, type Progress } from '../db'
 import { CFI, Overlayer, type FoliateView, type TocItem } from '../lib/foliate'
@@ -30,6 +30,7 @@ import { exitAppFullscreen, isAppFullscreen, toggleAppFullscreen, useAppFullscre
 import { isInputTarget } from '../lib/useHotkeys'
 import { registerBackHandler } from '../lib/backStack'
 import { setKeepScreenOn, triggerHaptic, useVolumeKeys } from '../lib/mobileUx'
+import { ACCEPT, importOne } from '../lib/importBook'
 
 type Panel = 'toc' | 'search' | 'notes' | 'bookmarks' | 'settings' | 'lookup' | null
 const PANEL_TITLE: Record<Exclude<Panel, null>, string> = {
@@ -1232,9 +1233,30 @@ export default function Reader() {
           {status === 'error' && (
             <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-4 p-6 bg-[var(--rbg)] text-center text-[var(--rmuted)]">
               <p className="max-w-md text-sm text-[var(--danger)]">{error}</p>
-              <Button variant="standard" onClick={() => navigate('/library')}>
-                Back to library
-              </Button>
+              <div className="flex flex-wrap items-center justify-center gap-3">
+                <Button variant="standard" onClick={() => navigate('/library')}>
+                  Back to library
+                </Button>
+                <label className="cursor-pointer">
+                  <input
+                    type="file"
+                    accept={ACCEPT}
+                    onChange={async (e) => {
+                      const file = e.target.files?.[0]
+                      if (file) {
+                        setStatus('loading')
+                        await importOne(file)
+                        window.location.reload()
+                      }
+                    }}
+                    className="hidden"
+                  />
+                  <span className="inline-flex items-center text-sm font-semibold px-4 py-2 rounded-[var(--r-md)] bg-[var(--accent)] text-white hover:opacity-90 transition-opacity">
+                    <Upload className="w-4 h-4 mr-1.5" />
+                    Locate file on this device…
+                  </span>
+                </label>
+              </div>
             </div>
           )}
         </div>

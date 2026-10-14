@@ -1,30 +1,14 @@
-import fsp from 'node:fs/promises';
-import path from 'node:path';
 import bcrypt from 'bcryptjs';
 import archiver from 'archiver';
 import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import { pool } from './db.js';
 import { SYNC_TABLES, type SyncTableName } from '@verso/shared';
+import { storage } from './storage.js';
 import './types.js';
 
-const ROOT = process.env.FILES_DIR || './data/files';
-const HASH_RE = /^[a-f0-9]{64}$/;
-
 async function calculateStorageUsed(userId: string): Promise<number> {
-  const userDir = path.join(ROOT, userId);
-  let totalBytes = 0;
-  try {
-    const entries = await fsp.readdir(userDir, { withFileTypes: true });
-    for (const entry of entries) {
-      if (entry.isFile() && HASH_RE.test(entry.name)) {
-        const stat = await fsp.stat(path.join(userDir, entry.name));
-        totalBytes += stat.size;
-      }
-    }
-  } catch {
-    // Directory may not exist if no files uploaded
-  }
-  return totalBytes;
+  const files = await storage.list(userId);
+  return files.reduce((acc, f) => acc + f.size, 0);
 }
 
 export const accountRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
@@ -137,23 +121,11 @@ export const accountRoutes: FastifyPluginAsync = async (app: FastifyInstance) =>
       }
 
       // Collect file manifest
-      const userDir = path.join(ROOT, userId);
-      const filesManifest: Array<{ hash: string; size: number }> = [];
-      try {
-        const entries = await fsp.readdir(userDir, { withFileTypes: true });
-        for (const entry of entries) {
-          if (entry.isFile() && HASH_RE.test(entry.name)) {
-            const stat = await fsp.stat(path.join(userDir, entry.name));
-            filesManifest.push({ hash: entry.name, size: stat.size });
-          }
-        }
-      } catch {
-        // Files directory might be empty
-      }
+      const filesManifest = await storage.list(userId);
 
       reply.raw.writeHead(200, {
         'Content-Type': 'application/zip',
-        'Content-Disposition': `attachment; filename="folio-export-${Date.now()}.zip"`,
+        'Content-Disposition': `attachment; filename="verso-export-${Date.now()}.zip"`,
         'Cache-Control': 'no-cache',
       });
 
@@ -197,9 +169,8 @@ export const accountRoutes: FastifyPluginAsync = async (app: FastifyInstance) =>
       // Foreign keys in Postgres have ON DELETE CASCADE
       await pool.query('delete from users where id = $1', [userId]);
 
-      // Remove disk storage
-      const userDir = path.join(ROOT, userId);
-      await fsp.rm(userDir, { recursive: true, force: true });
+      // Remove user storage (R2 or disk)
+      await storage.deleteAll(userId);
 
       return { ok: true };
     },

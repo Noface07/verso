@@ -111,7 +111,24 @@ export async function importOne(
   const ext = file.name.split('.').pop()?.toLowerCase() ?? '';
   const hash = await sha256(await file.arrayBuffer());
   const existing = await db.books.get(hash);
-  if (existing && !existing.deleted_at) return false;
+  if (existing && !existing.deleted_at) {
+    const hasFile = await db.files.get(hash);
+    if (!hasFile) {
+      await db.files.put({ hash, blob: file });
+      try {
+        const book = await makeBook(file);
+        const rawCover = await book.getCover?.();
+        if (rawCover) {
+          const coverBlob = await shrinkCover(rawCover);
+          await db.covers.put({ id: hash, blob: coverBlob });
+        }
+      } catch {
+        // cover extraction is optional
+      }
+      return true;
+    }
+    return false;
+  }
 
   const book = await makeBook(file);
   const md = book.metadata ?? {};

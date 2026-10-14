@@ -1,4 +1,4 @@
-package com.folio.reader
+package com.verso.reader
 
 import android.os.Bundle
 import androidx.activity.enableEdgeToEdge

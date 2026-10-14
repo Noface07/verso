@@ -26,10 +26,10 @@ val tauriProperties = Properties().apply {
 android {
     // 36 is the newest platform installed locally; 37 would trigger an SDK download.
     compileSdk = 36
-    namespace = "com.folio.reader"
+    namespace = "com.verso.reader"
     defaultConfig {
         manifestPlaceholders["usesCleartextTraffic"] = "false"
-        applicationId = "com.folio.reader"
+        applicationId = "com.verso.reader"
         minSdk = 24
         targetSdk = 36
         versionCode = tauriProperties.getProperty("tauri.android.versionCode", "1").toInt()

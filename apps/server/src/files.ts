@@ -5,19 +5,13 @@ import crypto from 'node:crypto';
 import { Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
+import { storage, HASH_RE, type FileItem } from './storage.js';
 import './types.js';
 
-const ROOT = process.env.FILES_DIR || './data/files';
+const TMP_DIR = path.join(process.env.FILES_DIR || './data/files', '.tmp');
 const MAX_BYTES = (Number(process.env.MAX_FILE_MB) || 300) * 1024 * 1024;
-const HASH_RE = /^[a-f0-9]{64}$/;
 
-const filePath = (userId: string, hash: string) => path.join(ROOT, userId, hash);
-const exists = (p: string) => fsp.access(p).then(() => true, () => false);
-
-export interface FileItem {
-  hash: string;
-  size: number;
-}
+export { type FileItem };
 
 export const fileRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
   // Pass raw upload stream to route instead of buffering in memory
@@ -30,20 +24,7 @@ export const fileRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
     '/',
     { preHandler: app.auth },
     async (req): Promise<FileItem[]> => {
-      const userDir = path.join(ROOT, req.user.sub);
-      try {
-        const entries = await fsp.readdir(userDir, { withFileTypes: true });
-        const files: FileItem[] = [];
-        for (const entry of entries) {
-          if (entry.isFile() && HASH_RE.test(entry.name)) {
-            const stat = await fsp.stat(path.join(userDir, entry.name));
-            files.push({ hash: entry.name, size: stat.size });
-          }
-        }
-        return files;
-      } catch {
-        return [];
-      }
+      return storage.list(req.user.sub);
     },
   );
 
@@ -61,16 +42,13 @@ export const fileRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         return reply.code(415).send({ error: 'send body as application/octet-stream' });
       }
 
-      const dir = path.join(ROOT, req.user.sub);
-      await fsp.mkdir(dir, { recursive: true });
-      const final = filePath(req.user.sub, hash);
-
-      if (await exists(final)) {
+      if (await storage.has(req.user.sub, hash)) {
         (bodyStream as NodeJS.ReadableStream & { resume?: () => void }).resume?.();
         return { stored: false, exists: true };
       }
 
-      const tmp = `${final}.${crypto.randomUUID()}.part`;
+      await fsp.mkdir(TMP_DIR, { recursive: true });
+      const tmp = path.join(TMP_DIR, `${req.user.sub}_${hash}_${crypto.randomUUID()}.part`);
       const hasher = crypto.createHash('sha256');
       let size = 0;
       const meter = new Transform({
@@ -100,7 +78,7 @@ export const fileRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         return reply.code(400).send({ error: 'hash mismatch' });
       }
 
-      await fsp.rename(tmp, final);
+      await storage.put(req.user.sub, hash, tmp, size);
       return reply.code(201).send({ stored: true, size });
     },
   );
@@ -114,20 +92,17 @@ export const fileRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         return reply.code(400).send({ error: 'invalid hash' });
       }
 
-      const p = filePath(req.user.sub, hash);
-      let stat: fs.Stats;
-      try {
-        stat = await fsp.stat(p);
-      } catch {
+      const item = await storage.get(req.user.sub, hash);
+      if (!item) {
         return reply.code(404).send({ error: 'not found' });
       }
 
       reply
-        .header('content-length', stat.size)
+        .header('content-length', item.size)
         .header('cache-control', 'private, max-age=31536000, immutable')
         .type('application/octet-stream');
 
-      return reply.send(fs.createReadStream(p));
+      return reply.send(item.stream);
     },
   );
 
@@ -140,7 +115,7 @@ export const fileRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
         return reply.code(400).send({ error: 'invalid hash' });
       }
 
-      await fsp.rm(filePath(req.user.sub, hash), { force: true });
+      await storage.delete(req.user.sub, hash);
       return { ok: true };
     },
   );
