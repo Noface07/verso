@@ -38,15 +38,17 @@ export const Dialog: React.FC<DialogProps> = ({
         <RadixDialog.Content
           className={twMerge(
             clsx(
-              'fixed left-[50%] top-[50%] z-50 w-[90vw] max-w-[560px] translate-x-[-50%] translate-y-[-50%] rounded-[var(--r-lg)] bg-[var(--layer-solid)] p-6 shadow-[var(--shadow-flyout)] border border-[var(--stroke)] focus:outline-none animate-in fade-in-0 zoom-in-95 duration-150 text-[var(--text-1)]',
+              // Never taller than the screen: content scrolls inside (on phones the
+              // action buttons used to end up below the bottom edge).
+              'fixed left-[50%] top-[50%] z-50 w-[calc(100vw-1.5rem)] sm:w-[90vw] max-w-[560px] max-h-[calc(100dvh-1.5rem)] overflow-y-auto translate-x-[-50%] translate-y-[-50%] rounded-[var(--r-lg)] bg-[var(--layer-solid)] p-4 sm:p-6 shadow-[var(--shadow-flyout)] border border-[var(--stroke)] focus:outline-none animate-in fade-in-0 zoom-in-95 duration-150 text-[var(--text-1)]',
               className,
             ),
           )}
         >
-          <div className="flex items-start justify-between gap-4 mb-4">
-            <div>
+          <div className="flex items-start justify-between gap-4 mb-3 sm:mb-4">
+            <div className="min-w-0">
               {title && (
-                <RadixDialog.Title className="text-lg font-semibold text-[var(--text-1)]">
+                <RadixDialog.Title className="text-base sm:text-lg font-semibold text-[var(--text-1)] leading-snug [overflow-wrap:anywhere]">
                   {title}
                 </RadixDialog.Title>
               )}

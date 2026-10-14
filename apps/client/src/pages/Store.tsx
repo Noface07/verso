@@ -970,9 +970,9 @@ export default function Store() {
           onOpenChange={(open) => !open && setSelectedBook(null)}
           title={selectedBook.title}
         >
-          <div className="flex flex-col md:flex-row gap-5 max-h-[75vh] overflow-y-auto p-1">
-            {/* Book Cover */}
-            <div className="w-36 md:w-44 shrink-0 mx-auto md:mx-0">
+          <div className="flex flex-row flex-wrap sm:flex-nowrap gap-4 sm:gap-5 p-1">
+            {/* Book Cover: beside the details on phones, not a full-width block */}
+            <div className="w-24 sm:w-36 md:w-44 shrink-0 self-start">
               {selectedBook.cover ? (
                 <img
                   src={selectedBook.cover}
@@ -987,9 +987,9 @@ export default function Store() {
             </div>
 
             {/* Book Details */}
-            <div className="flex-1 flex flex-col gap-3 min-w-0">
+            <div className="flex-1 basis-40 flex flex-col gap-3 min-w-0">
               <div>
-                <h3 className="text-lg font-bold text-[var(--text-1)] leading-snug">
+                <h3 className="sr-only">
                   {selectedBook.title}
                 </h3>
                 <p className="text-sm text-[var(--text-2)] mt-0.5">

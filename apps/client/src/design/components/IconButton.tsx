@@ -3,6 +3,9 @@ import { clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { Tooltip } from './Tooltip';
 
+const isCoarsePointer =
+  typeof window !== 'undefined' && !!window.matchMedia?.('(pointer: coarse)').matches;
+
 export type IconButtonVariant = 'subtle' | 'standard' | 'accent' | 'danger';
 
 export interface IconButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
@@ -51,6 +54,9 @@ export const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(
       </button>
     );
 
+    // Touch screens have no hover: tooltips only appeared when a dialog focused
+    // its button (e.g. a stray "Close" bubble). The label stays as aria-label.
+    if (isCoarsePointer) return button;
     return <Tooltip content={label} side={tooltipSide}>{button}</Tooltip>;
   },
 );

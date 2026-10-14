@@ -862,13 +862,13 @@ function ChapterPages({
       {error ? (
         <p className="text-xs text-[var(--danger)]">{error}</p>
       ) : !pages ? (
-        <div className="grid grid-cols-[repeat(auto-fill,minmax(170px,1fr))] gap-3">
+        <div className="grid grid-cols-3 sm:grid-cols-[repeat(auto-fill,minmax(170px,1fr))] gap-2 sm:gap-3">
           {Array.from({ length: 6 }, (_, i) => (
             <div key={i} className="aspect-[2/3] rounded-[var(--r-md)] bg-[var(--layer-2)] animate-pulse" />
           ))}
         </div>
       ) : (
-        <div className="grid grid-cols-[repeat(auto-fill,minmax(170px,1fr))] gap-3">
+        <div className="grid grid-cols-3 sm:grid-cols-[repeat(auto-fill,minmax(170px,1fr))] gap-2 sm:gap-3">
           {pages.map((pg) => (
             <button
               key={pg.index}
