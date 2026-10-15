@@ -139,6 +139,11 @@ class R2StorageDriver implements StorageDriver {
       region: config.region || 'auto',
       endpoint: config.endpoint,
       forcePathStyle: true,
+      // AWS SDK v3.729+ adds trailing CRC32 checksums to streaming uploads by
+      // default. S3rver treats that aws-chunked framing as object bytes, so the
+      // stored object no longer matches its content-addressed key. Let the
+      // existing SHA-256 verification in files.ts remain the integrity check.
+      requestChecksumCalculation: 'WHEN_REQUIRED',
       credentials: {
         accessKeyId: config.accessKeyId,
         secretAccessKey: config.secretAccessKey,

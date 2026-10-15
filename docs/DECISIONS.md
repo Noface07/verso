@@ -41,3 +41,8 @@ This file tracks all significant architecture and design decisions made througho
   - Downloads are verified against their hash; the reader time-limits each opening step, falls back to the start of the book when a saved position can't be restored, and offers re-downloading.
   - The Render image runs migrations on start (`MIGRATE_ON_START=true`).
 - **Consequences**: After this update, every device does one full re-push (timestamps preserved, so the server keeps the newer copy of each row). Covers now sync; they were uploaded and downloaded under the wrong key before.
+
+## 2026-10-15: Disable optional streaming checksums for S3-compatible storage
+- **Context**: The AWS SDK v3 streaming upload path stored objects in local S3rver with trailing checksum framing included in the object body. A Dorian Gray EPUB expected to be 461,435 bytes was stored as 461,541 bytes, so its SHA-256 no longer matched its content-addressed object key and clients rejected downloads.
+- **Decision**: Configure the S3 client with `requestChecksumCalculation: 'WHEN_REQUIRED'` for S3-compatible storage. The API already verifies each incoming upload against its SHA-256 key before forwarding it to storage.
+- **Consequences**: S3rver receives the plain object stream and stores bytes that match the key. Real AWS S3/R2 do not require optional request checksums for these uploads; if required checksums are added to an operation later, the SDK still calculates them.
