@@ -288,6 +288,10 @@ export async function getFile(hash: string): Promise<Blob> {
     try {
       return await fetch(`${serverUrl}/files/${hash}`, {
         headers: { Authorization: `Bearer ${token}` },
+        // A prior server build could store malformed bytes under this same
+        // content hash. Bypass any WebView/browser cache so repaired objects
+        // are fetched from storage instead of reusing that stale response.
+        cache: 'no-store',
         signal: ctrl.signal,
       });
     } finally {

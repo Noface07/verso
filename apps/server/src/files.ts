@@ -99,7 +99,10 @@ export const fileRoutes: FastifyPluginAsync = async (app: FastifyInstance) => {
 
       reply
         .header('content-length', item.size)
-        .header('cache-control', 'private, max-age=31536000, immutable')
+        // Clients verify content-addressed files, but an earlier broken upload
+        // path could leave invalid bytes under a valid hash. Don't let those
+        // bytes persist in browser or WebView caches after storage is repaired.
+        .header('cache-control', 'private, no-store')
         .type('application/octet-stream');
 
       return reply.send(item.stream);

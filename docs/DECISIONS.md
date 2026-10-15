@@ -46,3 +46,8 @@ This file tracks all significant architecture and design decisions made througho
 - **Context**: The AWS SDK v3 streaming upload path stored objects in local S3rver with trailing checksum framing included in the object body. A Dorian Gray EPUB expected to be 461,435 bytes was stored as 461,541 bytes, so its SHA-256 no longer matched its content-addressed object key and clients rejected downloads.
 - **Decision**: Configure the S3 client with `requestChecksumCalculation: 'WHEN_REQUIRED'` for S3-compatible storage. The API already verifies each incoming upload against its SHA-256 key before forwarding it to storage.
 - **Consequences**: S3rver receives the plain object stream and stores bytes that match the key. Real AWS S3/R2 do not require optional request checksums for these uploads; if required checksums are added to an operation later, the SDK still calculates them.
+
+## 2026-10-15: Do not cache book file responses
+- **Context**: After fixing malformed S3rver uploads, a desktop client could still receive the previously corrupted response because book downloads were marked immutable for one year.
+- **Decision**: Set book-file responses to `private, no-store` and make clients bypass their HTTP cache for downloads. Continue validating each downloaded body against its SHA-256 hash.
+- **Consequences**: Repaired objects are fetched from storage immediately across browser and WebView clients. Repeated downloads use network/storage bandwidth instead of a local HTTP cache.
